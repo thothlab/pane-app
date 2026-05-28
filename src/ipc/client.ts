@@ -1,0 +1,74 @@
+// Thin invoke wrapper. Centralizes argument shape so call sites stay typed.
+
+import { invoke } from "@tauri-apps/api/core";
+import type {
+  ApiError,
+  CaCertificateDto,
+  CaExportResult,
+  CaptureBodyDto,
+  CaptureDto,
+  DeviceDto,
+  DiscoveredDeviceDto,
+  FilterDto,
+  ProxyStatusDto,
+  ReplayRecordDto,
+  RequestSpec,
+  SessionDto,
+} from "./types";
+
+async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return (await invoke<T>(cmd, args ?? {})) as T;
+  } catch (e) {
+    const err = e as ApiError;
+    console.error(`ipc:${cmd} failed`, err);
+    throw err;
+  }
+}
+
+export const api = {
+  proxy: {
+    start: (host?: string, port?: number) =>
+      call<SessionDto>("start", { args: { host, port } }),
+    stop: () => call<{ stopped_at: string }>("stop"),
+    status: () => call<ProxyStatusDto>("status"),
+  },
+  ca: {
+    current: () => call<CaCertificateDto>("current"),
+    rotate: () => call<CaCertificateDto>("rotate"),
+    export: (format: "pem" | "der" | "qr" | "mobileconfig") =>
+      call<CaExportResult>("export", { args: { format } }),
+  },
+  devices: {
+    listAttachedUsb: () => call<DiscoveredDeviceDto[]>("list_attached_usb"),
+    addIosUsb: (serial: string) =>
+      call<DeviceDto>("add_ios_usb", { args: { serial } }),
+    addAndroidUsb: (serial: string) =>
+      call<DeviceDto>("add_android_usb", { args: { serial } }),
+    remove: (id: string) =>
+      call<{ cleaned: boolean; pending_cleanup: boolean }>("remove", { args: { id } }),
+    get: (id: string) => call<DeviceDto>("get", { id }),
+    list: () => call<DeviceDto[]>("list"),
+  },
+  captures: {
+    list: (filter?: string, limit = 500, before?: string) =>
+      call<CaptureDto[]>("list", { args: { filter, limit, before } }),
+    get: (id: string) => call<CaptureDto>("get", { id }),
+    body: (bodyId: string, maxBytes?: number) =>
+      call<CaptureBodyDto>("get_body", { args: { body_id: bodyId, max_bytes: maxBytes } }),
+    clear: (olderThan?: string) =>
+      call<{ deleted: number }>("clear", { args: { older_than: olderThan } }),
+    exportOne: (id: string, format: "curl" | "har_single") =>
+      call<{ text: string; mime: string }>("export_one", { args: { id, format } }),
+  },
+  replay: {
+    send: (request: RequestSpec, sourceId?: string) =>
+      call<ReplayRecordDto>("send", { args: { source_id: sourceId, request } }),
+  },
+  filters: {
+    save: (f: { id?: string; name: string; query: string; color: string; pinned: boolean }) =>
+      call<FilterDto>("save", { args: f }),
+    list: () => call<FilterDto[]>("list"),
+    delete: (id: string) => call<{ deleted: true }>("delete", { id }),
+  },
+};

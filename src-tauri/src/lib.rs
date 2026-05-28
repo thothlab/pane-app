@@ -1,0 +1,68 @@
+//! my-charles Tauri application entry point.
+//!
+//! Wires together the proxy engine, storage, devices, IPC commands and the
+//! frontend window. Domain logic lives in workspace crates; this file is glue.
+
+mod commands;
+mod state;
+
+use state::AppState;
+use tracing_subscriber::EnvFilter;
+
+pub fn run() {
+    init_logging();
+
+    let app_state = AppState::bootstrap().expect("failed to bootstrap app state");
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_shell::init())
+        .manage(app_state)
+        .invoke_handler(tauri::generate_handler![
+            // proxy
+            commands::proxy::start,
+            commands::proxy::stop,
+            commands::proxy::status,
+            // ca
+            commands::ca::current,
+            commands::ca::rotate,
+            commands::ca::export,
+            // devices
+            commands::devices::list_attached_usb,
+            commands::devices::add_ios_usb,
+            commands::devices::add_android_usb,
+            commands::devices::remove,
+            commands::devices::get,
+            commands::devices::list,
+            // captures
+            commands::captures::list,
+            commands::captures::get,
+            commands::captures::get_body,
+            commands::captures::clear,
+            commands::captures::export_one,
+            // replay
+            commands::replay::send,
+            // filters
+            commands::filters::save,
+            commands::filters::list,
+            commands::filters::delete,
+        ])
+        .setup(|app| {
+            tracing::info!(version = env!("CARGO_PKG_VERSION"), "my-charles starting");
+            let _ = app;
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running my-charles");
+}
+
+fn init_logging() {
+    let filter = EnvFilter::try_from_env("MYCHARLES_LOG")
+        .unwrap_or_else(|_| EnvFilter::new("info,mycharles=debug"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .try_init();
+}

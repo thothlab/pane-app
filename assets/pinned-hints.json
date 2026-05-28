@@ -1,0 +1,14 @@
+[
+  { "pattern": "*.facebook.com",     "hint": "app_pin" },
+  { "pattern": "*.fbcdn.net",        "hint": "app_pin" },
+  { "pattern": "*.instagram.com",    "hint": "app_pin" },
+  { "pattern": "*.whatsapp.net",     "hint": "app_pin" },
+  { "pattern": "*.googleapis.com",   "hint": "system_pin" },
+  { "pattern": "*.gstatic.com",      "hint": "ct_required" },
+  { "pattern": "*.apple.com",        "hint": "system_pin" },
+  { "pattern": "*.icloud.com",       "hint": "system_pin" },
+  { "pattern": "*.bankofamerica.com","hint": "app_pin" },
+  { "pattern": "*.chase.com",        "hint": "app_pin" },
+  { "pattern": "*.tiktokv.com",      "hint": "app_pin" },
+  { "pattern": "*.snapchat.com",     "hint": "app_pin" }
+]

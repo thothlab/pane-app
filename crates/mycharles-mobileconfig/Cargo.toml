@@ -1,0 +1,11 @@
+[package]
+name = "mycharles-mobileconfig"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Apple mobileconfig builder for CA + proxy payload"
+
+[dependencies]
+anyhow.workspace = true
+uuid.workspace = true
+base64.workspace = true

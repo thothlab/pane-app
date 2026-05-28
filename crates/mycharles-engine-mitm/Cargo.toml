@@ -1,0 +1,28 @@
+[package]
+name = "mycharles-engine-mitm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native MITM HTTP/1.1 proxy engine"
+
+[dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+hyper = { workspace = true, features = ["full"] }
+rustls.workspace = true
+rcgen.workspace = true
+bytes.workspace = true
+http.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+time.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+mycharles-engine.workspace = true
+mycharles-ca.workspace = true
+mycharles-storage.workspace = true
+mycharles-pinning.workspace = true

@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 15 17 22;
+  --bg-subtle: 22 24 30;
+  --bg-muted: 30 32 40;
+  --fg: 230 232 240;
+  --fg-subtle: 190 195 210;
+  --fg-muted: 130 138 158;
+  --accent: 96 165 250;
+  --border: 45 50 60;
+}
+
+:root.light {
+  --bg: 248 249 251;
+  --bg-subtle: 240 242 246;
+  --bg-muted: 230 232 238;
+  --fg: 20 23 30;
+  --fg-subtle: 60 65 75;
+  --fg-muted: 110 116 130;
+  --accent: 37 99 235;
+  --border: 215 218 226;
+}
+
+body, html, #root {
+  height: 100%;
+  margin: 0;
+}
+
+::selection { background: rgb(var(--accent) / 0.35); }
+
+button { font: inherit; }

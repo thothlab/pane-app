@@ -1,0 +1,17 @@
+[package]
+name = "mycharles-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ProxyEngine trait + engine event types"
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+anyhow.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+time.workspace = true
+mycharles-ca.workspace = true
