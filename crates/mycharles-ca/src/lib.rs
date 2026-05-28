@@ -198,8 +198,10 @@ fn generate_root(common_name: &str) -> Result<GeneratedRoot> {
         KeyUsagePurpose::DigitalSignature,
     ];
     let now = OffsetDateTime::now_utc();
-    params.not_before = now;
-    params.not_after = now + time::Duration::days(365 * 3);
+    let not_before = now;
+    let not_after = now + time::Duration::days(365 * 3);
+    params.not_before = not_before;
+    params.not_after = not_after;
 
     let key_pair = KeyPair::generate_for(&PKCS_ED25519)?;
     let cert = params.self_signed(&key_pair)?;
@@ -207,8 +209,8 @@ fn generate_root(common_name: &str) -> Result<GeneratedRoot> {
     Ok(GeneratedRoot {
         cert_pem: cert.pem(),
         key_pem: key_pair.serialize_pem(),
-        not_before: params.not_before,
-        not_after: params.not_after,
+        not_before,
+        not_after,
     })
 }
 

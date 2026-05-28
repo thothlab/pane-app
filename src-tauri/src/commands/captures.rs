@@ -8,7 +8,7 @@ use tauri::State;
 use uuid::Uuid;
 
 #[tauri::command]
-pub async fn list(
+pub async fn captures_list(
     state: State<'_, AppState>,
     args: ListCapturesArgs,
 ) -> CmdResult<Vec<CaptureDto>> {
@@ -19,7 +19,7 @@ pub async fn list(
 }
 
 #[tauri::command]
-pub async fn get(state: State<'_, AppState>, id: Uuid) -> CmdResult<CaptureDto> {
+pub async fn captures_get(state: State<'_, AppState>, id: Uuid) -> CmdResult<CaptureDto> {
     state.storage.get_capture(id).map_err(to_api("not_found"))
 }
 

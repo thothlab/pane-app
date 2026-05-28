@@ -152,7 +152,7 @@ pub async fn handle(
         .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
         .map(|(_, v)| v.as_str());
 
-    let body_id = storage.bodies.put(&body, "identity", mime, &storage.conn)?;
+    let body_id = storage.bodies.put(&body, "identity", mime, storage.conn())?;
     set_res_body(&storage, cap_id, body_id)?;
 
     let mut head = format!("HTTP/1.1 {status} OK\r\n");

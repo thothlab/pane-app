@@ -7,4 +7,4 @@ import "./styles/index.css";
 const root = document.getElementById("root");
 if (!root) throw new Error("#root not found");
 
-render(() => <Router>{App}</Router>, root);
+render(() => <Router root={App} />, root);

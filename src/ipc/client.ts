@@ -47,13 +47,13 @@ export const api = {
       call<DeviceDto>("add_android_usb", { args: { serial } }),
     remove: (id: string) =>
       call<{ cleaned: boolean; pending_cleanup: boolean }>("remove", { args: { id } }),
-    get: (id: string) => call<DeviceDto>("get", { id }),
-    list: () => call<DeviceDto[]>("list"),
+    get: (id: string) => call<DeviceDto>("devices_get", { id }),
+    list: () => call<DeviceDto[]>("devices_list"),
   },
   captures: {
     list: (filter?: string, limit = 500, before?: string) =>
-      call<CaptureDto[]>("list", { args: { filter, limit, before } }),
-    get: (id: string) => call<CaptureDto>("get", { id }),
+      call<CaptureDto[]>("captures_list", { args: { filter, limit, before } }),
+    get: (id: string) => call<CaptureDto>("captures_get", { id }),
     body: (bodyId: string, maxBytes?: number) =>
       call<CaptureBodyDto>("get_body", { args: { body_id: bodyId, max_bytes: maxBytes } }),
     clear: (olderThan?: string) =>
@@ -67,8 +67,8 @@ export const api = {
   },
   filters: {
     save: (f: { id?: string; name: string; query: string; color: string; pinned: boolean }) =>
-      call<FilterDto>("save", { args: f }),
-    list: () => call<FilterDto[]>("list"),
-    delete: (id: string) => call<{ deleted: true }>("delete", { id }),
+      call<FilterDto>("filters_save", { args: f }),
+    list: () => call<FilterDto[]>("filters_list"),
+    delete: (id: string) => call<{ deleted: true }>("filters_delete", { id }),
   },
 };

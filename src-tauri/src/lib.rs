@@ -34,20 +34,20 @@ pub fn run() {
             commands::devices::add_ios_usb,
             commands::devices::add_android_usb,
             commands::devices::remove,
-            commands::devices::get,
-            commands::devices::list,
+            commands::devices::devices_get,
+            commands::devices::devices_list,
             // captures
-            commands::captures::list,
-            commands::captures::get,
+            commands::captures::captures_list,
+            commands::captures::captures_get,
             commands::captures::get_body,
             commands::captures::clear,
             commands::captures::export_one,
             // replay
             commands::replay::send,
             // filters
-            commands::filters::save,
-            commands::filters::list,
-            commands::filters::delete,
+            commands::filters::filters_save,
+            commands::filters::filters_list,
+            commands::filters::filters_delete,
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "my-charles starting");

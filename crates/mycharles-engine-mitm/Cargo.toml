@@ -22,6 +22,7 @@ uuid.workspace = true
 time.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true
+rusqlite.workspace = true
 mycharles-engine.workspace = true
 mycharles-ca.workspace = true
 mycharles-storage.workspace = true

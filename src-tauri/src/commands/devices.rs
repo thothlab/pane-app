@@ -52,11 +52,11 @@ pub async fn remove(
 }
 
 #[tauri::command]
-pub async fn get(state: State<'_, AppState>, id: Uuid) -> CmdResult<DeviceDto> {
+pub async fn devices_get(state: State<'_, AppState>, id: Uuid) -> CmdResult<DeviceDto> {
     state.devices.get(id).map_err(to_api("not_found"))
 }
 
 #[tauri::command]
-pub async fn list(state: State<'_, AppState>) -> CmdResult<Vec<DeviceDto>> {
+pub async fn devices_list(state: State<'_, AppState>) -> CmdResult<Vec<DeviceDto>> {
     state.devices.list().map_err(to_api("db"))
 }

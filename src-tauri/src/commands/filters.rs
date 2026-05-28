@@ -5,17 +5,17 @@ use tauri::State;
 use uuid::Uuid;
 
 #[tauri::command]
-pub async fn save(state: State<'_, AppState>, args: SaveFilterArgs) -> CmdResult<FilterDto> {
+pub async fn filters_save(state: State<'_, AppState>, args: SaveFilterArgs) -> CmdResult<FilterDto> {
     state.storage.save_filter(args).map_err(to_api("db"))
 }
 
 #[tauri::command]
-pub async fn list(state: State<'_, AppState>) -> CmdResult<Vec<FilterDto>> {
+pub async fn filters_list(state: State<'_, AppState>) -> CmdResult<Vec<FilterDto>> {
     state.storage.list_filters().map_err(to_api("db"))
 }
 
 #[tauri::command]
-pub async fn delete(state: State<'_, AppState>, id: Uuid) -> CmdResult<serde_json::Value> {
+pub async fn filters_delete(state: State<'_, AppState>, id: Uuid) -> CmdResult<serde_json::Value> {
     state.storage.delete_filter(id).map_err(to_api("db"))?;
     Ok(serde_json::json!({ "deleted": true }))
 }
