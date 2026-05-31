@@ -1,7 +1,7 @@
 import { type Component, createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
-import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, BookmarkPlus, Pin, X } from "lucide-solid";
+import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Pin, Star } from "lucide-solid";
 import { api } from "@/ipc/client";
 import { listenToCaptures } from "@/ipc/events";
 import type { CaptureDto } from "@/ipc/types";
@@ -317,37 +317,17 @@ const CapturesView: Component = () => {
             }}
             title={FILTER_HELP}
           />
-          <Show when={filter()}>
+          <Show when={filter().trim()}>
             <button
               type="button"
-              class="absolute right-0 text-fg-muted hover:text-fg p-0.5 rounded hover:bg-bg-muted"
-              title="Clear filter (Esc)"
-              aria-label="Clear filter"
-              onClick={() => {
-                setFilter("");
-                debouncedRefresh();
-              }}
+              class="absolute right-0 text-fg-muted hover:text-warn p-0.5 rounded hover:bg-bg-muted"
+              title="Save current filter to sidebar"
+              aria-label="Save filter"
+              onClick={openSave}
             >
-              <X size={12} />
+              <Star size={14} />
             </button>
           </Show>
-        </div>
-        <Show when={filterError()}>
-          <span class="text-xs text-danger">{filterError()}</span>
-        </Show>
-        <div class="relative">
-          <button
-            class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-40 disabled:hover:bg-transparent"
-            onClick={openSave}
-            disabled={!filter().trim()}
-            title={
-              filter().trim()
-                ? "Save current filter to sidebar"
-                : "Type a filter first, then save it"
-            }
-          >
-            <BookmarkPlus size={12} /> Save
-          </button>
           <Show when={saveOpen()}>
             <div
               ref={(el) => (savePopover = el)}
@@ -415,6 +395,9 @@ const CapturesView: Component = () => {
             </div>
           </Show>
         </div>
+        <Show when={filterError()}>
+          <span class="text-xs text-danger">{filterError()}</span>
+        </Show>
         <button
           class={`text-xs px-2 py-1 rounded inline-flex items-center gap-1 ${
             autoFollow()
