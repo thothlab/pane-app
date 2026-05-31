@@ -24,6 +24,8 @@ pub fn compile_to_sql(input: &str) -> Result<(String, Vec<Box<dyn ToSql>>)> {
             Some((k, v)) => (k, v),
             None => ("__bare", token),
         };
+        let key_lower = key.to_ascii_lowercase();
+        let key = key_lower.as_str();
 
         let frag = match key {
             "host" => like_clause("server_host", value, negate, &mut params),
@@ -209,5 +211,14 @@ mod tests {
     fn error_kind_filter() {
         let (sql, _) = compile_to_sql("!error:tls_handshake").unwrap();
         assert!(sql.contains("error_kind <> ?"));
+    }
+
+    #[test]
+    fn keys_are_case_insensitive() {
+        let (sql_lower, _) = compile_to_sql("host:api.example.com").unwrap();
+        let (sql_pascal, _) = compile_to_sql("Host:api.example.com").unwrap();
+        let (sql_upper, _) = compile_to_sql("HOST:api.example.com").unwrap();
+        assert_eq!(sql_lower, sql_pascal);
+        assert_eq!(sql_lower, sql_upper);
     }
 }
