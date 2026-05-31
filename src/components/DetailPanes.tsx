@@ -1,5 +1,5 @@
 import { type Component, createSignal, createMemo, createEffect, Show, For } from "solid-js";
-import { Lock, ChevronDown, ChevronRight } from "lucide-solid";
+import { Lock, ChevronDown, ChevronRight, Copy, Check } from "lucide-solid";
 import { useNavigate } from "@solidjs/router";
 import { api } from "@/ipc/client";
 import type { CaptureBodyDto, CaptureDto } from "@/ipc/types";
@@ -161,19 +161,59 @@ const Row: Component<{ k: string; children: any }> = (p) => (
 
 const HeadersList: Component<{ headers: { name: string; value: string }[] }> = (p) => (
   <div class="mb-3">
-    <For each={p.headers}>
-      {(h) => (
-        <div
-          class="flex gap-2 py-0.5 cursor-pointer hover:bg-bg-subtle"
-          onClick={() => navigator.clipboard.writeText(`${h.name}: ${h.value}`)}
-        >
-          <div class="text-accent">{h.name}</div>
-          <div class="text-fg-subtle break-all">{h.value}</div>
-        </div>
-      )}
-    </For>
+    <For each={p.headers}>{(h) => <HeaderRow header={h} />}</For>
   </div>
 );
+
+const HeaderRow: Component<{ header: { name: string; value: string } }> = (p) => {
+  const [copied, setCopied] = createSignal<"name" | "value" | "pair" | null>(null);
+  const flash = (k: "name" | "value" | "pair") => {
+    setCopied(k);
+    setTimeout(() => setCopied(null), 900);
+  };
+  const copyName = (e: MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(p.header.name);
+    flash("name");
+  };
+  const copyValue = (e: MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(p.header.value);
+    flash("value");
+  };
+  const copyPair = (e: MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(`${p.header.name}: ${p.header.value}`);
+    flash("pair");
+  };
+  return (
+    <div class="group flex gap-2 py-0.5 hover:bg-bg-subtle rounded px-1 -mx-1">
+      <button
+        class="text-accent hover:underline text-left shrink-0"
+        title="Copy header name"
+        onClick={copyName}
+      >
+        {p.header.name}
+      </button>
+      <button
+        class="text-fg-subtle break-all hover:underline text-left flex-1 min-w-0"
+        title="Copy header value"
+        onClick={copyValue}
+      >
+        {p.header.value}
+      </button>
+      <button
+        class="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-fg shrink-0 p-0.5 rounded"
+        title='Copy "name: value"'
+        onClick={copyPair}
+      >
+        <Show when={copied() !== null} fallback={<Copy size={11} />}>
+          <Check size={11} class="text-success" />
+        </Show>
+      </button>
+    </div>
+  );
+};
 
 const HeadersBodySplit: Component<{
   headers: { name: string; value: string }[];

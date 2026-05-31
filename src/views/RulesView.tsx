@@ -22,6 +22,17 @@ import type {
 
 const UNGROUPED_KEY = "__ungrouped__";
 
+/// Spread onto every editable <input>/<textarea> in this view to disable the
+/// browser's autocorrect / smart-quote substitution / spellcheck / autocomplete
+/// suggestions. Smart quotes on macOS otherwise mangle JSON bodies and rule
+/// names ("error" -> «error», etc.).
+const NO_AC = {
+  autocomplete: "off",
+  autocorrect: "off",
+  autocapitalize: "off",
+  spellcheck: false,
+} as const;
+
 type Editing = { kind: "rule"; collectionId: string | null; id: string | "new" } | null;
 
 const RulesView: Component = () => {
@@ -219,7 +230,7 @@ const RulesView: Component = () => {
         <Show when={creatingName() !== null}>
           <div class="border border-accent/40 rounded p-3 bg-bg-subtle/40 flex items-center gap-2">
             <FolderPlus size={14} class="text-accent shrink-0" />
-            <input
+            <input {...NO_AC}
               ref={(el) => setTimeout(() => el?.focus(), 0)}
               class="flex-1 bg-bg border border-border rounded px-2 py-1 text-sm"
               placeholder="Collection name"
@@ -264,9 +275,7 @@ const RulesView: Component = () => {
               editing={editing()}
               onSaved={onRuleSaved}
               onCancel={cancelEdit}
-              collections={collections()}
-              onOpenCreateCollection={openCreateForm}
-              onStartRename={startRename}
+                  onStartRename={startRename}
               renamingId={renamingId()}
               renamingName={renamingName()}
               onRenamingNameChange={setRenamingName}
@@ -295,8 +304,6 @@ const RulesView: Component = () => {
           editing={editing()}
           onSaved={onRuleSaved}
           onCancel={cancelEdit}
-          collections={collections()}
-          onOpenCreateCollection={openCreateForm}
           onStartRename={startRename}
           renamingId={renamingId()}
           renamingName={renamingName()}
@@ -337,8 +344,6 @@ const CollectionSection: Component<{
   editing: Editing;
   onSaved: (r: RuleDto) => void;
   onCancel: () => void;
-  collections: RuleCollectionDto[];
-  onOpenCreateCollection: (cb?: (id: string) => void) => void;
   onStartRename: (c: RuleCollectionDto) => void;
   renamingId: string | null;
   renamingName: string;
@@ -417,7 +422,7 @@ const CollectionSection: Component<{
             </>
           }
         >
-          <input
+          <input {...NO_AC}
             ref={(el) => setTimeout(() => el?.focus(), 0)}
             class="bg-bg border border-border rounded px-2 py-0.5 text-sm flex-1 max-w-xs"
             value={p.renamingName}
@@ -465,10 +470,8 @@ const CollectionSection: Component<{
             <RuleEditor
               initial={null}
               defaultCollectionId={p.collection?.id ?? null}
-              collections={p.collections}
               onCancel={p.onCancel}
               onSaved={p.onSaved}
-              onOpenCreateCollection={p.onOpenCreateCollection}
             />
           </Show>
 
@@ -495,9 +498,7 @@ const CollectionSection: Component<{
                 <RuleEditor
                   initial={rule}
                   defaultCollectionId={rule.collection_id}
-                  collections={p.collections}
                   onCancel={p.onCancel}
-                  onOpenCreateCollection={p.onOpenCreateCollection}
                   onSaved={p.onSaved}
                 />
               </Show>
@@ -611,6 +612,21 @@ const emptyDraft = (collectionId: string | null): DraftState => ({
   res_delay_ms: 0,
 });
 
+/// Parse a single "Name: value" line into a header pair. Returns null if the
+/// input doesn't look like a header line (no `:`, or empty name). Used by
+/// the header editor's paste handler so users can copy a header from the
+/// captures view and paste it as a stub header in one keystroke.
+function splitHeaderPair(text: string): RuleHeaderDto | null {
+  const line = text.trim().split(/\r?\n/)[0];
+  if (!line) return null;
+  const idx = line.indexOf(":");
+  if (idx <= 0) return null;
+  const name = line.slice(0, idx).trim();
+  const value = line.slice(idx + 1).trim();
+  if (!name) return null;
+  return { name, value };
+}
+
 function utf8ToBase64(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = "";
@@ -621,10 +637,8 @@ function utf8ToBase64(s: string): string {
 const RuleEditor: Component<{
   initial: RuleDto | null;
   defaultCollectionId: string | null;
-  collections: RuleCollectionDto[];
   onCancel: () => void;
   onSaved: (saved: RuleDto) => void;
-  onOpenCreateCollection: (cb?: (id: string) => void) => void;
 }> = (p) => {
   const init = (): DraftState => {
     const r = p.initial;
@@ -652,18 +666,42 @@ const RuleEditor: Component<{
   const [d, setD] = createSignal<DraftState>(init());
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
+  const [bodyLoading, setBodyLoading] = createSignal(false);
 
   const patch = (q: Partial<DraftState>) => setD({ ...d(), ...q });
 
   const existingBodyId = createMemo(() => p.initial?.res_body_id ?? null);
   const existingBodySize = createMemo(() => p.initial?.res_body_size ?? 0);
 
+  // Load the existing response body into the textarea on open so the user
+  // sees what's currently stored and can edit it in place.
+  onMount(async () => {
+    const id = existingBodyId();
+    if (!id) return;
+    try {
+      setBodyLoading(true);
+      const body = await api.captures.body(id, 8 * 1024 * 1024);
+      const bin = atob(body.bytes_base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      // Don't clobber if the user already started typing while we were loading.
+      if (d().res_body_text.length === 0) {
+        patch({ res_body_text: text });
+      }
+    } catch (e) {
+      console.warn("failed to load existing body for editing", e);
+    } finally {
+      setBodyLoading(false);
+    }
+  });
+
   const save = async () => {
     setBusy(true);
     setErr(null);
     try {
       const draft = d();
-      const hasNewBody = draft.res_body_text.length > 0;
+      const hasBody = draft.res_body_text.length > 0;
       const args: RuleUpsertArgs = {
         id: draft.id ?? undefined,
         collection_id: draft.collection_id,
@@ -676,8 +714,11 @@ const RuleEditor: Component<{
         match_params: draft.match_params.filter((q) => q.name.length > 0),
         res_status: draft.res_status,
         res_headers: draft.res_headers.filter((h) => h.name.length > 0),
-        res_body_id: hasNewBody ? null : existingBodyId(),
-        res_body_base64: hasNewBody ? utf8ToBase64(draft.res_body_text) : null,
+        // The textarea is pre-filled from existing body on open, so we always
+        // send what's in it — non-empty text becomes the new body, empty text
+        // clears it. (Storage dedupes identical bodies by sha256.)
+        res_body_id: null,
+        res_body_base64: hasBody ? utf8ToBase64(draft.res_body_text) : null,
         res_body_mime: draft.res_body_mime || null,
         res_delay_ms: draft.res_delay_ms,
       };
@@ -700,37 +741,15 @@ const RuleEditor: Component<{
         >
           <ChevronUp size={14} />
         </button>
-        <input
+        <input {...NO_AC}
           class="flex-1 min-w-48 bg-bg border border-border rounded px-2 py-1 text-sm"
           placeholder="Rule name"
           value={d().name}
           onInput={(e) => patch({ name: e.currentTarget.value })}
         />
         <label class="flex items-center gap-1 text-xs text-fg-muted">
-          collection
-          <select
-            class="bg-bg border border-border rounded px-2 py-1 text-sm"
-            value={d().collection_id ?? ""}
-            onChange={(e) => {
-              const v = e.currentTarget.value;
-              if (v === "__new__") {
-                // Restore previous selection visually while the inline
-                // create form is open at the top of the rules list.
-                e.currentTarget.value = d().collection_id ?? "";
-                p.onOpenCreateCollection((id) => patch({ collection_id: id }));
-              } else {
-                patch({ collection_id: v || null });
-              }
-            }}
-          >
-            <option value="">— Ungrouped —</option>
-            <For each={p.collections}>{(c) => <option value={c.id}>{c.name}</option>}</For>
-            <option value="__new__">+ New collection…</option>
-          </select>
-        </label>
-        <label class="flex items-center gap-1 text-xs text-fg-muted">
           priority
-          <input
+          <input {...NO_AC}
             type="number"
             class="w-16 bg-bg border border-border rounded px-1 py-1 text-sm"
             value={d().priority}
@@ -738,7 +757,7 @@ const RuleEditor: Component<{
           />
         </label>
         <label class="flex items-center gap-1 text-xs text-fg-muted">
-          <input
+          <input {...NO_AC}
             type="checkbox"
             checked={d().enabled}
             onChange={(e) => patch({ enabled: e.currentTarget.checked })}
@@ -749,7 +768,7 @@ const RuleEditor: Component<{
 
       <Section title="Match">
         <FieldRow label="Host (glob)">
-          <input
+          <input {...NO_AC}
             class="flex-1 bg-bg border border-border rounded px-2 py-1 text-sm font-mono"
             placeholder="* or rc1.test.dev-og.com or *.dev-og.com"
             value={d().match_host_glob}
@@ -768,7 +787,7 @@ const RuleEditor: Component<{
           </select>
         </FieldRow>
         <FieldRow label="Path (glob)">
-          <input
+          <input {...NO_AC}
             class="flex-1 bg-bg border border-border rounded px-2 py-1 text-sm font-mono"
             placeholder="/api/v1/document or /api/v1/*"
             value={d().match_path_glob}
@@ -780,7 +799,7 @@ const RuleEditor: Component<{
             <For each={d().match_params}>
               {(q, i) => (
                 <div class="flex items-center gap-2">
-                  <input
+                  <input {...NO_AC}
                     class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
                     placeholder="name"
                     value={q.name}
@@ -790,7 +809,7 @@ const RuleEditor: Component<{
                       patch({ match_params: arr });
                     }}
                   />
-                  <input
+                  <input {...NO_AC}
                     class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
                     placeholder="value"
                     value={q.value}
@@ -829,7 +848,7 @@ const RuleEditor: Component<{
 
       <Section title="Response">
         <FieldRow label="Status">
-          <input
+          <input {...NO_AC}
             type="number"
             class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm"
             value={d().res_status}
@@ -837,7 +856,7 @@ const RuleEditor: Component<{
           />
           <label class="flex items-center gap-1 text-xs text-fg-muted ml-3">
             delay (ms)
-            <input
+            <input {...NO_AC}
               type="number"
               class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm"
               value={d().res_delay_ms}
@@ -850,17 +869,27 @@ const RuleEditor: Component<{
             <For each={d().res_headers}>
               {(h, i) => (
                 <div class="flex items-center gap-2">
-                  <input
+                  <input {...NO_AC}
                     class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
-                    placeholder="name"
+                    placeholder='name (paste "name: value" to split)'
                     value={h.name}
                     onInput={(e) => {
                       const arr = d().res_headers.slice();
                       arr[i()] = { ...arr[i()], name: e.currentTarget.value };
                       patch({ res_headers: arr });
                     }}
+                    onPaste={(e) => {
+                      const text = e.clipboardData?.getData("text/plain") ?? "";
+                      const split = splitHeaderPair(text);
+                      if (split) {
+                        e.preventDefault();
+                        const arr = d().res_headers.slice();
+                        arr[i()] = split;
+                        patch({ res_headers: arr });
+                      }
+                    }}
                   />
-                  <input
+                  <input {...NO_AC}
                     class="flex-[2] bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
                     placeholder="value"
                     value={h.value}
@@ -868,6 +897,16 @@ const RuleEditor: Component<{
                       const arr = d().res_headers.slice();
                       arr[i()] = { ...arr[i()], value: e.currentTarget.value };
                       patch({ res_headers: arr });
+                    }}
+                    onPaste={(e) => {
+                      const text = e.clipboardData?.getData("text/plain") ?? "";
+                      const split = splitHeaderPair(text);
+                      if (split) {
+                        e.preventDefault();
+                        const arr = d().res_headers.slice();
+                        arr[i()] = split;
+                        patch({ res_headers: arr });
+                      }
                     }}
                   />
                   <button
@@ -881,16 +920,35 @@ const RuleEditor: Component<{
                 </div>
               )}
             </For>
-            <button
-              class="text-xs text-accent hover:underline"
-              onClick={() => patch({ res_headers: [...d().res_headers, { name: "", value: "" }] })}
-            >
-              + add header
-            </button>
+            <div class="flex items-center gap-3">
+              <button
+                class="text-xs text-accent hover:underline"
+                onClick={() => patch({ res_headers: [...d().res_headers, { name: "", value: "" }] })}
+              >
+                + add header
+              </button>
+              <button
+                class="text-xs text-accent hover:underline"
+                title='Read clipboard, parse "name: value", insert as a new header'
+                onClick={async () => {
+                  try {
+                    const text = await navigator.clipboard.readText();
+                    const split = splitHeaderPair(text);
+                    if (split) {
+                      patch({ res_headers: [...d().res_headers, split] });
+                    }
+                  } catch {
+                    // Clipboard access may be denied; user can fall back to manual paste.
+                  }
+                }}
+              >
+                + paste header
+              </button>
+            </div>
           </div>
         </FieldRow>
         <FieldRow label="Body mime">
-          <input
+          <input {...NO_AC}
             class="flex-1 bg-bg border border-border rounded px-2 py-1 text-sm font-mono"
             placeholder="application/json"
             value={d().res_body_mime}
@@ -899,15 +957,22 @@ const RuleEditor: Component<{
         </FieldRow>
         <FieldRow label="Body">
           <div class="flex-1">
-            <textarea
+            <textarea {...NO_AC}
               class="w-full bg-bg border border-border rounded px-2 py-1 text-xs font-mono min-h-32"
-              placeholder={existingBodyId() ? "Leave empty to keep the existing body" : "Paste response body here"}
+              placeholder={
+                bodyLoading()
+                  ? "Loading existing body…"
+                  : existingBodyId()
+                  ? "Body is empty — type to set a response body"
+                  : "Paste response body here"
+              }
+              disabled={bodyLoading()}
               value={d().res_body_text}
               onInput={(e) => patch({ res_body_text: e.currentTarget.value })}
             />
-            <Show when={!!existingBodyId() && d().res_body_text.length === 0}>
+            <Show when={!!existingBodyId() && !bodyLoading()}>
               <div class="text-xs text-fg-muted mt-1">
-                Keeping existing body ({existingBodySize()}B). Type above to replace.
+                Stored body: {existingBodySize()}B. Edits replace it on save.
               </div>
             </Show>
           </div>
@@ -927,11 +992,11 @@ const RuleEditor: Component<{
           Cancel
         </button>
         <button
-          class="text-sm px-3 py-1.5 rounded bg-accent text-white hover:opacity-90 inline-flex items-center gap-1"
+          class="text-sm px-3 py-1.5 rounded bg-accent text-white hover:opacity-90 inline-flex items-center gap-1 disabled:opacity-50"
           onClick={save}
-          disabled={busy()}
+          disabled={busy() || bodyLoading()}
         >
-          <Check size={14} /> {busy() ? "Saving…" : "Save"}
+          <Check size={14} /> {busy() ? "Saving…" : bodyLoading() ? "Loading…" : "Save"}
         </button>
       </div>
     </div>

@@ -318,6 +318,10 @@ const CapturesView: Component = () => {
             </span>
           </pre>
           <input
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck={false}
             ref={(el) => (filterInput = el)}
             class="w-full bg-transparent outline-none text-sm placeholder:text-fg-muted font-mono pr-6 text-transparent caret-fg relative"
             placeholder="google · host:api.example.com · status:5.. · !error:tls_handshake"
