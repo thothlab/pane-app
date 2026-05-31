@@ -7,10 +7,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use parking_lot::Mutex;
 
-use mycharles_ca::CaStore;
-use mycharles_devices::DeviceManager;
-use mycharles_engine::EngineHandle;
-use mycharles_storage::Storage;
+use pane_ca::CaStore;
+use pane_devices::DeviceManager;
+use pane_engine::EngineHandle;
+use pane_storage::Storage;
 
 pub struct AppState {
     pub storage: Arc<Storage>,
@@ -21,7 +21,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn bootstrap() -> Result<Self> {
-        let dirs = directories::ProjectDirs::from("tech", "thothlab", "mycharles")
+        let dirs = directories::ProjectDirs::from("tech", "thothlab", "pane")
             .ok_or_else(|| anyhow::anyhow!("no project dirs"))?;
 
         let data_dir = dirs.data_dir().to_path_buf();

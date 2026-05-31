@@ -1,0 +1,23 @@
+[package]
+name = "pane-devices"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["process", "sync", "rt"] }
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+time.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+rusqlite.workspace = true
+pane-ipc.workspace = true
+pane-ca.workspace = true
+pane-storage.workspace = true
+pane-ios.workspace = true
+pane-android.workspace = true

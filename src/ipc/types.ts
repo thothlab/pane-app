@@ -1,4 +1,4 @@
-// Mirrors crates/mycharles-ipc/src/lib.rs. Hand-maintained for MVP; specta
+// Mirrors crates/pane-ipc/src/lib.rs. Hand-maintained for MVP; specta
 // codegen is a follow-up task.
 
 export interface ApiError {
@@ -36,6 +36,11 @@ export interface CaExportResult {
   data_base64: string | null;
   path: string | null;
   mime: string;
+}
+
+export interface CaSaveResult {
+  path: string;
+  bytes_written: number;
 }
 
 export interface DiscoveredDeviceDto {

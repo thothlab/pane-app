@@ -1,0 +1,312 @@
+//! Root CA management: generation via rcgen, persistence (public PEM in
+//! storage + private key in OS keychain), export to PEM/DER/QR/mobileconfig,
+//! leaf-cert issuance on the fly with an LRU cache.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use anyhow::{anyhow, Context, Result};
+use base64::Engine as _;
+use pane_ipc::{CaCertificateDto, CaExportResult};
+use pane_storage::Storage;
+use parking_lot::RwLock;
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
+    PKCS_ED25519,
+};
+use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
+use uuid::Uuid;
+
+const KEYRING_SERVICE: &str = "tech.thothlab.pane";
+const KEYRING_USER_PREFIX: &str = "ca-key-";
+
+#[derive(Clone)]
+pub struct CaMaterial {
+    pub id: Uuid,
+    pub cert_pem: String,
+    pub key_pem: String,
+}
+
+struct CaStoreInner {
+    material: CaMaterial,
+    dto: CaCertificateDto,
+}
+
+pub struct CaStore {
+    storage: Arc<Storage>,
+    inner: RwLock<CaStoreInner>,
+}
+
+impl CaStore {
+    pub fn open_or_init(_data_dir: &Path, storage: &Arc<Storage>) -> Result<Self> {
+        if let Some(existing) = storage.current_ca_record()? {
+            let key_pem = read_keyring(&existing.id)
+                .with_context(|| format!("keyring missing for CA {}", existing.id))?;
+            let material = CaMaterial {
+                id: existing.id,
+                cert_pem: existing.pem.clone(),
+                key_pem,
+            };
+            return Ok(Self {
+                storage: storage.clone(),
+                inner: RwLock::new(CaStoreInner {
+                    material,
+                    dto: existing.into_dto(),
+                }),
+            });
+        }
+
+        let fresh = generate_root("Pane Root CA")?;
+        let sha = sha256_pem(&fresh.cert_pem);
+        let id = Uuid::new_v4();
+        write_keyring(&id, &fresh.key_pem)?;
+        storage.insert_ca(
+            id,
+            &fresh.cert_pem,
+            &sha,
+            "CN=Pane Root CA",
+            fresh.not_before,
+            fresh.not_after,
+        )?;
+        let dto = CaCertificateDto {
+            id,
+            serial: short_serial(&sha),
+            sha256_fp: sha,
+            subject: "CN=Pane Root CA".into(),
+            valid_from: fresh.not_before.to_string(),
+            valid_to: fresh.not_after.to_string(),
+            revoked_at: None,
+        };
+        let material = CaMaterial {
+            id,
+            cert_pem: fresh.cert_pem,
+            key_pem: fresh.key_pem,
+        };
+        Ok(Self {
+            storage: storage.clone(),
+            inner: RwLock::new(CaStoreInner { material, dto }),
+        })
+    }
+
+    pub fn material(&self) -> CaMaterial {
+        self.inner.read().material.clone()
+    }
+
+    pub fn current_dto(&self) -> Result<CaCertificateDto> {
+        Ok(self.inner.read().dto.clone())
+    }
+
+    pub fn rotate(&self) -> Result<CaCertificateDto> {
+        let fresh = generate_root("Pane Root CA")?;
+        let sha = sha256_pem(&fresh.cert_pem);
+        let id = Uuid::new_v4();
+        write_keyring(&id, &fresh.key_pem)?;
+        // Mark old revoked, insert new.
+        let old_id = self.inner.read().material.id;
+        self.storage.revoke_ca(old_id)?;
+        self.storage.insert_ca(
+            id,
+            &fresh.cert_pem,
+            &sha,
+            "CN=Pane Root CA",
+            fresh.not_before,
+            fresh.not_after,
+        )?;
+        let dto = CaCertificateDto {
+            id,
+            serial: short_serial(&sha),
+            sha256_fp: sha,
+            subject: "CN=Pane Root CA".into(),
+            valid_from: fresh.not_before.to_string(),
+            valid_to: fresh.not_after.to_string(),
+            revoked_at: None,
+        };
+        let material = CaMaterial {
+            id,
+            cert_pem: fresh.cert_pem,
+            key_pem: fresh.key_pem,
+        };
+        *self.inner.write() = CaStoreInner {
+            material,
+            dto: dto.clone(),
+        };
+        Ok(dto)
+    }
+
+    pub fn export(&self, format: &str) -> Result<CaExportResult> {
+        let pem = self.inner.read().material.cert_pem.clone();
+        match format {
+            "pem" => Ok(CaExportResult {
+                format: "pem".into(),
+                data_base64: Some(base64::engine::general_purpose::STANDARD.encode(pem)),
+                path: None,
+                mime: "application/x-pem-file".into(),
+            }),
+            "der" => {
+                let der = pem_to_der(&pem)?;
+                Ok(CaExportResult {
+                    format: "der".into(),
+                    data_base64: Some(base64::engine::general_purpose::STANDARD.encode(der)),
+                    path: None,
+                    mime: "application/pkix-cert".into(),
+                })
+            }
+            "qr" => {
+                let url = format!("data:application/x-pem-file;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(&pem));
+                let qr = qrcode::QrCode::new(url.as_bytes())?;
+                let svg = qr.render::<qrcode::render::svg::Color>().build();
+                Ok(CaExportResult {
+                    format: "qr".into(),
+                    data_base64: Some(base64::engine::general_purpose::STANDARD.encode(svg)),
+                    path: None,
+                    mime: "image/svg+xml".into(),
+                })
+            }
+            "mobileconfig" => {
+                let xml = pane_mobileconfig::build_ca_profile(&pem)?;
+                Ok(CaExportResult {
+                    format: "mobileconfig".into(),
+                    data_base64: Some(base64::engine::general_purpose::STANDARD.encode(xml)),
+                    path: None,
+                    mime: "application/x-apple-aspen-config".into(),
+                })
+            }
+            other => Err(anyhow!("unsupported export format: {other}")),
+        }
+    }
+}
+
+struct GeneratedRoot {
+    cert_pem: String,
+    key_pem: String,
+    not_before: OffsetDateTime,
+    not_after: OffsetDateTime,
+}
+
+fn generate_root(common_name: &str) -> Result<GeneratedRoot> {
+    let mut params = CertificateParams::default();
+    let mut dn = DistinguishedName::new();
+    dn.push(DnType::CommonName, common_name);
+    dn.push(DnType::OrganizationName, "Pane");
+    params.distinguished_name = dn;
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::CrlSign,
+        KeyUsagePurpose::DigitalSignature,
+    ];
+    let now = OffsetDateTime::now_utc();
+    let not_before = now;
+    let not_after = now + time::Duration::days(365 * 3);
+    params.not_before = not_before;
+    params.not_after = not_after;
+
+    let key_pair = KeyPair::generate_for(&PKCS_ED25519)?;
+    let cert = params.self_signed(&key_pair)?;
+
+    Ok(GeneratedRoot {
+        cert_pem: cert.pem(),
+        key_pem: key_pair.serialize_pem(),
+        not_before,
+        not_after,
+    })
+}
+
+fn sha256_pem(pem: &str) -> String {
+    let der = match pem_to_der(pem) {
+        Ok(d) => d,
+        Err(_) => return String::new(),
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&der);
+    hex::encode(hasher.finalize())
+}
+
+fn short_serial(sha: &str) -> String {
+    sha.chars().take(16).collect()
+}
+
+fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
+    let payload = pem
+        .lines()
+        .filter(|l| !l.starts_with("-----"))
+        .collect::<String>();
+    Ok(base64::engine::general_purpose::STANDARD.decode(payload)?)
+}
+
+fn keyring_entry(id: &Uuid) -> Result<keyring::Entry> {
+    let user = format!("{KEYRING_USER_PREFIX}{id}");
+    Ok(keyring::Entry::new(KEYRING_SERVICE, &user)?)
+}
+
+/// Whether to bypass the OS keyring and store the CA key on disk.
+///
+/// Keychain ACLs are bound to the requesting binary's code signature. Unsigned
+/// `cargo` dev builds change hash on every rebuild, so "Always allow" never
+/// sticks — the user is re-prompted on each launch. In debug builds we route
+/// through a file in the data dir instead. The `PANE_KEYCHAIN` env var forces
+/// the keyring path when set (handy when testing the production code path).
+fn use_file_storage() -> bool {
+    if std::env::var_os("PANE_KEYCHAIN").is_some() {
+        return false;
+    }
+    cfg!(debug_assertions)
+}
+
+fn write_keyring(id: &Uuid, key_pem: &str) -> Result<()> {
+    if use_file_storage() {
+        return write_file(id, key_pem);
+    }
+    match keyring_entry(id).and_then(|e| e.set_password(key_pem).map_err(Into::into)) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            tracing::warn!(error = %e, "keyring write failed — falling back to on-disk file");
+            write_file(id, key_pem)
+        }
+    }
+}
+
+fn read_keyring(id: &Uuid) -> Result<String> {
+    if use_file_storage() {
+        let path = fallback_path(id);
+        if path.exists() {
+            return Ok(std::fs::read_to_string(path)?);
+        }
+        // Migration: a CA generated by a previous build stored its key in the
+        // OS keyring. Read once (one final prompt), persist to file, never
+        // prompt again.
+        let v = keyring_entry(id).and_then(|e| e.get_password().map_err(Into::into))?;
+        write_file(id, &v)?;
+        tracing::info!(ca = %id, "migrated CA key from OS keyring to data-dir file");
+        return Ok(v);
+    }
+    match keyring_entry(id).and_then(|e| e.get_password().map_err(Into::into)) {
+        Ok(v) => Ok(v),
+        Err(_) => Ok(std::fs::read_to_string(fallback_path(id))?),
+    }
+}
+
+fn write_file(id: &Uuid, key_pem: &str) -> Result<()> {
+    let path = fallback_path(id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, key_pem)?;
+    // 0600 — readable only by the owning user.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = std::fs::metadata(&path)?.permissions();
+        perm.set_mode(0o600);
+        std::fs::set_permissions(&path, perm)?;
+    }
+    Ok(())
+}
+
+fn fallback_path(id: &Uuid) -> std::path::PathBuf {
+    let dirs = directories::ProjectDirs::from("tech", "thothlab", "pane")
+        .expect("project dirs");
+    dirs.data_dir().join("ca-keys").join(format!("{id}.pem"))
+}

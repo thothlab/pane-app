@@ -1,8 +1,8 @@
 use super::{to_api, CmdResult};
 use crate::state::AppState;
-use mycharles_engine::{EngineConfig, ProxyEngine};
-use mycharles_engine_mitm::MitmEngine;
-use mycharles_ipc::{ProxyStartArgs, SessionDto, ProxyStatusDto};
+use pane_engine::{EngineConfig, ProxyEngine};
+use pane_engine_mitm::MitmEngine;
+use pane_ipc::{ProxyStartArgs, SessionDto, ProxyStatusDto};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 

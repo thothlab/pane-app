@@ -1,4 +1,4 @@
-//! my-charles Tauri application entry point.
+//! Pane Tauri application entry point.
 //!
 //! Wires together the proxy engine, storage, devices, IPC commands and the
 //! frontend window. Domain logic lives in workspace crates; this file is glue.
@@ -29,6 +29,7 @@ pub fn run() {
             commands::ca::current,
             commands::ca::rotate,
             commands::ca::export,
+            commands::ca::save_to_file,
             // devices
             commands::devices::list_attached_usb,
             commands::devices::add_ios_usb,
@@ -50,17 +51,17 @@ pub fn run() {
             commands::filters::filters_delete,
         ])
         .setup(|app| {
-            tracing::info!(version = env!("CARGO_PKG_VERSION"), "my-charles starting");
+            tracing::info!(version = env!("CARGO_PKG_VERSION"), "Pane starting");
             let _ = app;
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running my-charles");
+        .expect("error while running Pane");
 }
 
 fn init_logging() {
     let filter = EnvFilter::try_from_env("MYCHARLES_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("info,mycharles=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,pane=debug"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(true)

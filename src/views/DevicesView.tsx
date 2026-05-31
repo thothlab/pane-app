@@ -1,5 +1,5 @@
 import { type Component, createSignal, createResource, For, Show } from "solid-js";
-import { Smartphone, Plus, RefreshCw, Trash2, AlertCircle, CheckCircle } from "lucide-solid";
+import { Smartphone, Plus, RefreshCw, RotateCw, Trash2, AlertCircle, CheckCircle } from "lucide-solid";
 import { api } from "@/ipc/client";
 import type { DeviceDto, DiscoveredDeviceDto } from "@/ipc/types";
 
@@ -29,6 +29,23 @@ const DevicesView: Component = () => {
     if (!confirm("Remove device and revoke setup?")) return;
     await api.devices.remove(id);
     await refetch();
+  };
+
+  // Re-runs the pairing flow on an already-paired device. Useful when the
+  // adb-reverse mapping is lost (device unplugged, adb server restarted) —
+  // the DB row is updated in place via ON CONFLICT(platform, serial).
+  const resync = async (d: DeviceDto) => {
+    setBusy(d.serial);
+    setError(null);
+    try {
+      if (d.platform === "ios") await api.devices.addIosUsb(d.serial);
+      else await api.devices.addAndroidUsb(d.serial);
+      await refetch();
+    } catch (e: unknown) {
+      setError((e as { message?: string })?.message ?? "re-sync failed");
+    } finally {
+      setBusy(null);
+    }
   };
 
   return (
@@ -96,7 +113,14 @@ const DevicesView: Component = () => {
         >
           <ul class="space-y-2">
             <For each={devices()}>
-              {(d) => <DeviceRow device={d} onRemove={() => remove(d.id)} />}
+              {(d) => (
+                <DeviceRow
+                  device={d}
+                  busy={busy() === d.serial}
+                  onResync={() => resync(d)}
+                  onRemove={() => remove(d.id)}
+                />
+              )}
             </For>
           </ul>
         </Show>
@@ -105,7 +129,7 @@ const DevicesView: Component = () => {
       <section class="text-xs text-fg-muted">
         <h3 class="text-sm text-fg-subtle font-semibold mb-1">Use only on devices you own.</h3>
         <p>
-          my-charles is intended for inspecting your own apps and authorized security work. Don't
+          Pane is intended for inspecting your own apps and authorized security work. Don't
           point it at devices or applications you lack permission to inspect.
         </p>
       </section>
@@ -113,27 +137,50 @@ const DevicesView: Component = () => {
   );
 };
 
-const DeviceRow: Component<{ device: DeviceDto; onRemove: () => void }> = (p) => (
-  <li class="flex items-center justify-between p-3 rounded border border-border bg-bg-subtle">
-    <div class="flex items-center gap-3">
-      <Show when={p.device.state === "ready"} fallback={<AlertCircle size={16} class="text-warn" />}>
-        <CheckCircle size={16} class="text-success" />
+const DeviceRow: Component<{
+  device: DeviceDto;
+  busy: boolean;
+  onResync: () => void;
+  onRemove: () => void;
+}> = (p) => {
+  const isFullyReady = () => p.device.state === "ready" && !p.device.last_error;
+  return (
+  <li class="flex items-start justify-between p-3 rounded border border-border bg-bg-subtle gap-3">
+    <div class="flex items-start gap-3 min-w-0 flex-1">
+      <Show
+        when={isFullyReady()}
+        fallback={<AlertCircle size={16} class="text-warn shrink-0 mt-0.5" />}
+      >
+        <CheckCircle size={16} class="text-success shrink-0 mt-0.5" />
       </Show>
-      <div>
-        <div class="text-sm font-medium">{p.device.display_name}</div>
+      <div class="min-w-0 flex-1">
+        <div class="text-sm font-medium truncate">{p.device.display_name}</div>
         <div class="text-xs text-fg-muted font-mono">
           {p.device.platform} · {p.device.state}
-          <Show when={p.device.last_error}> · {p.device.last_error}</Show>
         </div>
+        <Show when={p.device.last_error}>
+          <div class="text-xs text-warn mt-1">{p.device.last_error}</div>
+        </Show>
       </div>
     </div>
-    <button
-      class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-danger inline-flex items-center gap-1"
-      onClick={p.onRemove}
-    >
-      <Trash2 size={12} /> Remove
-    </button>
+    <div class="flex items-center gap-1">
+      <button
+        class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-50"
+        onClick={p.onResync}
+        disabled={p.busy}
+        title="Re-apply USB port-forwarding + proxy setup"
+      >
+        <RotateCw size={12} class={p.busy ? "animate-spin" : ""} /> Re-sync
+      </button>
+      <button
+        class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-danger inline-flex items-center gap-1"
+        onClick={p.onRemove}
+      >
+        <Trash2 size={12} /> Remove
+      </button>
+    </div>
   </li>
-);
+  );
+};
 
 export default DevicesView;

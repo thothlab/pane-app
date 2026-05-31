@@ -1,12 +1,12 @@
 [package]
-name = "my-charles"
+name = "pane"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Network debugger with one-command device setup"
 
 [lib]
-name = "mycharles_app"
+name = "pane_app"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -30,15 +30,16 @@ uuid.workspace = true
 time.workspace = true
 directories.workspace = true
 parking_lot.workspace = true
+base64.workspace = true
 
-mycharles-ipc.workspace = true
-mycharles-engine.workspace = true
-mycharles-engine-mitm.workspace = true
-mycharles-ca.workspace = true
-mycharles-storage.workspace = true
-mycharles-devices.workspace = true
-mycharles-setup-server.workspace = true
-mycharles-pinning.workspace = true
+pane-ipc.workspace = true
+pane-engine.workspace = true
+pane-engine-mitm.workspace = true
+pane-ca.workspace = true
+pane-storage.workspace = true
+pane-devices.workspace = true
+pane-setup-server.workspace = true
+pane-pinning.workspace = true
 
 [features]
 default = ["custom-protocol"]

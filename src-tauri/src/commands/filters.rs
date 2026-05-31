@@ -1,6 +1,6 @@
 use super::{to_api, CmdResult};
 use crate::state::AppState;
-use mycharles_ipc::{FilterDto, SaveFilterArgs};
+use pane_ipc::{FilterDto, SaveFilterArgs};
 use tauri::State;
 use uuid::Uuid;
 

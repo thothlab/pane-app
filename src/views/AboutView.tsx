@@ -2,7 +2,7 @@ import { type Component } from "solid-js";
 
 const AboutView: Component = () => (
   <div class="h-full overflow-auto p-6 space-y-6 max-w-3xl">
-    <h1 class="text-xl font-semibold">About my-charles</h1>
+    <h1 class="text-xl font-semibold">About Pane</h1>
 
     <section class="space-y-2 text-sm leading-6">
       <p>
@@ -30,7 +30,7 @@ const AboutView: Component = () => (
       </p>
       <p>
         For your own apps, disable pinning in the debug build. For owned-device security
-        research, tools like Frida or Magisk can bypass pinning at runtime; my-charles doesn't
+        research, tools like Frida or Magisk can bypass pinning at runtime; Pane doesn't
         bundle them.
       </p>
     </section>

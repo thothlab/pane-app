@@ -23,7 +23,7 @@ through the desktop without Wi-Fi changes.
 ## Subject hash
 
 Android uses an OpenSSL `subject_hash_old` derived 8-hex value for filenames.
-The MVP `subject_hash_old` helper in `mycharles-android` is a sha-based
+The MVP `subject_hash_old` helper in `pane-android` is a sha-based
 approximation suitable for fresh installs; once the upstream OpenSSL algorithm
 is reproduced exactly, rotating in the correct value is a one-line change in
 `install_system_ca`.

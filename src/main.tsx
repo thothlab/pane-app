@@ -4,6 +4,7 @@ import { lazy } from "solid-js";
 import { Route, Router } from "@solidjs/router";
 import Layout from "./components/Layout";
 import "./styles/index.css";
+import "./stores/theme";
 
 const Captures = lazy(() => import("./views/CapturesView"));
 const Devices = lazy(() => import("./views/DevicesView"));

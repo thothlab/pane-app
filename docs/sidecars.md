@@ -1,9 +1,9 @@
 # Sidecar binaries
 
-my-charles ships two families of CLI sidecars:
+Pane ships two families of CLI sidecars:
 
-- `adb` — Android Platform Tools, used by `mycharles-android`.
-- `idevice_id`, `ideviceinfo`, `idevicepair`, `ideviceinstaller`, `idevicesyslog`, `iproxy` — libimobiledevice, used by `mycharles-ios`.
+- `adb` — Android Platform Tools, used by `pane-android`.
+- `idevice_id`, `ideviceinfo`, `idevicepair`, `ideviceinstaller`, `idevicesyslog`, `iproxy` — libimobiledevice, used by `pane-ios`.
 
 These live under `src-tauri/binaries/<target-triple>/` and are bundled into
 the Tauri build per platform.

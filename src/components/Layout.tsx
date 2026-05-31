@@ -1,17 +1,44 @@
-import { type ParentComponent, createSignal, onMount, For, Show } from "solid-js";
+import { type ParentComponent, createEffect, createMemo, createSignal, onMount, For, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon } from "lucide-solid";
+import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X } from "lucide-solid";
 import { api } from "@/ipc/client";
-import type { FilterDto, ProxyStatusDto } from "@/ipc/types";
+import { VerticalResizer } from "@/components/VerticalResizer";
+import { setFilter } from "@/stores/captures";
+import { filters, deleteFilter, refreshFilters } from "@/stores/saved-filters";
+import type { ProxyStatusDto } from "@/ipc/types";
+
+const SIDEBAR_DEFAULT = 240;
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 480;
+const SIDEBAR_STORAGE_KEY = "pane:sidebar-width";
+
+function loadSidebarWidth(): number {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    if (!raw) return SIDEBAR_DEFAULT;
+    const n = JSON.parse(raw);
+    if (typeof n === "number" && n >= SIDEBAR_MIN && n <= SIDEBAR_MAX) return n;
+  } catch {
+    /* fall through */
+  }
+  return SIDEBAR_DEFAULT;
+}
 
 const Layout: ParentComponent = (props) => {
   const [status, setStatus] = createSignal<ProxyStatusDto | null>(null);
-  const [filters, setFilters] = createSignal<FilterDto[]>([]);
+  const [sidebarWidth, setSidebarWidth] = createSignal(loadSidebarWidth());
+  const gridTemplate = createMemo(() => `${sidebarWidth()}px 6px 1fr`);
+  createEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(sidebarWidth()));
+    } catch {
+      /* private mode */
+    }
+  });
 
   const refresh = async () => {
     try {
       setStatus(await api.proxy.status());
-      setFilters(await api.filters.list());
     } catch (e) {
       console.warn("status refresh failed", e);
     }
@@ -19,6 +46,7 @@ const Layout: ParentComponent = (props) => {
 
   onMount(() => {
     refresh();
+    refreshFilters();
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
   });
@@ -34,10 +62,13 @@ const Layout: ParentComponent = (props) => {
   };
 
   return (
-    <div class="h-full grid grid-cols-[240px_1fr] bg-bg text-fg">
-      <aside class="border-r border-border bg-bg-subtle flex flex-col">
+    <div
+      class="h-full grid bg-bg text-fg"
+      style={{ "grid-template-columns": gridTemplate() }}
+    >
+      <aside class="bg-bg-subtle flex flex-col overflow-hidden">
         <div class="px-4 py-4 border-b border-border">
-          <div class="font-semibold text-lg">my-charles</div>
+          <div class="font-semibold text-lg">Pane</div>
           <div class="text-xs text-fg-muted">v0.1.0-dev</div>
         </div>
         <nav class="flex-1 overflow-auto p-2 space-y-1">
@@ -50,9 +81,25 @@ const Layout: ParentComponent = (props) => {
             <div class="mt-4 px-2 text-xs uppercase tracking-wide text-fg-muted">Filters</div>
             <For each={filters()}>
               {(f) => (
-                <div class="px-2 py-1 rounded text-sm hover:bg-bg-muted cursor-pointer flex items-center gap-2">
+                <div
+                  class="group px-2 py-1 rounded text-sm hover:bg-bg-muted cursor-pointer flex items-center gap-2"
+                  title={`Apply "${f.query}"`}
+                  onClick={() => setFilter(f.query)}
+                >
                   <FilterIcon size={14} style={{ color: f.color }} />
-                  <span class="truncate">{f.name}</span>
+                  <span class="truncate flex-1">{f.name}</span>
+                  <button
+                    class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0"
+                    title="Delete filter"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm(`Delete filter "${f.name}"?`)) {
+                        void deleteFilter(f.id);
+                      }
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
                 </div>
               )}
             </For>
@@ -74,6 +121,14 @@ const Layout: ParentComponent = (props) => {
           </div>
         </div>
       </aside>
+      <VerticalResizer
+        onResize={(dx) =>
+          setSidebarWidth((w) =>
+            Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w + dx)),
+          )
+        }
+        onReset={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+      />
       <main class="overflow-hidden">{props.children}</main>
     </div>
   );

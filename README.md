@@ -1,4 +1,4 @@
-# my-charles
+# Pane
 
 A modern HTTPS network debugger focused on one thing: making mobile-device setup take 30 seconds instead of 15 minutes. Plug your iPhone or Android in over USB, click **Add**, and start inspecting traffic — no Settings dance, no certificate trust spelunking, no Wi-Fi proxy editing.
 
@@ -32,7 +32,7 @@ Click **Start proxy** in the lower-left, set your device's HTTP proxy to `127.0.
 
 ## How it compares
 
-|                          | Charles | Proxyman | Reqable | mitmproxy | **my-charles**          |
+|                          | Charles | Proxyman | Reqable | mitmproxy | **Pane**          |
 | ------------------------ | ------- | -------- | ------- | --------- | ----------------------- |
 | Price                    | $50     | $69/yr   | freemium | free      | **free / Apache-2.0**   |
 | Modern UI                | ✗       | ✓        | ✓       | partial   | ✓                       |
@@ -42,7 +42,7 @@ Click **Start proxy** in the lower-left, set your device's HTTP proxy to `127.0.
 
 ## Boundaries
 
-my-charles is designed for inspecting **your own** apps and for legitimate, authorised security work. It does **not** bypass certificate pinning — when an app pins, you'll see a clear explanation and pointers to the appropriate (and external) tools instead of a silent failure.
+Pane is designed for inspecting **your own** apps and for legitimate, authorised security work. It does **not** bypass certificate pinning — when an app pins, you'll see a clear explanation and pointers to the appropriate (and external) tools instead of a silent failure.
 
 It is **not** a production traffic monitor, **not** a packet-level capture tool, and **not** a load-testing harness.
 
@@ -52,17 +52,17 @@ It is **not** a production traffic monitor, **not** a packet-level capture tool,
 src/                    SolidJS frontend (Tauri webview)
 src-tauri/              Tauri main crate + IPC command modules
 crates/
-  mycharles-ipc/        Shared DTOs between Rust and TS
-  mycharles-engine/     ProxyEngine trait + EngineEvent
-  mycharles-engine-mitm/  Native HTTP/1.1 MITM impl
-  mycharles-ca/         Root CA generation, rotation, keychain storage
-  mycharles-storage/    SQLite + body blobs + filter DSL + replay
-  mycharles-devices/    Cross-platform device manager + state machine
-  mycharles-ios/        libimobiledevice wrapper
-  mycharles-android/    adb wrapper, CA install paths
-  mycharles-mobileconfig/  Apple .mobileconfig builder
-  mycharles-setup-server/  LAN HTTP server for QR-fallback pairing
-  mycharles-pinning/    Pinning heuristic + hint kinds
+  pane-ipc/        Shared DTOs between Rust and TS
+  pane-engine/     ProxyEngine trait + EngineEvent
+  pane-engine-mitm/  Native HTTP/1.1 MITM impl
+  pane-ca/         Root CA generation, rotation, keychain storage
+  pane-storage/    SQLite + body blobs + filter DSL + replay
+  pane-devices/    Cross-platform device manager + state machine
+  pane-ios/        libimobiledevice wrapper
+  pane-android/    adb wrapper, CA install paths
+  pane-mobileconfig/  Apple .mobileconfig builder
+  pane-setup-server/  LAN HTTP server for QR-fallback pairing
+  pane-pinning/    Pinning heuristic + hint kinds
 docs/                   PRD, task decomposition, planning notes
 .github/workflows/      CI + release
 scripts/                fetch-sidecars, dev launcher

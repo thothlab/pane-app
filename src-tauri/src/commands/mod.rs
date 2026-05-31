@@ -5,7 +5,7 @@ pub mod filters;
 pub mod proxy;
 pub mod replay;
 
-use mycharles_ipc::ApiError;
+use pane_ipc::ApiError;
 
 pub type CmdResult<T> = Result<T, ApiError>;
 

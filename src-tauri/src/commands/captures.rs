@@ -1,6 +1,6 @@
 use super::{to_api, CmdResult};
 use crate::state::AppState;
-use mycharles_ipc::{
+use pane_ipc::{
     CaptureBodyDto, CaptureDto, ClearArgs, ClearResult, ExportOneArgs, ExportOneResult,
     GetBodyArgs, ListCapturesArgs,
 };

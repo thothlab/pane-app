@@ -23,14 +23,14 @@
 
 ## Updater endpoint
 
-Hosted JSON manifest at `releases.my-charles.tech/<channel>/<platform>/latest.json`.
+Hosted JSON manifest at `releases.pane.tech/<channel>/<platform>/latest.json`.
 Schema:
 
 ```jsonc
 {
   "version": "0.1.1",
   "pub_date": "2026-06-10T12:00:00Z",
-  "url": "https://github.com/thothlab/my-charles/releases/download/v0.1.1/my-charles_0.1.1_x64.dmg",
+  "url": "https://github.com/thothlab/pane-app/releases/download/v0.1.1/Pane_0.1.1_x64.dmg",
   "signature": "<tauri updater signature>",
   "notes": "## What's new\n..."
 }

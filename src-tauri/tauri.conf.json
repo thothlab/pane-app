@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "my-charles",
+  "productName": "Pane",
   "version": "0.1.0-dev",
-  "identifier": "tech.thothlab.mycharles",
+  "identifier": "tech.thothlab.pane",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "my-charles",
+        "title": "Pane",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

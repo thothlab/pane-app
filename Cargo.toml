@@ -2,17 +2,17 @@
 resolver = "2"
 members = [
     "src-tauri",
-    "crates/mycharles-ipc",
-    "crates/mycharles-ca",
-    "crates/mycharles-engine",
-    "crates/mycharles-engine-mitm",
-    "crates/mycharles-storage",
-    "crates/mycharles-devices",
-    "crates/mycharles-ios",
-    "crates/mycharles-android",
-    "crates/mycharles-mobileconfig",
-    "crates/mycharles-setup-server",
-    "crates/mycharles-pinning",
+    "crates/pane-ipc",
+    "crates/pane-ca",
+    "crates/pane-engine",
+    "crates/pane-engine-mitm",
+    "crates/pane-storage",
+    "crates/pane-devices",
+    "crates/pane-ios",
+    "crates/pane-android",
+    "crates/pane-mobileconfig",
+    "crates/pane-setup-server",
+    "crates/pane-pinning",
 ]
 
 [workspace.package]
@@ -20,8 +20,8 @@ version = "0.1.0-dev"
 edition = "2021"
 rust-version = "1.78"
 license = "Apache-2.0"
-repository = "https://github.com/thothlab/my-charles"
-authors = ["my-charles contributors"]
+repository = "https://github.com/thothlab/pane-app"
+authors = ["Pane contributors"]
 
 [workspace.dependencies]
 # Core async + util
@@ -48,6 +48,7 @@ bytes = "1"
 http = "1"
 rustls = "0.23"
 rustls-pemfile = "2"
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws-lc-rs", "tls12"] }
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 hyper = { version = "1", features = ["full"] }
@@ -69,17 +70,17 @@ nom = "7"
 broadcast = "0.1"
 
 # Internal crates
-mycharles-ipc = { path = "crates/mycharles-ipc" }
-mycharles-ca = { path = "crates/mycharles-ca" }
-mycharles-engine = { path = "crates/mycharles-engine" }
-mycharles-engine-mitm = { path = "crates/mycharles-engine-mitm" }
-mycharles-storage = { path = "crates/mycharles-storage" }
-mycharles-devices = { path = "crates/mycharles-devices" }
-mycharles-ios = { path = "crates/mycharles-ios" }
-mycharles-android = { path = "crates/mycharles-android" }
-mycharles-mobileconfig = { path = "crates/mycharles-mobileconfig" }
-mycharles-setup-server = { path = "crates/mycharles-setup-server" }
-mycharles-pinning = { path = "crates/mycharles-pinning" }
+pane-ipc = { path = "crates/pane-ipc" }
+pane-ca = { path = "crates/pane-ca" }
+pane-engine = { path = "crates/pane-engine" }
+pane-engine-mitm = { path = "crates/pane-engine-mitm" }
+pane-storage = { path = "crates/pane-storage" }
+pane-devices = { path = "crates/pane-devices" }
+pane-ios = { path = "crates/pane-ios" }
+pane-android = { path = "crates/pane-android" }
+pane-mobileconfig = { path = "crates/pane-mobileconfig" }
+pane-setup-server = { path = "crates/pane-setup-server" }
+pane-pinning = { path = "crates/pane-pinning" }
 
 [profile.release]
 strip = true

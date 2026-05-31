@@ -1,6 +1,6 @@
 use super::{to_api, CmdResult};
 use crate::state::AppState;
-use mycharles_ipc::{
+use pane_ipc::{
     AddDeviceArgs, DeviceDto, DiscoveredDeviceDto, RemoveDeviceArgs, RemoveDeviceResult,
 };
 use tauri::State;

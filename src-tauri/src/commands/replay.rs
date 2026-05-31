@@ -1,6 +1,6 @@
 use super::{to_api, CmdResult};
 use crate::state::AppState;
-use mycharles_ipc::{ReplayRecordDto, ReplaySendArgs};
+use pane_ipc::{ReplayRecordDto, ReplaySendArgs};
 use tauri::State;
 
 #[tauri::command]

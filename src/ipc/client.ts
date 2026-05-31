@@ -5,6 +5,7 @@ import type {
   ApiError,
   CaCertificateDto,
   CaExportResult,
+  CaSaveResult,
   CaptureBodyDto,
   CaptureDto,
   DeviceDto,
@@ -38,6 +39,8 @@ export const api = {
     rotate: () => call<CaCertificateDto>("rotate"),
     export: (format: "pem" | "der" | "qr" | "mobileconfig") =>
       call<CaExportResult>("export", { args: { format } }),
+    saveToFile: (format: "pem" | "der" | "qr" | "mobileconfig", path: string) =>
+      call<CaSaveResult>("save_to_file", { args: { format, path } }),
   },
   devices: {
     listAttachedUsb: () => call<DiscoveredDeviceDto[]>("list_attached_usb"),

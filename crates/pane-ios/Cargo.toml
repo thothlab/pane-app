@@ -1,0 +1,18 @@
+[package]
+name = "pane-ios"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["process", "io-util", "macros"] }
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+time.workspace = true
+pane-ipc.workspace = true
+pane-ca.workspace = true
+pane-mobileconfig.workspace = true

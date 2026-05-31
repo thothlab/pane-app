@@ -1,6 +1,6 @@
 # IPC contract
 
-Source of truth: `crates/mycharles-ipc/src/lib.rs`. TS mirror lives at
+Source of truth: `crates/pane-ipc/src/lib.rs`. TS mirror lives at
 `src/ipc/types.ts` (hand-maintained for MVP; specta codegen tracked as a
 follow-up).
 
