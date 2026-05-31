@@ -705,8 +705,8 @@ impl Storage {
     }
 
     /// Load active rules with their bodies materialized for the engine
-    /// matcher. A rule is active when it's enabled AND its collection is
-    /// enabled (or it has no collection). Ordered by collection priority
+    /// matcher. A rule is active solely based on its own `enabled` flag;
+    /// collections are purely a UI grouping. Ordered by collection priority
     /// then rule priority then created_at.
     pub fn list_active_rules(&self) -> Result<Vec<ActiveRule>> {
         let dtos = {
@@ -719,7 +719,6 @@ impl Storage {
                  FROM rule r
                  LEFT JOIN rule_collection c ON c.id = r.collection_id
                  WHERE r.enabled=1
-                   AND (r.collection_id IS NULL OR c.enabled=1)
                  ORDER BY COALESCE(c.priority, 0) ASC,
                           r.priority ASC,
                           r.created_at ASC",

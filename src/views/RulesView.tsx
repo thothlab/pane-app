@@ -8,6 +8,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   FolderPlus,
 } from "lucide-solid";
 import { api } from "@/ipc/client";
@@ -29,6 +30,21 @@ const RulesView: Component = () => {
   const [editing, setEditing] = createSignal<Editing>(null);
   const [loading, setLoading] = createSignal(true);
   const [collapsed, setCollapsed] = createSignal<Record<string, boolean>>({});
+
+  // Inline collection-creation form. `creatingName === null` means hidden.
+  // `creatingCallback` is invoked with the newly-created id (used when the
+  // form is opened from a rule editor's collection dropdown).
+  const [creatingName, setCreatingName] = createSignal<string | null>(null);
+  const [creatingCallback, setCreatingCallback] = createSignal<
+    ((id: string) => void) | null
+  >(null);
+  const [renamingId, setRenamingId] = createSignal<string | null>(null);
+  const [renamingName, setRenamingName] = createSignal("");
+
+  // Drag state. `dragOverKey` highlights the section currently under the
+  // pointer; UNGROUPED_KEY is used for the Ungrouped section.
+  const [draggingRuleId, setDraggingRuleId] = createSignal<string | null>(null);
+  const [dragOverKey, setDragOverKey] = createSignal<string | null>(null);
 
   const refresh = async () => {
     const [r, c] = await Promise.all([api.rules.list(), api.collections.list()]);
@@ -55,27 +71,56 @@ const RulesView: Component = () => {
     return map;
   });
 
-  const newCollection = async () => {
-    const name = prompt("Collection name", "New collection");
-    if (!name?.trim()) return;
-    await api.collections.upsert({
-      name: name.trim(),
+  const openCreateForm = (cb?: (id: string) => void) => {
+    setCreatingCallback(() => cb ?? null);
+    setCreatingName("");
+  };
+
+  const cancelCreate = () => {
+    setCreatingName(null);
+    setCreatingCallback(null);
+  };
+
+  const confirmCreate = async () => {
+    const n = creatingName()?.trim();
+    if (!n) {
+      cancelCreate();
+      return;
+    }
+    const saved = await api.collections.upsert({
+      name: n,
       enabled: true,
       priority: collections().length,
     });
+    const cb = creatingCallback();
+    cancelCreate();
     await refresh();
+    if (cb) cb(saved.id);
   };
 
-  const renameCollection = async (c: RuleCollectionDto) => {
-    const name = prompt("Collection name", c.name);
-    if (!name?.trim() || name === c.name) return;
-    await api.collections.upsert({
-      id: c.id,
-      name: name.trim(),
-      enabled: c.enabled,
-      priority: c.priority,
-    });
-    await refresh();
+  const startRename = (c: RuleCollectionDto) => {
+    setRenamingId(c.id);
+    setRenamingName(c.name);
+  };
+
+  const confirmRename = async () => {
+    const id = renamingId();
+    const name = renamingName().trim();
+    if (!id || !name) {
+      setRenamingId(null);
+      return;
+    }
+    const c = collections().find((x) => x.id === id);
+    if (c && name !== c.name) {
+      await api.collections.upsert({
+        id: c.id,
+        name,
+        enabled: c.enabled,
+        priority: c.priority,
+      });
+      await refresh();
+    }
+    setRenamingId(null);
   };
 
   const deleteCollection = async (c: RuleCollectionDto) => {
@@ -84,13 +129,30 @@ const RulesView: Component = () => {
     await refresh();
   };
 
-  const toggleCollection = async (c: RuleCollectionDto) => {
-    await api.collections.setEnabled(c.id, !c.enabled);
+  const toggleRule = async (r: RuleDto) => {
+    await api.rules.setEnabled(r.id, !r.enabled);
     await refresh();
   };
 
-  const toggleRule = async (r: RuleDto) => {
-    await api.rules.setEnabled(r.id, !r.enabled);
+  const moveRule = async (r: RuleDto, collectionId: string | null) => {
+    if (r.collection_id === collectionId) return;
+    await api.rules.upsert({
+      id: r.id,
+      collection_id: collectionId,
+      name: r.name,
+      enabled: r.enabled,
+      priority: r.priority,
+      match_host_glob: r.match_host_glob,
+      match_method: r.match_method,
+      match_path_glob: r.match_path_glob,
+      match_params: r.match_params,
+      res_status: r.res_status,
+      res_headers: r.res_headers,
+      res_body_id: r.res_body_id,
+      res_body_base64: null,
+      res_body_mime: r.res_body_mime,
+      res_delay_ms: r.res_delay_ms,
+    });
     await refresh();
   };
 
@@ -117,6 +179,24 @@ const RulesView: Component = () => {
   const toggleSection = (k: string) =>
     setCollapsed({ ...collapsed(), [k]: !collapsed()[k] });
 
+  // Drag handlers shared by every CollectionSection.
+  const onDragStartRule = (id: string) => setDraggingRuleId(id);
+  const onDragEndRule = () => {
+    setDraggingRuleId(null);
+    setDragOverKey(null);
+  };
+  const onDragOverSection = (key: string) => setDragOverKey(key);
+  const onDragLeaveSection = () => setDragOverKey(null);
+  const onDropOnSection = async (key: string, ruleId: string | null) => {
+    setDragOverKey(null);
+    const id = ruleId ?? draggingRuleId();
+    if (!id) return;
+    const rule = rules().find((r) => r.id === id);
+    if (!rule) return;
+    const targetCollectionId = key === UNGROUPED_KEY ? null : key;
+    await moveRule(rule, targetCollectionId);
+  };
+
   return (
     <div class="h-full grid grid-rows-[auto_1fr]">
       <header class="border-b border-border bg-bg-subtle px-4 py-3 flex items-center gap-3">
@@ -124,19 +204,50 @@ const RulesView: Component = () => {
         <div>
           <div class="text-sm font-semibold">Response stubs</div>
           <div class="text-xs text-fg-muted">
-            Group rules into collections. A rule fires only when both the rule and its collection
-            are enabled.
+            Group rules into collections. Drag a rule onto a collection to move it.
           </div>
         </div>
         <button
           class="ml-auto inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-border hover:bg-bg-muted"
-          onClick={newCollection}
+          onClick={() => openCreateForm()}
         >
           <FolderPlus size={14} /> New collection
         </button>
       </header>
 
       <div class="overflow-auto p-4 space-y-4">
+        <Show when={creatingName() !== null}>
+          <div class="border border-accent/40 rounded p-3 bg-bg-subtle/40 flex items-center gap-2">
+            <FolderPlus size={14} class="text-accent shrink-0" />
+            <input
+              ref={(el) => setTimeout(() => el?.focus(), 0)}
+              class="flex-1 bg-bg border border-border rounded px-2 py-1 text-sm"
+              placeholder="Collection name"
+              value={creatingName() ?? ""}
+              onInput={(e) => setCreatingName(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void confirmCreate();
+                }
+                if (e.key === "Escape") cancelCreate();
+              }}
+            />
+            <button
+              class="text-sm px-3 py-1 rounded bg-accent text-white hover:opacity-90 disabled:opacity-50"
+              disabled={!creatingName()?.trim()}
+              onClick={confirmCreate}
+            >
+              Create
+            </button>
+            <button
+              class="text-sm px-3 py-1 rounded hover:bg-bg-muted text-fg-muted"
+              onClick={cancelCreate}
+            >
+              Cancel
+            </button>
+          </div>
+        </Show>
         <For each={collections()}>
           {(c) => (
             <CollectionSection
@@ -144,8 +255,7 @@ const RulesView: Component = () => {
               rules={rulesByCollection().get(c.id) ?? []}
               collapsed={isCollapsed(c.id)}
               onToggleCollapsed={() => toggleSection(c.id)}
-              onToggleEnabled={() => toggleCollection(c)}
-              onRename={() => renameCollection(c)}
+              onRename={() => startRename(c)}
               onDelete={() => deleteCollection(c)}
               onAddRule={() => startNewRule(c.id)}
               onEditRule={startEditRule}
@@ -155,6 +265,20 @@ const RulesView: Component = () => {
               onSaved={onRuleSaved}
               onCancel={cancelEdit}
               collections={collections()}
+              onOpenCreateCollection={openCreateForm}
+              onStartRename={startRename}
+              renamingId={renamingId()}
+              renamingName={renamingName()}
+              onRenamingNameChange={setRenamingName}
+              onConfirmRename={confirmRename}
+              onCancelRename={() => setRenamingId(null)}
+              draggingRuleId={draggingRuleId()}
+              dragOverKey={dragOverKey()}
+              onDragStartRule={onDragStartRule}
+              onDragEndRule={onDragEndRule}
+              onDragOverSection={onDragOverSection}
+              onDragLeaveSection={onDragLeaveSection}
+              onDropOnSection={(rid) => onDropOnSection(c.id, rid)}
             />
           )}
         </For>
@@ -172,6 +296,20 @@ const RulesView: Component = () => {
           onSaved={onRuleSaved}
           onCancel={cancelEdit}
           collections={collections()}
+          onOpenCreateCollection={openCreateForm}
+          onStartRename={startRename}
+          renamingId={renamingId()}
+          renamingName={renamingName()}
+          onRenamingNameChange={setRenamingName}
+          onConfirmRename={confirmRename}
+          onCancelRename={() => setRenamingId(null)}
+          draggingRuleId={draggingRuleId()}
+          dragOverKey={dragOverKey()}
+          onDragStartRule={onDragStartRule}
+          onDragEndRule={onDragEndRule}
+          onDragOverSection={onDragOverSection}
+          onDragLeaveSection={onDragLeaveSection}
+          onDropOnSection={(rid) => onDropOnSection(UNGROUPED_KEY, rid)}
         />
 
         <Show when={!loading() && rules().length === 0 && collections().length === 0}>
@@ -190,7 +328,6 @@ const CollectionSection: Component<{
   rules: RuleDto[];
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  onToggleEnabled?: () => void;
   onRename?: () => void;
   onDelete?: () => void;
   onAddRule: () => void;
@@ -201,9 +338,25 @@ const CollectionSection: Component<{
   onSaved: (r: RuleDto) => void;
   onCancel: () => void;
   collections: RuleCollectionDto[];
+  onOpenCreateCollection: (cb?: (id: string) => void) => void;
+  onStartRename: (c: RuleCollectionDto) => void;
+  renamingId: string | null;
+  renamingName: string;
+  onRenamingNameChange: (s: string) => void;
+  onConfirmRename: () => void;
+  onCancelRename: () => void;
+  draggingRuleId: string | null;
+  dragOverKey: string | null;
+  onDragStartRule: (id: string) => void;
+  onDragEndRule: () => void;
+  onDragOverSection: (key: string) => void;
+  onDragLeaveSection: () => void;
+  onDropOnSection: (ruleId: string | null) => void;
 }> = (p) => {
   const isUngrouped = () => p.collection === null;
-  const enabled = () => p.collection?.enabled ?? true;
+  const sectionKey = () => p.collection?.id ?? UNGROUPED_KEY;
+  const isRenaming = () => p.collection !== null && p.renamingId === p.collection.id;
+  const isDragOver = () => p.draggingRuleId !== null && p.dragOverKey === sectionKey();
   const editingNewHere = () => {
     const ed = p.editing;
     return (
@@ -213,7 +366,36 @@ const CollectionSection: Component<{
 
   return (
     <section
-      class={`border rounded ${enabled() ? "border-border" : "border-border/40 bg-bg-subtle/30"}`}
+      class={`border rounded transition-colors ${
+        isDragOver()
+          ? "border-accent ring-2 ring-accent/40 bg-accent/5"
+          : "border-border"
+      }`}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        p.onDragOverSection(sectionKey());
+      }}
+      onDragOver={(e) => {
+        // Unconditionally allow drop. We can't reliably read p.draggingRuleId
+        // here in time across native DnD events, so just accept the drop and
+        // let onDropOnSection bail out if there's no active rule drag.
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        p.onDragOverSection(sectionKey());
+      }}
+      onDragLeave={(e) => {
+        // Only clear if leaving the section entirely (not a child element).
+        const related = e.relatedTarget as Node | null;
+        if (!related || !(e.currentTarget as Node).contains(related)) {
+          p.onDragLeaveSection();
+        }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = e.dataTransfer?.getData("text/plain") || null;
+        p.onDropOnSection(id);
+      }}
     >
       <header class="flex items-center gap-2 px-3 py-2">
         <button
@@ -226,21 +408,30 @@ const CollectionSection: Component<{
           </Show>
         </button>
 
-        <Show when={!isUngrouped()}>
-          <button
-            class={`w-9 h-5 rounded-full relative transition shrink-0 ${enabled() ? "bg-accent" : "bg-bg-muted"}`}
-            title={enabled() ? "Disable collection" : "Enable collection"}
-            onClick={p.onToggleEnabled}
-          >
-            <span
-              class="absolute top-0.5 w-4 h-4 rounded-full bg-white transition"
-              style={{ left: enabled() ? "1.125rem" : "0.125rem" }}
-            />
-          </button>
+        <Show
+          when={isRenaming()}
+          fallback={
+            <>
+              <div class="font-medium text-sm">{p.collection?.name ?? "Ungrouped"}</div>
+              <div class="text-xs text-fg-muted">({p.rules.length})</div>
+            </>
+          }
+        >
+          <input
+            ref={(el) => setTimeout(() => el?.focus(), 0)}
+            class="bg-bg border border-border rounded px-2 py-0.5 text-sm flex-1 max-w-xs"
+            value={p.renamingName}
+            onInput={(e) => p.onRenamingNameChange(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                p.onConfirmRename();
+              }
+              if (e.key === "Escape") p.onCancelRename();
+            }}
+            onBlur={() => p.onConfirmRename()}
+          />
         </Show>
-
-        <div class="font-medium text-sm">{p.collection?.name ?? "Ungrouped"}</div>
-        <div class="text-xs text-fg-muted">({p.rules.length})</div>
 
         <div class="ml-auto flex items-center gap-1">
           <button
@@ -277,6 +468,7 @@ const CollectionSection: Component<{
               collections={p.collections}
               onCancel={p.onCancel}
               onSaved={p.onSaved}
+              onOpenCreateCollection={p.onOpenCreateCollection}
             />
           </Show>
 
@@ -291,10 +483,12 @@ const CollectionSection: Component<{
                 fallback={
                   <RuleRow
                     rule={rule}
-                    collectionEnabled={enabled()}
+                    isDragging={p.draggingRuleId === rule.id}
                     onToggle={() => p.onToggleRule(rule)}
                     onEdit={() => p.onEditRule(rule)}
                     onDelete={() => p.onDeleteRule(rule)}
+                    onDragStart={() => p.onDragStartRule(rule.id)}
+                    onDragEnd={p.onDragEndRule}
                   />
                 }
               >
@@ -303,6 +497,7 @@ const CollectionSection: Component<{
                   defaultCollectionId={rule.collection_id}
                   collections={p.collections}
                   onCancel={p.onCancel}
+                  onOpenCreateCollection={p.onOpenCreateCollection}
                   onSaved={p.onSaved}
                 />
               </Show>
@@ -316,12 +511,14 @@ const CollectionSection: Component<{
 
 const RuleRow: Component<{
   rule: RuleDto;
-  collectionEnabled: boolean;
+  isDragging: boolean;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
 }> = (p) => {
-  const effectivelyOn = () => p.rule.enabled && p.collectionEnabled;
+  const effectivelyOn = () => p.rule.enabled;
   const summary = () => {
     const r = p.rule;
     const m = r.match_method ?? "ANY";
@@ -335,7 +532,16 @@ const RuleRow: Component<{
   };
   return (
     <div
-      class={`border rounded p-2 flex items-start gap-3 ${effectivelyOn() ? "border-border bg-bg" : "border-border/50 bg-bg-subtle/30 opacity-70"}`}
+      draggable={true}
+      onDragStart={(e) => {
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", p.rule.id);
+        }
+        p.onDragStart();
+      }}
+      onDragEnd={p.onDragEnd}
+      class={`border rounded p-2 flex items-start gap-3 cursor-move ${effectivelyOn() ? "border-border bg-bg" : "border-border/50 bg-bg-subtle/30 opacity-70"} ${p.isDragging ? "opacity-40" : ""}`}
     >
       <button
         class={`mt-0.5 w-9 h-5 rounded-full relative transition shrink-0 ${p.rule.enabled ? "bg-accent" : "bg-bg-muted"}`}
@@ -350,11 +556,6 @@ const RuleRow: Component<{
       <div class="flex-1 min-w-0">
         <div class="flex items-baseline gap-2">
           <div class="font-medium text-sm truncate">{p.rule.name || "(unnamed)"}</div>
-          <Show when={p.rule.enabled && !p.collectionEnabled}>
-            <div class="text-xs text-warn" title="Collection disabled">
-              · collection off
-            </div>
-          </Show>
         </div>
         <div class="text-xs font-mono text-fg-subtle truncate mt-0.5">{summary()}</div>
         <div class="text-xs text-fg-muted mt-0.5">
@@ -423,6 +624,7 @@ const RuleEditor: Component<{
   collections: RuleCollectionDto[];
   onCancel: () => void;
   onSaved: (saved: RuleDto) => void;
+  onOpenCreateCollection: (cb?: (id: string) => void) => void;
 }> = (p) => {
   const init = (): DraftState => {
     const r = p.initial;
@@ -491,6 +693,13 @@ const RuleEditor: Component<{
   return (
     <div class="border border-accent/40 rounded p-3 bg-bg-subtle/40 space-y-4">
       <div class="flex items-center gap-2 flex-wrap">
+        <button
+          class="text-fg-muted hover:text-fg shrink-0 p-0.5 rounded hover:bg-bg-muted"
+          title="Collapse without saving"
+          onClick={p.onCancel}
+        >
+          <ChevronUp size={14} />
+        </button>
         <input
           class="flex-1 min-w-48 bg-bg border border-border rounded px-2 py-1 text-sm"
           placeholder="Rule name"
@@ -502,10 +711,21 @@ const RuleEditor: Component<{
           <select
             class="bg-bg border border-border rounded px-2 py-1 text-sm"
             value={d().collection_id ?? ""}
-            onChange={(e) => patch({ collection_id: e.currentTarget.value || null })}
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              if (v === "__new__") {
+                // Restore previous selection visually while the inline
+                // create form is open at the top of the rules list.
+                e.currentTarget.value = d().collection_id ?? "";
+                p.onOpenCreateCollection((id) => patch({ collection_id: id }));
+              } else {
+                patch({ collection_id: v || null });
+              }
+            }}
           >
             <option value="">— Ungrouped —</option>
             <For each={p.collections}>{(c) => <option value={c.id}>{c.name}</option>}</For>
+            <option value="__new__">+ New collection…</option>
           </select>
         </label>
         <label class="flex items-center gap-1 text-xs text-fg-muted">

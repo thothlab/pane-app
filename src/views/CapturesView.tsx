@@ -205,6 +205,14 @@ const CapturesView: Component = () => {
   const [savePinned, setSavePinned] = createSignal(false);
   const [saveBusy, setSaveBusy] = createSignal(false);
   let savePopover: HTMLDivElement | undefined;
+  let filterInput: HTMLInputElement | undefined;
+  let filterOverlay: HTMLPreElement | undefined;
+
+  function syncFilterScroll() {
+    if (filterInput && filterOverlay) {
+      filterOverlay.scrollLeft = filterInput.scrollLeft;
+    }
+  }
 
   function openSave() {
     if (!filter().trim()) return;
@@ -300,14 +308,26 @@ const CapturesView: Component = () => {
       <div class="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-subtle">
         <Search size={14} class="text-fg-muted shrink-0" />
         <div class="flex-1 relative flex items-center">
+          <pre
+            ref={(el) => (filterOverlay = el)}
+            aria-hidden="true"
+            class="absolute inset-0 pointer-events-none text-sm font-mono whitespace-pre overflow-hidden pr-6 m-0 flex items-center"
+          >
+            <span class="flex-shrink-0">
+              <FilterHighlight text={filter()} />
+            </span>
+          </pre>
           <input
-            class="w-full bg-transparent outline-none text-sm placeholder:text-fg-muted font-mono pr-6"
+            ref={(el) => (filterInput = el)}
+            class="w-full bg-transparent outline-none text-sm placeholder:text-fg-muted font-mono pr-6 text-transparent caret-fg relative"
             placeholder="google · host:api.example.com · status:5.. · !error:tls_handshake"
             value={filter()}
             onInput={(e) => {
               setFilter(e.currentTarget.value);
               debouncedRefresh();
+              syncFilterScroll();
             }}
+            onScroll={syncFilterScroll}
             onKeyDown={(e) => {
               if (e.key === "Escape" && filter()) {
                 e.preventDefault();
@@ -315,6 +335,8 @@ const CapturesView: Component = () => {
                 debouncedRefresh();
               }
             }}
+            onKeyUp={syncFilterScroll}
+            onClick={syncFilterScroll}
             title={FILTER_HELP}
           />
           <Show when={filter().trim()}>
@@ -575,6 +597,59 @@ function fmtBytes(n: number) {
   if (n < 1024) return `${n}B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
   return `${(n / 1024 / 1024).toFixed(1)}M`;
+}
+
+// Filter DSL keys recognised by the backend (see crates/pane-storage/src/filter_dsl.rs).
+// Used for live key validation in the input.
+const VALID_FILTER_KEYS = new Set([
+  "host",
+  "method",
+  "status",
+  "mime",
+  "path",
+  "size",
+  "duration",
+  "error",
+]);
+
+/// Render the filter input's text with per-token colours. Mirrors the input
+/// character-for-character (same font + whitespace) so it can sit behind a
+/// transparent input.
+const FilterHighlight: import("solid-js").Component<{ text: string }> = (p) => {
+  const parts = () => tokenizeForHighlight(p.text);
+  return (
+    <For each={parts()}>
+      {(part) => <span class={part.cls}>{part.text}</span>}
+    </For>
+  );
+};
+
+type HlPart = { text: string; cls: string };
+
+function tokenizeForHighlight(text: string): HlPart[] {
+  const out: HlPart[] = [];
+  const tokens = text.match(/\s+|\S+/g) ?? [];
+  for (const tok of tokens) {
+    if (/^\s+$/.test(tok)) {
+      out.push({ text: tok, cls: "" });
+      continue;
+    }
+    const m = tok.match(/^(!?)([a-zA-Z_]+)(:)(.*)$/);
+    if (m) {
+      const [, bang, key, colon, value] = m;
+      if (bang) out.push({ text: bang, cls: "text-danger" });
+      const known = VALID_FILTER_KEYS.has(key.toLowerCase());
+      out.push({
+        text: key,
+        cls: known ? "text-accent" : "text-danger underline decoration-dotted",
+      });
+      out.push({ text: colon, cls: "text-fg-muted" });
+      if (value) out.push({ text: value, cls: "text-fg" });
+    } else {
+      out.push({ text: tok, cls: "text-fg" });
+    }
+  }
+  return out;
 }
 
 export default CapturesView;
