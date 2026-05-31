@@ -7,6 +7,7 @@ mod commands;
 mod state;
 
 use state::AppState;
+use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
 use tracing_subscriber::EnvFilter;
 
 pub fn run() {
@@ -58,11 +59,66 @@ pub fn run() {
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "Pane starting");
-            let _ = app;
+            if let Err(e) = install_app_menu(app.handle()) {
+                tracing::warn!(error = %e, "failed to install app menu");
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running Pane");
+}
+
+/// Build the application menu so the About dialog shows the Pane icon and
+/// version (Tauri's default About is the macOS folder icon). The icon comes
+/// from `bundle.icon` in tauri.conf.json — tauri-build compiled it into the
+/// binary, and `default_window_icon()` hands it back to us.
+fn install_app_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let icon = app.default_window_icon().cloned();
+
+    let about = AboutMetadata {
+        name: Some("Pane".into()),
+        version: Some(env!("CARGO_PKG_VERSION").into()),
+        icon,
+        ..Default::default()
+    };
+
+    let app_submenu = SubmenuBuilder::new(app, "Pane")
+        .about(Some(about))
+        .separator()
+        .services()
+        .separator()
+        .hide()
+        .hide_others()
+        .show_all()
+        .separator()
+        .quit()
+        .build()?;
+
+    let edit_submenu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+
+    let view_submenu = SubmenuBuilder::new(app, "View").fullscreen().build()?;
+
+    let window_submenu = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .maximize()
+        .separator()
+        .close_window()
+        .build()?;
+
+    let menu = MenuBuilder::new(app)
+        .items(&[&app_submenu, &edit_submenu, &view_submenu, &window_submenu])
+        .build()?;
+
+    app.set_menu(menu)?;
+    Ok(())
 }
 
 fn init_logging() {
