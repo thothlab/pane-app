@@ -127,7 +127,7 @@ export interface PinningEventDto {
   hint_kind: string;
 }
 
-export interface RuleQueryParamDto {
+export interface RuleParamDto {
   name: string;
   value: string;
 }
@@ -142,10 +142,11 @@ export interface RuleDto {
   name: string;
   enabled: boolean;
   priority: number;
+  collection_id: string | null;
   match_host_glob: string | null;
   match_method: string | null;
   match_path_glob: string | null;
-  match_query: RuleQueryParamDto[];
+  match_params: RuleParamDto[];
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_id: string | null;
@@ -161,14 +162,32 @@ export interface RuleUpsertArgs {
   name: string;
   enabled: boolean;
   priority: number;
+  collection_id: string | null;
   match_host_glob: string | null;
   match_method: string | null;
   match_path_glob: string | null;
-  match_query: RuleQueryParamDto[];
+  match_params: RuleParamDto[];
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_id?: string | null;
   res_body_base64?: string | null;
   res_body_mime?: string | null;
   res_delay_ms: number;
+}
+
+export interface RuleCollectionDto {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  rule_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollectionUpsertArgs {
+  id?: string | null;
+  name: string;
+  enabled: boolean;
+  priority: number;
 }

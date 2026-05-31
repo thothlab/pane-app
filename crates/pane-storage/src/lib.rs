@@ -17,9 +17,9 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use base64::Engine as _;
 use pane_ipc::{
-    CaptureBodyDto, CaptureDto, ExportOneResult, FilterDto, HeaderDto, ReplayRecordDto,
-    ReplaySendArgs, RuleDto, RuleHeaderDto, RuleQueryParamDto, RuleSetEnabledArgs, RuleUpsertArgs,
-    SaveFilterArgs, SessionDto,
+    CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionUpsertArgs, ExportOneResult,
+    FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs, RuleCollectionDto, RuleDto,
+    RuleHeaderDto, RuleParamDto, RuleSetEnabledArgs, RuleUpsertArgs, SaveFilterArgs, SessionDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -36,7 +36,9 @@ pub struct ActiveRule {
     pub host_glob: Option<String>,
     pub method: Option<String>,
     pub path_glob: Option<String>,
-    pub query: Vec<(String, String)>,
+    /// name=value pairs matched against either query string OR top-level JSON
+    /// body of the request, depending on which side has the field.
+    pub params: Vec<(String, String)>,
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
@@ -470,6 +472,107 @@ impl Storage {
         Ok(())
     }
 
+    // ---------- Rule collections ----------
+
+    pub fn list_collections(&self) -> Result<Vec<RuleCollectionDto>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.name, c.enabled, c.priority, c.created_at, c.updated_at,
+                    (SELECT COUNT(*) FROM rule r WHERE r.collection_id = c.id)
+             FROM rule_collection c
+             ORDER BY c.priority ASC, c.created_at ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(RuleCollectionDto {
+                id: Uuid::parse_str(&r.get::<_, String>(0)?).unwrap(),
+                name: r.get(1)?,
+                enabled: r.get::<_, i64>(2)? != 0,
+                priority: r.get(3)?,
+                created_at: r.get::<_, i64>(4)?.to_string(),
+                updated_at: r.get::<_, i64>(5)?.to_string(),
+                rule_count: r.get::<_, i64>(6)? as u64,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn upsert_collection(&self, args: CollectionUpsertArgs) -> Result<RuleCollectionDto> {
+        let id = args.id.unwrap_or_else(Uuid::new_v4);
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let conn = self.conn.lock();
+        let existing_created: Option<i64> = conn
+            .query_row(
+                "SELECT created_at FROM rule_collection WHERE id=?1",
+                params![id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let created_at = existing_created.unwrap_or(now);
+        conn.execute(
+            "INSERT INTO rule_collection (id, name, enabled, priority, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name, enabled=excluded.enabled,
+                priority=excluded.priority, updated_at=excluded.updated_at",
+            params![
+                id.to_string(),
+                &args.name,
+                args.enabled as i64,
+                args.priority,
+                created_at,
+                now,
+            ],
+        )?;
+        drop(conn);
+        self.get_collection(id)
+    }
+
+    pub fn get_collection(&self, id: Uuid) -> Result<RuleCollectionDto> {
+        let conn = self.conn.lock();
+        let dto = conn.query_row(
+            "SELECT c.id, c.name, c.enabled, c.priority, c.created_at, c.updated_at,
+                    (SELECT COUNT(*) FROM rule r WHERE r.collection_id = c.id)
+             FROM rule_collection c WHERE c.id=?1",
+            params![id.to_string()],
+            |r| {
+                Ok(RuleCollectionDto {
+                    id: Uuid::parse_str(&r.get::<_, String>(0)?).unwrap(),
+                    name: r.get(1)?,
+                    enabled: r.get::<_, i64>(2)? != 0,
+                    priority: r.get(3)?,
+                    created_at: r.get::<_, i64>(4)?.to_string(),
+                    updated_at: r.get::<_, i64>(5)?.to_string(),
+                    rule_count: r.get::<_, i64>(6)? as u64,
+                })
+            },
+        )?;
+        Ok(dto)
+    }
+
+    pub fn delete_collection(&self, id: Uuid) -> Result<()> {
+        let conn = self.conn.lock();
+        // Detach rules first (so they end up in Ungrouped instead of cascading delete).
+        conn.execute(
+            "UPDATE rule SET collection_id = NULL WHERE collection_id=?1",
+            params![id.to_string()],
+        )?;
+        conn.execute(
+            "DELETE FROM rule_collection WHERE id=?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_collection_enabled(&self, args: CollectionSetEnabledArgs) -> Result<()> {
+        let conn = self.conn.lock();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        conn.execute(
+            "UPDATE rule_collection SET enabled=?1, updated_at=?2 WHERE id=?3",
+            params![args.enabled as i64, now, args.id.to_string()],
+        )?;
+        Ok(())
+    }
+
     // ---------- Rules (response stubbing) ----------
 
     pub fn list_rules(&self) -> Result<Vec<RuleDto>> {
@@ -479,7 +582,7 @@ impl Storage {
                 "SELECT id, name, enabled, priority,
                         match_host_glob, match_method, match_path_glob, match_query,
                         res_status, res_headers, res_body_id, res_delay_ms,
-                        created_at, updated_at
+                        created_at, updated_at, collection_id
                  FROM rule
                  ORDER BY priority ASC, created_at ASC",
             )?;
@@ -506,7 +609,7 @@ impl Storage {
             "SELECT id, name, enabled, priority,
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
-                    created_at, updated_at
+                    created_at, updated_at, collection_id
              FROM rule WHERE id=?1",
             params![id.to_string()],
             |r| Self::map_rule_row(r),
@@ -538,7 +641,7 @@ impl Storage {
 
         let id = args.id.unwrap_or_else(Uuid::new_v4);
         let now = OffsetDateTime::now_utc().unix_timestamp();
-        let match_query = serde_json::to_string(&args.match_query)?;
+        let match_params = serde_json::to_string(&args.match_params)?;
         let res_headers = serde_json::to_string(&args.res_headers)?;
         let conn = self.conn.lock();
         // Preserve created_at on update.
@@ -554,15 +657,15 @@ impl Storage {
             "INSERT INTO rule (id, name, enabled, priority,
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
-                    created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                    created_at, updated_at, collection_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, enabled=excluded.enabled, priority=excluded.priority,
                 match_host_glob=excluded.match_host_glob, match_method=excluded.match_method,
                 match_path_glob=excluded.match_path_glob, match_query=excluded.match_query,
                 res_status=excluded.res_status, res_headers=excluded.res_headers,
                 res_body_id=excluded.res_body_id, res_delay_ms=excluded.res_delay_ms,
-                updated_at=excluded.updated_at",
+                collection_id=excluded.collection_id, updated_at=excluded.updated_at",
             params![
                 id.to_string(),
                 &args.name,
@@ -571,13 +674,14 @@ impl Storage {
                 args.match_host_glob,
                 args.match_method,
                 args.match_path_glob,
-                match_query,
+                match_params,
                 args.res_status as i64,
                 res_headers,
                 body_id.map(|u| u.to_string()),
                 args.res_delay_ms as i64,
                 created_at,
                 now,
+                args.collection_id.map(|u| u.to_string()),
             ],
         )?;
         drop(conn);
@@ -600,18 +704,25 @@ impl Storage {
         Ok(())
     }
 
-    /// Load active (enabled) rules with their bodies materialized for the
-    /// engine matcher. Ordered by priority ASC, then created_at ASC.
+    /// Load active rules with their bodies materialized for the engine
+    /// matcher. A rule is active when it's enabled AND its collection is
+    /// enabled (or it has no collection). Ordered by collection priority
+    /// then rule priority then created_at.
     pub fn list_active_rules(&self) -> Result<Vec<ActiveRule>> {
         let dtos = {
             let conn = self.conn.lock();
             let mut stmt = conn.prepare(
-                "SELECT id, name, enabled, priority,
-                        match_host_glob, match_method, match_path_glob, match_query,
-                        res_status, res_headers, res_body_id, res_delay_ms,
-                        created_at, updated_at
-                 FROM rule WHERE enabled=1
-                 ORDER BY priority ASC, created_at ASC",
+                "SELECT r.id, r.name, r.enabled, r.priority,
+                        r.match_host_glob, r.match_method, r.match_path_glob, r.match_query,
+                        r.res_status, r.res_headers, r.res_body_id, r.res_delay_ms,
+                        r.created_at, r.updated_at, r.collection_id
+                 FROM rule r
+                 LEFT JOIN rule_collection c ON c.id = r.collection_id
+                 WHERE r.enabled=1
+                   AND (r.collection_id IS NULL OR c.enabled=1)
+                 ORDER BY COALESCE(c.priority, 0) ASC,
+                          r.priority ASC,
+                          r.created_at ASC",
             )?;
             let rows = stmt.query_map([], |r| Self::map_rule_row(r))?;
             let mut v = Vec::new();
@@ -633,8 +744,8 @@ impl Storage {
                 host_glob: dto.match_host_glob,
                 method: dto.match_method,
                 path_glob: dto.match_path_glob,
-                query: dto
-                    .match_query
+                params: dto
+                    .match_params
                     .into_iter()
                     .map(|q| (q.name, q.value))
                     .collect(),
@@ -654,20 +765,22 @@ impl Storage {
 
     fn map_rule_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RuleDto> {
         let id: String = r.get(0)?;
-        let match_query: String = r.get(7)?;
+        let match_params_json: String = r.get(7)?;
         let res_headers: String = r.get(9)?;
         let body_id: Option<String> = r.get(10)?;
         let created_at: i64 = r.get(12)?;
         let updated_at: i64 = r.get(13)?;
+        let collection_id: Option<String> = r.get(14)?;
         Ok(RuleDto {
             id: Uuid::parse_str(&id).unwrap(),
             name: r.get(1)?,
             enabled: r.get::<_, i64>(2)? != 0,
             priority: r.get(3)?,
+            collection_id: collection_id.and_then(|s| Uuid::parse_str(&s).ok()),
             match_host_glob: r.get(4)?,
             match_method: r.get(5)?,
             match_path_glob: r.get(6)?,
-            match_query: serde_json::from_str::<Vec<RuleQueryParamDto>>(&match_query)
+            match_params: serde_json::from_str::<Vec<RuleParamDto>>(&match_params_json)
                 .unwrap_or_default(),
             res_status: r.get::<_, i64>(8)? as u16,
             res_headers: serde_json::from_str::<Vec<RuleHeaderDto>>(&res_headers)

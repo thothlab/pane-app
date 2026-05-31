@@ -12,8 +12,10 @@ import type {
   DiscoveredDeviceDto,
   FilterDto,
   ProxyStatusDto,
+  CollectionUpsertArgs,
   ReplayRecordDto,
   RequestSpec,
+  RuleCollectionDto,
   RuleDto,
   RuleUpsertArgs,
   SessionDto,
@@ -83,5 +85,13 @@ export const api = {
     delete: (id: string) => call<void>("rule_delete", { id }),
     setEnabled: (id: string, enabled: boolean) =>
       call<void>("rule_set_enabled", { args: { id, enabled } }),
+  },
+  collections: {
+    list: () => call<RuleCollectionDto[]>("collections_list"),
+    upsert: (args: CollectionUpsertArgs) =>
+      call<RuleCollectionDto>("collection_upsert", { args }),
+    delete: (id: string) => call<void>("collection_delete", { id }),
+    setEnabled: (id: string, enabled: boolean) =>
+      call<void>("collection_set_enabled", { args: { id, enabled } }),
   },
 };

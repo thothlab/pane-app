@@ -117,10 +117,13 @@ pub async fn handle(
     // Stub hook: if any active rule matches this request, serve its canned
     // response and skip the upstream call entirely.
     if let Ok(rules) = storage.list_active_rules() {
+        let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
             host: &host,
             method: &method,
             path: &path,
+            body: &req_body,
+            content_type: content_type_lower.as_deref(),
         };
         if let Some(rule) = crate::rules::first_match(&rules, req) {
             serve_stub(&mut write_half, &storage, &events, cap_id, started_at, rule).await?;
@@ -221,10 +224,13 @@ async fn handle_tls_inner(
     // Stub hook (TLS path): same as plain HTTP — match against active rules
     // and serve the canned response over the TLS stream if any rule fires.
     if let Ok(rules) = storage.list_active_rules() {
+        let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
             host: &host,
             method: &method,
             path: &path,
+            body: &req_body,
+            content_type: content_type_lower.as_deref(),
         };
         if let Some(rule) = crate::rules::first_match(&rules, req) {
             let mut tls_stream = reader.into_inner();
@@ -415,6 +421,15 @@ where
     w.write_all(head.as_bytes()).await?;
     w.write_all(body).await?;
     Ok(())
+}
+
+/// Lowercased Content-Type header value (just the leading part is fine; the
+/// matcher only does substring checks like `.contains("json")`).
+fn content_type_lower(headers: &[(String, String)]) -> Option<String> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.to_ascii_lowercase())
 }
 
 fn parse_http_target(target: &str) -> (String, u16, String) {

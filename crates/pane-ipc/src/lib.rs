@@ -239,8 +239,11 @@ pub struct FilterDto {
 
 // ------------------- Rules (response stubbing) -------------------
 
+/// Name/value param matched against either the query string of a GET-style
+/// request, or the top-level fields of a JSON request body. The matcher
+/// stringifies JSON numbers/booleans before comparing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuleQueryParamDto {
+pub struct RuleParamDto {
     pub name: String,
     pub value: String,
 }
@@ -257,11 +260,12 @@ pub struct RuleDto {
     pub name: String,
     pub enabled: bool,
     pub priority: i64,
+    pub collection_id: Option<Uuid>,
 
     pub match_host_glob: Option<String>,
     pub match_method: Option<String>,
     pub match_path_glob: Option<String>,
-    pub match_query: Vec<RuleQueryParamDto>,
+    pub match_params: Vec<RuleParamDto>,
 
     pub res_status: u16,
     pub res_headers: Vec<RuleHeaderDto>,
@@ -281,11 +285,12 @@ pub struct RuleUpsertArgs {
     pub name: String,
     pub enabled: bool,
     pub priority: i64,
+    pub collection_id: Option<Uuid>,
 
     pub match_host_glob: Option<String>,
     pub match_method: Option<String>,
     pub match_path_glob: Option<String>,
-    pub match_query: Vec<RuleQueryParamDto>,
+    pub match_params: Vec<RuleParamDto>,
 
     pub res_status: u16,
     pub res_headers: Vec<RuleHeaderDto>,
@@ -299,6 +304,31 @@ pub struct RuleUpsertArgs {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleSetEnabledArgs {
+    pub id: Uuid,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleCollectionDto {
+    pub id: Uuid,
+    pub name: String,
+    pub enabled: bool,
+    pub priority: i64,
+    pub rule_count: u64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionUpsertArgs {
+    pub id: Option<Uuid>,
+    pub name: String,
+    pub enabled: bool,
+    pub priority: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionSetEnabledArgs {
     pub id: Uuid,
     pub enabled: bool,
 }
