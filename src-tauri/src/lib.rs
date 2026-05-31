@@ -49,6 +49,12 @@ pub fn run() {
             commands::filters::filters_save,
             commands::filters::filters_list,
             commands::filters::filters_delete,
+            // rules
+            commands::rules::rules_list,
+            commands::rules::rule_get,
+            commands::rules::rule_upsert,
+            commands::rules::rule_delete,
+            commands::rules::rule_set_enabled,
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "Pane starting");

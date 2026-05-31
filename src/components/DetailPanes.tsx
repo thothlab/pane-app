@@ -1,8 +1,10 @@
 import { type Component, createSignal, createMemo, createEffect, Show, For } from "solid-js";
-import { Lock } from "lucide-solid";
+import { Lock, ChevronDown, ChevronRight } from "lucide-solid";
 import { useNavigate } from "@solidjs/router";
 import { api } from "@/ipc/client";
 import type { CaptureBodyDto, CaptureDto } from "@/ipc/types";
+import BodyViewer from "./BodyViewer";
+import { HorizontalResizer } from "./HorizontalResizer";
 
 type Tab = "overview" | "request" | "response" | "timing" | "tls";
 
@@ -11,6 +13,8 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
   const [tab, setTab] = createSignal<Tab>("overview");
   const [full, setFull] = createSignal<CaptureDto | null>(null);
   const [body, setBody] = createSignal<CaptureBodyDto | null>(null);
+
+  const DEFAULT_BODY_LIMIT = 4 * 1024 * 1024; // 4 MB
 
   createEffect(async () => {
     const c = props.capture;
@@ -22,13 +26,21 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
     const f = await api.captures.get(c.id);
     setFull(f);
     if (tab() === "response" && f.res_body_id) {
-      setBody(await api.captures.body(f.res_body_id, 262144));
+      setBody(await api.captures.body(f.res_body_id, DEFAULT_BODY_LIMIT));
     } else if (tab() === "request" && f.req_body_id) {
-      setBody(await api.captures.body(f.req_body_id, 262144));
+      setBody(await api.captures.body(f.req_body_id, DEFAULT_BODY_LIMIT));
     } else {
       setBody(null);
     }
   });
+
+  const loadFullBody = async () => {
+    const f = full();
+    if (!f) return;
+    const id = tab() === "request" ? f.req_body_id : f.res_body_id;
+    if (!id) return;
+    setBody(await api.captures.body(id));
+  };
 
   const isPinning = createMemo(() => full()?.error_kind === "pinning");
 
@@ -67,9 +79,9 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
           </div>
         </div>
 
-        <div class="overflow-auto p-3 font-mono text-xs">
+        <div class="min-h-0 font-mono text-xs flex flex-col">
           <Show when={isPinning()}>
-            <div class="mb-3 p-3 rounded border border-warn/40 bg-warn/10 text-warn">
+            <div class="mx-3 mt-3 mb-0 p-3 rounded border border-warn/40 bg-warn/10 text-warn">
               <div class="flex items-center gap-2 font-semibold">
                 <Lock size={14} /> Cert pinning detected
               </div>
@@ -82,43 +94,51 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
           </Show>
 
           <Show when={tab() === "overview"}>
-            <Row k="ID">{full()!.id}</Row>
-            <Row k="Method">{full()!.method}</Row>
-            <Row k="URL">{`${full()!.scheme}://${full()!.server_host}:${full()!.server_port}${full()!.url_path}`}</Row>
-            <Row k="Status">{full()!.status ?? "—"}</Row>
-            <Row k="HTTP">{full()!.http_version}</Row>
-            <Row k="State">{full()!.state}</Row>
-            <Row k="Error">{full()!.error_kind ?? "—"}</Row>
-            <Row k="Started">{full()!.started_at}</Row>
-            <Row k="Duration">{full()!.duration_ms ?? "—"} ms</Row>
-            <Row k="Size">{full()!.total_bytes} B</Row>
+            <div class="overflow-auto p-3 flex-1 min-h-0">
+              <Row k="ID">{full()!.id}</Row>
+              <Row k="Method">{full()!.method}</Row>
+              <Row k="URL">{`${full()!.scheme}://${full()!.server_host}:${full()!.server_port}${full()!.url_path}`}</Row>
+              <Row k="Status">{full()!.status ?? "—"}</Row>
+              <Row k="HTTP">{full()!.http_version}</Row>
+              <Row k="State">{full()!.state}</Row>
+              <Row k="Error">{full()!.error_kind ?? "—"}</Row>
+              <Row k="Started">{full()!.started_at}</Row>
+              <Row k="Duration">{full()!.duration_ms ?? "—"} ms</Row>
+              <Row k="Size">{full()!.total_bytes} B</Row>
+            </div>
           </Show>
 
           <Show when={tab() === "request"}>
-            <HeadersList headers={full()!.req_headers ?? []} />
-            <Show when={body()}>
-              <BodyView body={body()!} />
-            </Show>
+            <HeadersBodySplit
+              headers={full()!.req_headers ?? []}
+              body={body()}
+              onLoadFull={loadFullBody}
+            />
           </Show>
 
           <Show when={tab() === "response"}>
-            <HeadersList headers={full()!.res_headers ?? []} />
-            <Show when={body()}>
-              <BodyView body={body()!} />
-            </Show>
+            <HeadersBodySplit
+              headers={full()!.res_headers ?? []}
+              body={body()}
+              onLoadFull={loadFullBody}
+            />
           </Show>
 
           <Show when={tab() === "timing"}>
-            <TimingWaterfall capture={full()!} />
+            <div class="overflow-auto p-3 flex-1 min-h-0">
+              <TimingWaterfall capture={full()!} />
+            </div>
           </Show>
 
           <Show when={tab() === "tls"}>
-            <Row k="SNI">{full()!.server_host}</Row>
-            <Row k="Version">{full()!.http_version}</Row>
-            <p class="text-fg-muted mt-3">
-              Detailed TLS information requires the engine's decrypted-TLS path.
-              CONNECT tunnels capture host metadata only.
-            </p>
+            <div class="overflow-auto p-3 flex-1 min-h-0">
+              <Row k="SNI">{full()!.server_host}</Row>
+              <Row k="Version">{full()!.http_version}</Row>
+              <p class="text-fg-muted mt-3">
+                Detailed TLS information requires the engine's decrypted-TLS path.
+                CONNECT tunnels capture host metadata only.
+              </p>
+            </div>
           </Show>
         </div>
       </div>
@@ -155,31 +175,69 @@ const HeadersList: Component<{ headers: { name: string; value: string }[] }> = (
   </div>
 );
 
-const BodyView: Component<{ body: CaptureBodyDto }> = (p) => {
-  const text = createMemo(() => {
-    try {
-      return atob(p.body.bytes_base64);
-    } catch {
-      return "<binary>";
-    }
-  });
-  const pretty = createMemo(() => {
-    if (p.body.mime?.includes("json")) {
-      try {
-        return JSON.stringify(JSON.parse(text()), null, 2);
-      } catch {
-        return text();
-      }
-    }
-    return text();
-  });
+const HeadersBodySplit: Component<{
+  headers: { name: string; value: string }[];
+  body: CaptureBodyDto | null;
+  onLoadFull: () => void;
+}> = (p) => {
+  const [headersCollapsed, setHeadersCollapsed] = createSignal(false);
+  // Headers area height in px. Default to ~40% of the surrounding pane.
+  const [headersHeight, setHeadersHeight] = createSignal(220);
+  const COLLAPSED_PX = 28;
+  const MIN_HEADERS_PX = 60;
+  const MIN_BODY_PX = 100;
+  let containerRef: HTMLDivElement | undefined;
+
+  const resize = (delta: number) => {
+    if (headersCollapsed()) return;
+    const total = containerRef?.clientHeight ?? 600;
+    const max = total - MIN_BODY_PX;
+    setHeadersHeight((h) => Math.max(MIN_HEADERS_PX, Math.min(max, h + delta)));
+  };
+
+  const topRowSize = () => (headersCollapsed() ? `${COLLAPSED_PX}px` : `${headersHeight()}px`);
+
   return (
-    <div class="border-t border-border mt-2 pt-2">
-      <div class="text-fg-muted mb-1">
-        Body · {p.body.mime ?? "?"} · {p.body.total_size}B
-        <Show when={p.body.truncated}> · truncated</Show>
+    <div
+      ref={containerRef}
+      class="grid flex-1 min-h-0"
+      style={{ "grid-template-rows": `${topRowSize()} auto 1fr` }}
+    >
+      <div class="min-h-0 flex flex-col">
+        <div class="flex items-center gap-2 px-3 py-1 bg-bg-subtle/60 text-fg-muted">
+          <button
+            class="flex items-center gap-1 hover:text-fg"
+            onClick={() => setHeadersCollapsed(!headersCollapsed())}
+            title={headersCollapsed() ? "Expand headers" : "Collapse headers"}
+          >
+            <Show when={headersCollapsed()} fallback={<ChevronDown size={12} />}>
+              <ChevronRight size={12} />
+            </Show>
+            Headers <span class="text-fg-muted/70">({p.headers.length})</span>
+          </button>
+        </div>
+        <Show when={!headersCollapsed()}>
+          <div class="overflow-auto px-3 py-1">
+            <HeadersList headers={p.headers} />
+          </div>
+        </Show>
       </div>
-      <pre class="whitespace-pre-wrap break-all">{pretty()}</pre>
+
+      <Show
+        when={!headersCollapsed()}
+        fallback={<div />}
+      >
+        <HorizontalResizer onResize={resize} onReset={() => setHeadersHeight(220)} />
+      </Show>
+
+      <div class="min-h-0 overflow-auto px-3 py-2">
+        <Show
+          when={p.body}
+          fallback={<div class="text-fg-muted italic">No body</div>}
+        >
+          <BodyViewer body={p.body!} onLoadFull={p.onLoadFull} />
+        </Show>
+      </div>
     </div>
   );
 };

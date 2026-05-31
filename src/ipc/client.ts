@@ -14,6 +14,8 @@ import type {
   ProxyStatusDto,
   ReplayRecordDto,
   RequestSpec,
+  RuleDto,
+  RuleUpsertArgs,
   SessionDto,
 } from "./types";
 
@@ -73,5 +75,13 @@ export const api = {
       call<FilterDto>("filters_save", { args: f }),
     list: () => call<FilterDto[]>("filters_list"),
     delete: (id: string) => call<{ deleted: true }>("filters_delete", { id }),
+  },
+  rules: {
+    list: () => call<RuleDto[]>("rules_list"),
+    get: (id: string) => call<RuleDto>("rule_get", { id }),
+    upsert: (args: RuleUpsertArgs) => call<RuleDto>("rule_upsert", { args }),
+    delete: (id: string) => call<void>("rule_delete", { id }),
+    setEnabled: (id: string, enabled: boolean) =>
+      call<void>("rule_set_enabled", { args: { id, enabled } }),
   },
 };

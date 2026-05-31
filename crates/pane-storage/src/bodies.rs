@@ -123,6 +123,39 @@ impl BodyStore {
         })
     }
 
+    /// Fetch the full body bytes plus its mime, for internal consumers (e.g.
+    /// rule matching). Unlike `get`, returns raw bytes — no base64, no
+    /// truncation — and bypasses the DTO assembly.
+    pub fn get_raw(
+        &self,
+        id: Uuid,
+        conn: &Mutex<Connection>,
+    ) -> Result<(Option<String>, Vec<u8>)> {
+        let conn = conn.lock();
+        let row = conn.query_row(
+            "SELECT mime, storage, inline_blob, file_path
+             FROM capture_body WHERE id=?1",
+            params![id.to_string()],
+            |r| {
+                let mime: Option<String> = r.get(0)?;
+                let storage_kind: String = r.get(1)?;
+                let inline: Option<Vec<u8>> = r.get(2)?;
+                let file: Option<String> = r.get(3)?;
+                Ok((mime, storage_kind, inline, file))
+            },
+        )?;
+        let (mime, storage_kind, inline, file) = row;
+        let bytes = match storage_kind.as_str() {
+            "inline" => inline.unwrap_or_default(),
+            "file" => {
+                let p = self.root.join(file.unwrap_or_default());
+                std::fs::read(p).unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
+        Ok((mime, bytes))
+    }
+
     pub fn exists(&self, id: Uuid, conn: &Mutex<Connection>) -> Result<bool> {
         let conn = conn.lock();
         let v: Option<i64> = conn

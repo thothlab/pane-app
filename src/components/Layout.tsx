@@ -1,6 +1,6 @@
 import { type ParentComponent, createEffect, createMemo, createSignal, onMount, For, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X } from "lucide-solid";
+import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X, Shuffle } from "lucide-solid";
 import { api } from "@/ipc/client";
 import { VerticalResizer } from "@/components/VerticalResizer";
 import { setFilter } from "@/stores/captures";
@@ -74,6 +74,7 @@ const Layout: ParentComponent = (props) => {
         <nav class="flex-1 overflow-auto p-2 space-y-1">
           <NavLink href="/" icon={<Activity size={16} />}>Captures</NavLink>
           <NavLink href="/devices" icon={<Smartphone size={16} />}>Devices</NavLink>
+          <NavLink href="/rules" icon={<Shuffle size={16} />}>Rules</NavLink>
           <NavLink href="/settings" icon={<Settings size={16} />}>Settings</NavLink>
           <NavLink href="/about" icon={<Info size={16} />}>About</NavLink>
 

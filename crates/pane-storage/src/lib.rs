@@ -15,14 +15,34 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
+use base64::Engine as _;
 use pane_ipc::{
     CaptureBodyDto, CaptureDto, ExportOneResult, FilterDto, HeaderDto, ReplayRecordDto,
-    ReplaySendArgs, SaveFilterArgs, SessionDto,
+    ReplaySendArgs, RuleDto, RuleHeaderDto, RuleQueryParamDto, RuleSetEnabledArgs, RuleUpsertArgs,
+    SaveFilterArgs, SessionDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 use time::OffsetDateTime;
 use uuid::Uuid;
+
+/// Engine-side view of an active stub rule. Bodies materialized once at load
+/// time so the proxy_loop can match + serve without re-querying the DB.
+#[derive(Debug, Clone)]
+pub struct ActiveRule {
+    pub id: Uuid,
+    pub name: String,
+    pub priority: i64,
+    pub host_glob: Option<String>,
+    pub method: Option<String>,
+    pub path_glob: Option<String>,
+    pub query: Vec<(String, String)>,
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+    pub body_mime: Option<String>,
+    pub delay_ms: u64,
+}
 
 pub struct CaRecord {
     pub id: Uuid,
@@ -448,6 +468,217 @@ impl Storage {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM saved_filter WHERE id=?1", params![id.to_string()])?;
         Ok(())
+    }
+
+    // ---------- Rules (response stubbing) ----------
+
+    pub fn list_rules(&self) -> Result<Vec<RuleDto>> {
+        let mut dtos = {
+            let conn = self.conn.lock();
+            let mut stmt = conn.prepare(
+                "SELECT id, name, enabled, priority,
+                        match_host_glob, match_method, match_path_glob, match_query,
+                        res_status, res_headers, res_body_id, res_delay_ms,
+                        created_at, updated_at
+                 FROM rule
+                 ORDER BY priority ASC, created_at ASC",
+            )?;
+            let rows = stmt.query_map([], |r| Self::map_rule_row(r))?;
+            let mut v = Vec::new();
+            for r in rows {
+                v.push(r?);
+            }
+            v
+        };
+        for dto in dtos.iter_mut() {
+            if let Some(bid) = dto.res_body_id {
+                let (mime, bytes) = self.bodies.get_raw(bid, &self.conn).unwrap_or((None, vec![]));
+                dto.res_body_mime = mime;
+                dto.res_body_size = bytes.len() as u64;
+            }
+        }
+        Ok(dtos)
+    }
+
+    pub fn get_rule(&self, id: Uuid) -> Result<RuleDto> {
+        let conn = self.conn.lock();
+        let mut dto = conn.query_row(
+            "SELECT id, name, enabled, priority,
+                    match_host_glob, match_method, match_path_glob, match_query,
+                    res_status, res_headers, res_body_id, res_delay_ms,
+                    created_at, updated_at
+             FROM rule WHERE id=?1",
+            params![id.to_string()],
+            |r| Self::map_rule_row(r),
+        )?;
+        drop(conn);
+        if let Some(bid) = dto.res_body_id {
+            let (mime, bytes) = self.bodies.get_raw(bid, &self.conn).unwrap_or((None, vec![]));
+            dto.res_body_mime = mime;
+            dto.res_body_size = bytes.len() as u64;
+        }
+        Ok(dto)
+    }
+
+    pub fn upsert_rule(&self, args: RuleUpsertArgs) -> Result<RuleDto> {
+        // Resolve the body: inline base64 wins only if body_id is absent.
+        let body_id = match (args.res_body_id, args.res_body_base64.as_deref()) {
+            (Some(id), _) => Some(id),
+            (None, Some(b64)) if !b64.is_empty() => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|e| anyhow!("invalid res_body_base64: {e}"))?;
+                let id = self
+                    .bodies
+                    .put(&bytes, "identity", args.res_body_mime.as_deref(), &self.conn)?;
+                Some(id)
+            }
+            _ => None,
+        };
+
+        let id = args.id.unwrap_or_else(Uuid::new_v4);
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let match_query = serde_json::to_string(&args.match_query)?;
+        let res_headers = serde_json::to_string(&args.res_headers)?;
+        let conn = self.conn.lock();
+        // Preserve created_at on update.
+        let existing_created: Option<i64> = conn
+            .query_row(
+                "SELECT created_at FROM rule WHERE id=?1",
+                params![id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let created_at = existing_created.unwrap_or(now);
+        conn.execute(
+            "INSERT INTO rule (id, name, enabled, priority,
+                    match_host_glob, match_method, match_path_glob, match_query,
+                    res_status, res_headers, res_body_id, res_delay_ms,
+                    created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name, enabled=excluded.enabled, priority=excluded.priority,
+                match_host_glob=excluded.match_host_glob, match_method=excluded.match_method,
+                match_path_glob=excluded.match_path_glob, match_query=excluded.match_query,
+                res_status=excluded.res_status, res_headers=excluded.res_headers,
+                res_body_id=excluded.res_body_id, res_delay_ms=excluded.res_delay_ms,
+                updated_at=excluded.updated_at",
+            params![
+                id.to_string(),
+                &args.name,
+                args.enabled as i64,
+                args.priority,
+                args.match_host_glob,
+                args.match_method,
+                args.match_path_glob,
+                match_query,
+                args.res_status as i64,
+                res_headers,
+                body_id.map(|u| u.to_string()),
+                args.res_delay_ms as i64,
+                created_at,
+                now,
+            ],
+        )?;
+        drop(conn);
+        self.get_rule(id)
+    }
+
+    pub fn delete_rule(&self, id: Uuid) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM rule WHERE id=?1", params![id.to_string()])?;
+        Ok(())
+    }
+
+    pub fn set_rule_enabled(&self, args: RuleSetEnabledArgs) -> Result<()> {
+        let conn = self.conn.lock();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        conn.execute(
+            "UPDATE rule SET enabled=?1, updated_at=?2 WHERE id=?3",
+            params![args.enabled as i64, now, args.id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Load active (enabled) rules with their bodies materialized for the
+    /// engine matcher. Ordered by priority ASC, then created_at ASC.
+    pub fn list_active_rules(&self) -> Result<Vec<ActiveRule>> {
+        let dtos = {
+            let conn = self.conn.lock();
+            let mut stmt = conn.prepare(
+                "SELECT id, name, enabled, priority,
+                        match_host_glob, match_method, match_path_glob, match_query,
+                        res_status, res_headers, res_body_id, res_delay_ms,
+                        created_at, updated_at
+                 FROM rule WHERE enabled=1
+                 ORDER BY priority ASC, created_at ASC",
+            )?;
+            let rows = stmt.query_map([], |r| Self::map_rule_row(r))?;
+            let mut v = Vec::new();
+            for r in rows {
+                v.push(r?);
+            }
+            v
+        };
+        let mut out = Vec::with_capacity(dtos.len());
+        for dto in dtos {
+            let (mime, body) = match dto.res_body_id {
+                Some(bid) => self.bodies.get_raw(bid, &self.conn).unwrap_or((None, vec![])),
+                None => (None, vec![]),
+            };
+            out.push(ActiveRule {
+                id: dto.id,
+                name: dto.name,
+                priority: dto.priority,
+                host_glob: dto.match_host_glob,
+                method: dto.match_method,
+                path_glob: dto.match_path_glob,
+                query: dto
+                    .match_query
+                    .into_iter()
+                    .map(|q| (q.name, q.value))
+                    .collect(),
+                status: dto.res_status,
+                headers: dto
+                    .res_headers
+                    .into_iter()
+                    .map(|h| (h.name, h.value))
+                    .collect(),
+                body_mime: mime,
+                body,
+                delay_ms: dto.res_delay_ms,
+            });
+        }
+        Ok(out)
+    }
+
+    fn map_rule_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RuleDto> {
+        let id: String = r.get(0)?;
+        let match_query: String = r.get(7)?;
+        let res_headers: String = r.get(9)?;
+        let body_id: Option<String> = r.get(10)?;
+        let created_at: i64 = r.get(12)?;
+        let updated_at: i64 = r.get(13)?;
+        Ok(RuleDto {
+            id: Uuid::parse_str(&id).unwrap(),
+            name: r.get(1)?,
+            enabled: r.get::<_, i64>(2)? != 0,
+            priority: r.get(3)?,
+            match_host_glob: r.get(4)?,
+            match_method: r.get(5)?,
+            match_path_glob: r.get(6)?,
+            match_query: serde_json::from_str::<Vec<RuleQueryParamDto>>(&match_query)
+                .unwrap_or_default(),
+            res_status: r.get::<_, i64>(8)? as u16,
+            res_headers: serde_json::from_str::<Vec<RuleHeaderDto>>(&res_headers)
+                .unwrap_or_default(),
+            res_body_id: body_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            res_body_mime: None,
+            res_body_size: 0,
+            res_delay_ms: r.get::<_, i64>(11)? as u64,
+            created_at: created_at.to_string(),
+            updated_at: updated_at.to_string(),
+        })
     }
 
     pub fn conn(&self) -> &Mutex<Connection> {

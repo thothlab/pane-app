@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 mod leaf;
 mod proxy_loop;
+mod rules;
 
 pub struct MitmEngine {
     storage: Arc<Storage>,

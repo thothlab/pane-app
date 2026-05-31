@@ -4,6 +4,7 @@ pub mod devices;
 pub mod filters;
 pub mod proxy;
 pub mod replay;
+pub mod rules;
 
 use pane_ipc::ApiError;
 

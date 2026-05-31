@@ -114,6 +114,20 @@ pub async fn handle(
 
     let mut write_half = stream;
 
+    // Stub hook: if any active rule matches this request, serve its canned
+    // response and skip the upstream call entirely.
+    if let Ok(rules) = storage.list_active_rules() {
+        let req = crate::rules::RequestSummary {
+            host: &host,
+            method: &method,
+            path: &path,
+        };
+        if let Some(rule) = crate::rules::first_match(&rules, req) {
+            serve_stub(&mut write_half, &storage, &events, cap_id, started_at, rule).await?;
+            return Ok(());
+        }
+    }
+
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .redirect(reqwest::redirect::Policy::none())
@@ -201,6 +215,22 @@ async fn handle_tls_inner(
     if !req_body.is_empty() {
         if let Some(req_body_id) = persist_body(&storage, &req_body, &headers, "request")? {
             set_req_body(&storage, cap_id, req_body_id)?;
+        }
+    }
+
+    // Stub hook (TLS path): same as plain HTTP — match against active rules
+    // and serve the canned response over the TLS stream if any rule fires.
+    if let Ok(rules) = storage.list_active_rules() {
+        let req = crate::rules::RequestSummary {
+            host: &host,
+            method: &method,
+            path: &path,
+        };
+        if let Some(rule) = crate::rules::first_match(&rules, req) {
+            let mut tls_stream = reader.into_inner();
+            serve_stub(&mut tls_stream, &storage, &events, cap_id, started_at, rule).await?;
+            let _ = tls_stream.shutdown().await;
+            return Ok(());
         }
     }
 
@@ -549,6 +579,66 @@ fn mark_completed(
     Ok(())
 }
 
+fn mark_stubbed(
+    storage: &Storage,
+    id: Uuid,
+    status: u16,
+    total_bytes: i64,
+    duration_ms: i64,
+    ended_at: OffsetDateTime,
+) -> anyhow::Result<()> {
+    let conn = storage.conn().lock();
+    conn.execute(
+        "UPDATE capture SET state='stubbed', status=?1, ended_at=?2, duration_ms=?3,
+                            total_bytes=?4
+         WHERE id=?5",
+        params![
+            status as i64,
+            ended_at.unix_timestamp(),
+            duration_ms,
+            total_bytes,
+            id.to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Persist the stub response (headers + body) onto an in-flight capture,
+/// write it to the client stream, mark the capture as stubbed, and emit a
+/// completed event.
+async fn serve_stub<W>(
+    stream: &mut W,
+    storage: &Storage,
+    events: &broadcast::Sender<EngineEvent>,
+    cap_id: Uuid,
+    started_at: OffsetDateTime,
+    rule: &pane_storage::ActiveRule,
+) -> anyhow::Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    if rule.delay_ms > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(rule.delay_ms)).await;
+    }
+    persist_headers(storage, cap_id, "response", &rule.headers)?;
+    let body_id = storage
+        .bodies
+        .put(&rule.body, "identity", rule.body_mime.as_deref(), storage.conn())?;
+    set_res_body(storage, cap_id, body_id)?;
+    write_response(stream, rule.status, &rule.headers, &rule.body).await?;
+    let ended_at = OffsetDateTime::now_utc();
+    let duration_ms = (ended_at - started_at).whole_milliseconds().max(0) as i64;
+    mark_stubbed(
+        storage,
+        cap_id,
+        rule.status,
+        rule.body.len() as i64,
+        duration_ms,
+        ended_at,
+    )?;
+    emit_completed(events, cap_id, rule.status, duration_ms as u64, rule.body.len() as u64);
+    Ok(())
+}
 
 fn mark_error(storage: &Storage, id: Uuid, kind: &str, _msg: &str) -> anyhow::Result<()> {
     let conn = storage.conn().lock();

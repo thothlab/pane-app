@@ -237,6 +237,72 @@ pub struct FilterDto {
     pub pinned: bool,
 }
 
+// ------------------- Rules (response stubbing) -------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleQueryParamDto {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleHeaderDto {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleDto {
+    pub id: Uuid,
+    pub name: String,
+    pub enabled: bool,
+    pub priority: i64,
+
+    pub match_host_glob: Option<String>,
+    pub match_method: Option<String>,
+    pub match_path_glob: Option<String>,
+    pub match_query: Vec<RuleQueryParamDto>,
+
+    pub res_status: u16,
+    pub res_headers: Vec<RuleHeaderDto>,
+    pub res_body_id: Option<Uuid>,
+    /// Hint for the UI: mime + size of the referenced body if present.
+    pub res_body_mime: Option<String>,
+    pub res_body_size: u64,
+    pub res_delay_ms: u64,
+
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleUpsertArgs {
+    pub id: Option<Uuid>,
+    pub name: String,
+    pub enabled: bool,
+    pub priority: i64,
+
+    pub match_host_glob: Option<String>,
+    pub match_method: Option<String>,
+    pub match_path_glob: Option<String>,
+    pub match_query: Vec<RuleQueryParamDto>,
+
+    pub res_status: u16,
+    pub res_headers: Vec<RuleHeaderDto>,
+    /// Either reference an existing capture body…
+    pub res_body_id: Option<Uuid>,
+    /// …or inline new bytes (base64). If both are set, body_id wins.
+    pub res_body_base64: Option<String>,
+    pub res_body_mime: Option<String>,
+    pub res_delay_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleSetEnabledArgs {
+    pub id: Uuid,
+    pub enabled: bool,
+}
+
 // ------------------- Pinning event -------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

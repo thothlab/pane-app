@@ -126,3 +126,49 @@ export interface PinningEventDto {
   host: string;
   hint_kind: string;
 }
+
+export interface RuleQueryParamDto {
+  name: string;
+  value: string;
+}
+
+export interface RuleHeaderDto {
+  name: string;
+  value: string;
+}
+
+export interface RuleDto {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  match_host_glob: string | null;
+  match_method: string | null;
+  match_path_glob: string | null;
+  match_query: RuleQueryParamDto[];
+  res_status: number;
+  res_headers: RuleHeaderDto[];
+  res_body_id: string | null;
+  res_body_mime: string | null;
+  res_body_size: number;
+  res_delay_ms: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RuleUpsertArgs {
+  id?: string | null;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  match_host_glob: string | null;
+  match_method: string | null;
+  match_path_glob: string | null;
+  match_query: RuleQueryParamDto[];
+  res_status: number;
+  res_headers: RuleHeaderDto[];
+  res_body_id?: string | null;
+  res_body_base64?: string | null;
+  res_body_mime?: string | null;
+  res_delay_ms: number;
+}
