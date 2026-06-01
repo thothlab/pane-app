@@ -210,6 +210,8 @@ mod tests {
             id: Uuid::new_v4(),
             name: "test".into(),
             priority: 0,
+            mode: pane_storage::RuleMode::Stub,
+            patches: vec![],
             host_glob: None,
             method: None,
             path_glob: None,

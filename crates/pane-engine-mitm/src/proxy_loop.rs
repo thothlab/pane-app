@@ -114,8 +114,9 @@ pub async fn handle(
 
     let mut write_half = stream;
 
-    // Stub hook: if any active rule matches this request, serve its canned
-    // response and skip the upstream call entirely.
+    // Stub/patch hook: short-circuit on stub, remember rule on patch so we
+    // can mutate the upstream response below.
+    let mut patch_rule: Option<pane_storage::ActiveRule> = None;
     if let Ok(rules) = storage.list_active_rules() {
         let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
@@ -126,8 +127,16 @@ pub async fn handle(
             content_type: content_type_lower.as_deref(),
         };
         if let Some(rule) = crate::rules::first_match(&rules, req) {
-            serve_stub(&mut write_half, &storage, &events, cap_id, started_at, rule).await?;
-            return Ok(());
+            match rule.mode {
+                pane_storage::RuleMode::Stub => {
+                    serve_stub(&mut write_half, &storage, &events, cap_id, started_at, rule)
+                        .await?;
+                    return Ok(());
+                }
+                pane_storage::RuleMode::Patch => {
+                    patch_rule = Some(rule.clone());
+                }
+            }
         }
     }
 
@@ -160,14 +169,22 @@ pub async fn handle(
         }
     };
 
-    let status = resp.status().as_u16();
-    let res_headers: Vec<(String, String)> = resp
+    let mut status = resp.status().as_u16();
+    let mut res_headers: Vec<(String, String)> = resp
         .headers()
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
+    let raw_body = resp.bytes().await?.to_vec();
+    let body = apply_patches_if_any(
+        patch_rule.as_ref(),
+        &mut status,
+        &mut res_headers,
+        raw_body,
+    )
+    .await;
+
     persist_headers(&storage, cap_id, "response", &res_headers)?;
-    let body = resp.bytes().await?;
 
     let mime = res_headers
         .iter()
@@ -181,7 +198,18 @@ pub async fn handle(
 
     let ended_at = OffsetDateTime::now_utc();
     let duration_ms = (ended_at - started_at).whole_milliseconds().max(0) as i64;
-    mark_completed(&storage, cap_id, status, body.len() as i64, duration_ms, ended_at)?;
+    if patch_rule.is_some() {
+        mark_patched(
+            &storage,
+            cap_id,
+            status,
+            body.len() as i64,
+            duration_ms,
+            ended_at,
+        )?;
+    } else {
+        mark_completed(&storage, cap_id, status, body.len() as i64, duration_ms, ended_at)?;
+    }
     emit_completed(&events, cap_id, status, duration_ms as u64, body.len() as u64);
     Ok(())
 }
@@ -221,8 +249,9 @@ async fn handle_tls_inner(
         }
     }
 
-    // Stub hook (TLS path): same as plain HTTP — match against active rules
-    // and serve the canned response over the TLS stream if any rule fires.
+    // Stub/patch hook (TLS): on stub, short-circuit; on patch, remember and
+    // fall through to upstream so we can mutate the response below.
+    let mut patch_rule: Option<pane_storage::ActiveRule> = None;
     if let Ok(rules) = storage.list_active_rules() {
         let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
@@ -233,10 +262,18 @@ async fn handle_tls_inner(
             content_type: content_type_lower.as_deref(),
         };
         if let Some(rule) = crate::rules::first_match(&rules, req) {
-            let mut tls_stream = reader.into_inner();
-            serve_stub(&mut tls_stream, &storage, &events, cap_id, started_at, rule).await?;
-            let _ = tls_stream.shutdown().await;
-            return Ok(());
+            match rule.mode {
+                pane_storage::RuleMode::Stub => {
+                    let mut tls_stream = reader.into_inner();
+                    serve_stub(&mut tls_stream, &storage, &events, cap_id, started_at, rule)
+                        .await?;
+                    let _ = tls_stream.shutdown().await;
+                    return Ok(());
+                }
+                pane_storage::RuleMode::Patch => {
+                    patch_rule = Some(rule.clone());
+                }
+            }
         }
     }
 
@@ -268,14 +305,22 @@ async fn handle_tls_inner(
         }
     };
 
-    let status = resp.status().as_u16();
-    let res_headers: Vec<(String, String)> = resp
+    let mut status = resp.status().as_u16();
+    let mut res_headers: Vec<(String, String)> = resp
         .headers()
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
+    let raw_body = resp.bytes().await?.to_vec();
+    let body = apply_patches_if_any(
+        patch_rule.as_ref(),
+        &mut status,
+        &mut res_headers,
+        raw_body,
+    )
+    .await;
+
     persist_headers(&storage, cap_id, "response", &res_headers)?;
-    let body = resp.bytes().await?;
 
     let mime = res_headers
         .iter()
@@ -290,7 +335,18 @@ async fn handle_tls_inner(
 
     let ended_at = OffsetDateTime::now_utc();
     let duration_ms = (ended_at - started_at).whole_milliseconds().max(0) as i64;
-    mark_completed(&storage, cap_id, status, body.len() as i64, duration_ms, ended_at)?;
+    if patch_rule.is_some() {
+        mark_patched(
+            &storage,
+            cap_id,
+            status,
+            body.len() as i64,
+            duration_ms,
+            ended_at,
+        )?;
+    } else {
+        mark_completed(&storage, cap_id, status, body.len() as i64, duration_ms, ended_at)?;
+    }
     emit_completed(&events, cap_id, status, duration_ms as u64, body.len() as u64);
     Ok(())
 }
@@ -581,6 +637,87 @@ fn mark_completed(
     let conn = storage.conn().lock();
     conn.execute(
         "UPDATE capture SET state='completed', status=?1, ended_at=?2, duration_ms=?3,
+                            total_bytes=?4
+         WHERE id=?5",
+        params![
+            status as i64,
+            ended_at.unix_timestamp(),
+            duration_ms,
+            total_bytes,
+            id.to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
+/// If a patch-mode rule fired, parse the body as JSON, apply each patch op
+/// to a virtual `{status, headers, body}` tree, and return the re-serialized
+/// body. Returns `raw_body` unchanged when there's no rule or the body is
+/// not JSON.
+async fn apply_patches_if_any(
+    rule: Option<&pane_storage::ActiveRule>,
+    status: &mut u16,
+    headers: &mut Vec<(String, String)>,
+    raw_body: Vec<u8>,
+) -> Vec<u8> {
+    let Some(rule) = rule else { return raw_body };
+    if rule.delay_ms > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(rule.delay_ms)).await;
+    }
+    let ct_json = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+        .map(|(_, v)| v.to_ascii_lowercase().contains("json"))
+        .unwrap_or(false);
+    if !ct_json || raw_body.is_empty() {
+        // Status/header-only patches still apply even when the body isn't
+        // JSON; we just skip body ops.
+        let mut placeholder = serde_json::Value::Null;
+        let mut tree = crate::patch::ResponseTree {
+            status,
+            headers,
+            body: &mut placeholder,
+        };
+        for op in &rule.patches {
+            crate::patch::apply(&mut tree, op);
+        }
+        return raw_body;
+    }
+    let mut body_json: serde_json::Value = match serde_json::from_slice(&raw_body) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "patch: response body is not valid JSON; serving as-is");
+            return raw_body;
+        }
+    };
+    let mut tree = crate::patch::ResponseTree {
+        status,
+        headers,
+        body: &mut body_json,
+    };
+    for op in &rule.patches {
+        crate::patch::apply(&mut tree, op);
+    }
+    match serde_json::to_vec(&body_json) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "patch: failed to re-serialize patched body; serving raw");
+            raw_body
+        }
+    }
+}
+
+fn mark_patched(
+    storage: &Storage,
+    id: Uuid,
+    status: u16,
+    total_bytes: i64,
+    duration_ms: i64,
+    ended_at: OffsetDateTime,
+) -> anyhow::Result<()> {
+    let conn = storage.conn().lock();
+    conn.execute(
+        "UPDATE capture SET state='patched', status=?1, ended_at=?2, duration_ms=?3,
                             total_bytes=?4
          WHERE id=?5",
         params![

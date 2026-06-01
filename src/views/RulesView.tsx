@@ -1,4 +1,4 @@
-import { type Component, createSignal, createMemo, For, Show, onMount } from "solid-js";
+import { type Component, createSignal, createMemo, For, Index, Show, onMount } from "solid-js";
 import {
   Plus,
   Trash2,
@@ -17,6 +17,9 @@ import type {
   RuleUpsertArgs,
   RuleHeaderDto,
   RuleParamDto,
+  RulePatchOpDto,
+  RulePatchOpKind,
+  RuleMode,
   RuleCollectionDto,
 } from "@/ipc/types";
 
@@ -153,6 +156,8 @@ const RulesView: Component = () => {
       name: r.name,
       enabled: r.enabled,
       priority: r.priority,
+      mode: r.mode,
+      patches: r.patches,
       match_host_glob: r.match_host_glob,
       match_method: r.match_method,
       match_path_glob: r.match_path_glob,
@@ -584,6 +589,8 @@ type DraftState = {
   name: string;
   enabled: boolean;
   priority: number;
+  mode: RuleMode;
+  patches: RulePatchOpDto[];
   match_host_glob: string;
   match_method: string;
   match_path_glob: string;
@@ -601,6 +608,8 @@ const emptyDraft = (collectionId: string | null): DraftState => ({
   name: "",
   enabled: true,
   priority: 0,
+  mode: "stub",
+  patches: [],
   match_host_glob: "",
   match_method: "ANY",
   match_path_glob: "",
@@ -611,6 +620,22 @@ const emptyDraft = (collectionId: string | null): DraftState => ({
   res_body_mime: "application/json",
   res_delay_ms: 0,
 });
+
+/// Parse the patch row's `value` string into a JSON value. Numbers, booleans,
+/// null, arrays and objects are recognised; anything else (including bare
+/// words) falls back to a plain string. Empty raw value → JSON null. The
+/// `delete` op doesn't carry a value.
+function normalisePatch(p: RulePatchOpDto): RulePatchOpDto {
+  if (p.op === "delete") return { op: "delete", path: p.path };
+  const raw = typeof p.value === "string" ? p.value : JSON.stringify(p.value ?? "");
+  let value: unknown = raw;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    // not valid JSON → keep as a string
+  }
+  return { op: p.op, path: p.path, value };
+}
 
 /// Parse a single "Name: value" line into a header pair. Returns null if the
 /// input doesn't look like a header line (no `:`, or empty name). Used by
@@ -649,6 +674,8 @@ const RuleEditor: Component<{
       name: r.name,
       enabled: r.enabled,
       priority: r.priority,
+      mode: r.mode,
+      patches: r.patches.slice(),
       match_host_glob: r.match_host_glob ?? "",
       match_method: r.match_method ?? "ANY",
       match_path_glob: r.match_path_glob ?? "",
@@ -708,6 +735,10 @@ const RuleEditor: Component<{
         name: draft.name || "Unnamed rule",
         enabled: draft.enabled,
         priority: draft.priority,
+        mode: draft.mode,
+        patches: draft.mode === "patch"
+          ? draft.patches.filter((p) => p.path.trim().length > 0).map(normalisePatch)
+          : [],
         match_host_glob: draft.match_host_glob.trim() ? draft.match_host_glob.trim() : null,
         match_method: draft.match_method === "ANY" ? null : draft.match_method,
         match_path_glob: draft.match_path_glob.trim() ? draft.match_path_glob.trim() : null,
@@ -796,40 +827,40 @@ const RuleEditor: Component<{
         </FieldRow>
         <FieldRow label="Params (all AND, query or body)">
           <div class="flex-1 space-y-1">
-            <For each={d().match_params}>
+            <Index each={d().match_params}>
               {(q, i) => (
                 <div class="flex items-center gap-2">
                   <input {...NO_AC}
                     class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
                     placeholder="name"
-                    value={q.name}
+                    value={q().name}
                     onInput={(e) => {
                       const arr = d().match_params.slice();
-                      arr[i()] = { ...arr[i()], name: e.currentTarget.value };
+                      arr[i] = { ...arr[i], name: e.currentTarget.value };
                       patch({ match_params: arr });
                     }}
                   />
                   <input {...NO_AC}
                     class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
                     placeholder="value"
-                    value={q.value}
+                    value={q().value}
                     onInput={(e) => {
                       const arr = d().match_params.slice();
-                      arr[i()] = { ...arr[i()], value: e.currentTarget.value };
+                      arr[i] = { ...arr[i], value: e.currentTarget.value };
                       patch({ match_params: arr });
                     }}
                   />
                   <button
                     class="text-fg-muted hover:text-danger"
                     onClick={() =>
-                      patch({ match_params: d().match_params.filter((_, j) => j !== i()) })
+                      patch({ match_params: d().match_params.filter((_, j) => j !== i) })
                     }
                   >
                     <X size={12} />
                   </button>
                 </div>
               )}
-            </For>
+            </Index>
             <button
               class="text-xs text-accent hover:underline"
               onClick={() =>
@@ -847,13 +878,15 @@ const RuleEditor: Component<{
       </Section>
 
       <Section title="Response">
-        <FieldRow label="Status">
-          <input {...NO_AC}
-            type="number"
-            class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm"
-            value={d().res_status}
-            onInput={(e) => patch({ res_status: Number(e.currentTarget.value) || 200 })}
-          />
+        <FieldRow label="Mode">
+          <select
+            class="bg-bg border border-border rounded px-2 py-1 text-sm"
+            value={d().mode}
+            onChange={(e) => patch({ mode: e.currentTarget.value as RuleMode })}
+          >
+            <option value="stub">Stub — replace whole response</option>
+            <option value="patch">Patch — forward, then mutate</option>
+          </select>
           <label class="flex items-center gap-1 text-xs text-fg-muted ml-3">
             delay (ms)
             <input {...NO_AC}
@@ -864,18 +897,27 @@ const RuleEditor: Component<{
             />
           </label>
         </FieldRow>
+        <Show when={d().mode === "stub"}>
+        <FieldRow label="Status">
+          <input {...NO_AC}
+            type="number"
+            class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm"
+            value={d().res_status}
+            onInput={(e) => patch({ res_status: Number(e.currentTarget.value) || 200 })}
+          />
+        </FieldRow>
         <FieldRow label="Headers">
           <div class="flex-1 space-y-1">
-            <For each={d().res_headers}>
+            <Index each={d().res_headers}>
               {(h, i) => (
                 <div class="flex items-center gap-2">
                   <input {...NO_AC}
                     class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
                     placeholder='name (paste "name: value" to split)'
-                    value={h.name}
+                    value={h().name}
                     onInput={(e) => {
                       const arr = d().res_headers.slice();
-                      arr[i()] = { ...arr[i()], name: e.currentTarget.value };
+                      arr[i] = { ...arr[i], name: e.currentTarget.value };
                       patch({ res_headers: arr });
                     }}
                     onPaste={(e) => {
@@ -884,7 +926,7 @@ const RuleEditor: Component<{
                       if (split) {
                         e.preventDefault();
                         const arr = d().res_headers.slice();
-                        arr[i()] = split;
+                        arr[i] = split;
                         patch({ res_headers: arr });
                       }
                     }}
@@ -892,10 +934,10 @@ const RuleEditor: Component<{
                   <input {...NO_AC}
                     class="flex-[2] bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
                     placeholder="value"
-                    value={h.value}
+                    value={h().value}
                     onInput={(e) => {
                       const arr = d().res_headers.slice();
-                      arr[i()] = { ...arr[i()], value: e.currentTarget.value };
+                      arr[i] = { ...arr[i], value: e.currentTarget.value };
                       patch({ res_headers: arr });
                     }}
                     onPaste={(e) => {
@@ -904,7 +946,7 @@ const RuleEditor: Component<{
                       if (split) {
                         e.preventDefault();
                         const arr = d().res_headers.slice();
-                        arr[i()] = split;
+                        arr[i] = split;
                         patch({ res_headers: arr });
                       }
                     }}
@@ -912,14 +954,14 @@ const RuleEditor: Component<{
                   <button
                     class="text-fg-muted hover:text-danger"
                     onClick={() =>
-                      patch({ res_headers: d().res_headers.filter((_, j) => j !== i()) })
+                      patch({ res_headers: d().res_headers.filter((_, j) => j !== i) })
                     }
                   >
                     <X size={12} />
                   </button>
                 </div>
               )}
-            </For>
+            </Index>
             <div class="flex items-center gap-3">
               <button
                 class="text-xs text-accent hover:underline"
@@ -977,6 +1019,15 @@ const RuleEditor: Component<{
             </Show>
           </div>
         </FieldRow>
+        </Show>
+        <Show when={d().mode === "patch"}>
+          <FieldRow label="Patches">
+            <PatchesEditor
+              patches={d().patches}
+              onChange={(arr) => patch({ patches: arr })}
+            />
+          </FieldRow>
+        </Show>
       </Section>
 
       <Show when={err()}>
@@ -998,6 +1049,79 @@ const RuleEditor: Component<{
         >
           <Check size={14} /> {busy() ? "Saving…" : bodyLoading() ? "Loading…" : "Save"}
         </button>
+      </div>
+    </div>
+  );
+};
+
+const PATCH_PATH_EXAMPLES = "user.fio · list[0] · headers.Content-Type · status";
+
+const PatchesEditor: Component<{
+  patches: RulePatchOpDto[];
+  onChange: (next: RulePatchOpDto[]) => void;
+}> = (p) => {
+  const setRow = (i: number, patch: Partial<RulePatchOpDto>) => {
+    const arr = p.patches.slice();
+    arr[i] = { ...arr[i], ...patch };
+    p.onChange(arr);
+  };
+  const removeRow = (i: number) => p.onChange(p.patches.filter((_, j) => j !== i));
+  const addRow = () => p.onChange([...p.patches, { op: "set", path: "", value: "" }]);
+
+  return (
+    <div class="flex-1 space-y-1">
+      <Index each={p.patches}>
+        {(op, i) => (
+          <div class="flex items-center gap-2">
+            <select
+              class="bg-bg border border-border rounded px-2 py-1 text-xs font-mono w-24 shrink-0"
+              value={op().op}
+              onChange={(e) => setRow(i, { op: e.currentTarget.value as RulePatchOpKind })}
+            >
+              <option value="set">set</option>
+              <option value="delete">delete</option>
+              <option value="append">append</option>
+            </select>
+            <input
+              {...NO_AC}
+              class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
+              placeholder={PATCH_PATH_EXAMPLES}
+              value={op().path}
+              onInput={(e) => setRow(i, { path: e.currentTarget.value })}
+            />
+            <Show when={op().op !== "delete"}>
+              <input
+                {...NO_AC}
+                class="flex-[2] bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
+                placeholder='value (JSON: "X", 777, true, null, {"a":1})'
+                value={
+                  typeof op().value === "string"
+                    ? (op().value as string)
+                    : op().value === undefined
+                    ? ""
+                    : JSON.stringify(op().value)
+                }
+                onInput={(e) => setRow(i, { value: e.currentTarget.value })}
+              />
+            </Show>
+            <button
+              class="text-fg-muted hover:text-danger"
+              onClick={() => removeRow(i)}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+      </Index>
+      <button class="text-xs text-accent hover:underline" onClick={addRow}>
+        + add patch
+      </button>
+      <div class="text-xs text-fg-muted italic">
+        Path heads: <code>status</code>, <code>headers.&lt;Name&gt;</code>,{" "}
+        <code>body.&lt;dot.path&gt;</code> — the <code>body.</code> prefix is optional, so{" "}
+        <code>user.fio</code> means the same as <code>body.user.fio</code>. Use <code>[i]</code> for
+        array index and <code>[-]</code> to append. Value is parsed as JSON; non-JSON text is
+        treated as a string.
       </div>
     </div>
   );

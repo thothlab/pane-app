@@ -137,12 +137,24 @@ export interface RuleHeaderDto {
   value: string;
 }
 
+export type RulePatchOpKind = "set" | "delete" | "append";
+
+export interface RulePatchOpDto {
+  op: RulePatchOpKind;
+  path: string;
+  value?: unknown;
+}
+
+export type RuleMode = "stub" | "patch";
+
 export interface RuleDto {
   id: string;
   name: string;
   enabled: boolean;
   priority: number;
   collection_id: string | null;
+  mode: RuleMode;
+  patches: RulePatchOpDto[];
   match_host_glob: string | null;
   match_method: string | null;
   match_path_glob: string | null;
@@ -163,6 +175,8 @@ export interface RuleUpsertArgs {
   enabled: boolean;
   priority: number;
   collection_id: string | null;
+  mode: RuleMode;
+  patches: RulePatchOpDto[];
   match_host_glob: string | null;
   match_method: string | null;
   match_path_glob: string | null;

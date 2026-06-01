@@ -19,20 +19,38 @@ use base64::Engine as _;
 use pane_ipc::{
     CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionUpsertArgs, ExportOneResult,
     FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs, RuleCollectionDto, RuleDto,
-    RuleHeaderDto, RuleParamDto, RuleSetEnabledArgs, RuleUpsertArgs, SaveFilterArgs, SessionDto,
+    RuleHeaderDto, RuleParamDto, RulePatchOpDto, RuleSetEnabledArgs, RuleUpsertArgs,
+    SaveFilterArgs, SessionDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-/// Engine-side view of an active stub rule. Bodies materialized once at load
-/// time so the proxy_loop can match + serve without re-querying the DB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleMode {
+    Stub,
+    Patch,
+}
+
+/// One mutation applied in `RuleMode::Patch`. Path uses dot-notation over a
+/// virtual response tree: `status`, `headers.<name>`, `body.<dot.path>`.
+#[derive(Debug, Clone)]
+pub enum PatchOp {
+    Set { path: String, value: serde_json::Value },
+    Delete { path: String },
+    Append { path: String, value: serde_json::Value },
+}
+
+/// Engine-side view of an active rule. Bodies materialized once at load time
+/// so the proxy_loop can match + serve without re-querying the DB.
 #[derive(Debug, Clone)]
 pub struct ActiveRule {
     pub id: Uuid,
     pub name: String,
     pub priority: i64,
+    pub mode: RuleMode,
+    pub patches: Vec<PatchOp>,
     pub host_glob: Option<String>,
     pub method: Option<String>,
     pub path_glob: Option<String>,
@@ -582,7 +600,7 @@ impl Storage {
                 "SELECT id, name, enabled, priority,
                         match_host_glob, match_method, match_path_glob, match_query,
                         res_status, res_headers, res_body_id, res_delay_ms,
-                        created_at, updated_at, collection_id
+                        created_at, updated_at, collection_id, mode, patches
                  FROM rule
                  ORDER BY priority ASC, created_at ASC",
             )?;
@@ -609,7 +627,7 @@ impl Storage {
             "SELECT id, name, enabled, priority,
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
-                    created_at, updated_at, collection_id
+                    created_at, updated_at, collection_id, mode, patches
              FROM rule WHERE id=?1",
             params![id.to_string()],
             |r| Self::map_rule_row(r),
@@ -643,6 +661,11 @@ impl Storage {
         let now = OffsetDateTime::now_utc().unix_timestamp();
         let match_params = serde_json::to_string(&args.match_params)?;
         let res_headers = serde_json::to_string(&args.res_headers)?;
+        let patches_json = serde_json::to_string(&args.patches)?;
+        let mode = match args.mode.as_str() {
+            "patch" => "patch",
+            _ => "stub",
+        };
         let conn = self.conn.lock();
         // Preserve created_at on update.
         let existing_created: Option<i64> = conn
@@ -657,15 +680,16 @@ impl Storage {
             "INSERT INTO rule (id, name, enabled, priority,
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
-                    created_at, updated_at, collection_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                    created_at, updated_at, collection_id, mode, patches)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, enabled=excluded.enabled, priority=excluded.priority,
                 match_host_glob=excluded.match_host_glob, match_method=excluded.match_method,
                 match_path_glob=excluded.match_path_glob, match_query=excluded.match_query,
                 res_status=excluded.res_status, res_headers=excluded.res_headers,
                 res_body_id=excluded.res_body_id, res_delay_ms=excluded.res_delay_ms,
-                collection_id=excluded.collection_id, updated_at=excluded.updated_at",
+                collection_id=excluded.collection_id, mode=excluded.mode,
+                patches=excluded.patches, updated_at=excluded.updated_at",
             params![
                 id.to_string(),
                 &args.name,
@@ -682,6 +706,8 @@ impl Storage {
                 created_at,
                 now,
                 args.collection_id.map(|u| u.to_string()),
+                mode,
+                patches_json,
             ],
         )?;
         drop(conn);
@@ -715,7 +741,7 @@ impl Storage {
                 "SELECT r.id, r.name, r.enabled, r.priority,
                         r.match_host_glob, r.match_method, r.match_path_glob, r.match_query,
                         r.res_status, r.res_headers, r.res_body_id, r.res_delay_ms,
-                        r.created_at, r.updated_at, r.collection_id
+                        r.created_at, r.updated_at, r.collection_id, r.mode, r.patches
                  FROM rule r
                  LEFT JOIN rule_collection c ON c.id = r.collection_id
                  WHERE r.enabled=1
@@ -736,10 +762,32 @@ impl Storage {
                 Some(bid) => self.bodies.get_raw(bid, &self.conn).unwrap_or((None, vec![])),
                 None => (None, vec![]),
             };
+            let mode = match dto.mode.as_str() {
+                "patch" => RuleMode::Patch,
+                _ => RuleMode::Stub,
+            };
+            let patches = dto
+                .patches
+                .into_iter()
+                .filter_map(|p| match p.op.as_str() {
+                    "set" => Some(PatchOp::Set {
+                        path: p.path,
+                        value: p.value.unwrap_or(serde_json::Value::Null),
+                    }),
+                    "delete" => Some(PatchOp::Delete { path: p.path }),
+                    "append" => Some(PatchOp::Append {
+                        path: p.path,
+                        value: p.value.unwrap_or(serde_json::Value::Null),
+                    }),
+                    _ => None,
+                })
+                .collect();
             out.push(ActiveRule {
                 id: dto.id,
                 name: dto.name,
                 priority: dto.priority,
+                mode,
+                patches,
                 host_glob: dto.match_host_glob,
                 method: dto.match_method,
                 path_glob: dto.match_path_glob,
@@ -770,12 +818,16 @@ impl Storage {
         let created_at: i64 = r.get(12)?;
         let updated_at: i64 = r.get(13)?;
         let collection_id: Option<String> = r.get(14)?;
+        let mode: String = r.get(15)?;
+        let patches_json: String = r.get(16)?;
         Ok(RuleDto {
             id: Uuid::parse_str(&id).unwrap(),
             name: r.get(1)?,
             enabled: r.get::<_, i64>(2)? != 0,
             priority: r.get(3)?,
             collection_id: collection_id.and_then(|s| Uuid::parse_str(&s).ok()),
+            mode,
+            patches: serde_json::from_str::<Vec<RulePatchOpDto>>(&patches_json).unwrap_or_default(),
             match_host_glob: r.get(4)?,
             match_method: r.get(5)?,
             match_path_glob: r.get(6)?,

@@ -23,6 +23,7 @@ use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
 mod leaf;
+mod patch;
 mod proxy_loop;
 mod rules;
 

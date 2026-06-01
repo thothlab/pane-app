@@ -254,6 +254,18 @@ pub struct RuleHeaderDto {
     pub value: String,
 }
 
+/// One mutation applied by a `mode = "patch"` rule. `path` walks a virtual
+/// response tree (`status`, `headers.<Name>`, `body.<dot.path>`).
+/// `value` is parsed as JSON; if that fails it's treated as a plain string.
+/// `delete` ignores `value`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulePatchOpDto {
+    pub op: String, // "set" | "delete" | "append"
+    pub path: String,
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleDto {
     pub id: Uuid,
@@ -261,6 +273,11 @@ pub struct RuleDto {
     pub enabled: bool,
     pub priority: i64,
     pub collection_id: Option<Uuid>,
+
+    /// "stub" (default — replace whole response) or "patch" (forward upstream,
+    /// then apply `patches`).
+    pub mode: String,
+    pub patches: Vec<RulePatchOpDto>,
 
     pub match_host_glob: Option<String>,
     pub match_method: Option<String>,
@@ -287,6 +304,11 @@ pub struct RuleUpsertArgs {
     pub priority: i64,
     pub collection_id: Option<Uuid>,
 
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub patches: Vec<RulePatchOpDto>,
+
     pub match_host_glob: Option<String>,
     pub match_method: Option<String>,
     pub match_path_glob: Option<String>,
@@ -300,6 +322,10 @@ pub struct RuleUpsertArgs {
     pub res_body_base64: Option<String>,
     pub res_body_mime: Option<String>,
     pub res_delay_ms: u64,
+}
+
+fn default_mode() -> String {
+    "stub".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
