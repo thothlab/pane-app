@@ -95,8 +95,10 @@
       if (!button) return;
 
       const refresh = (theme: Theme) => {
-        for (const icon of this.querySelectorAll<HTMLElement>('[data-icon]')) {
-          icon.hidden = icon.dataset.icon !== theme;
+        for (const icon of this.querySelectorAll<SVGElement>('[data-icon]')) {
+          // `.hidden` IDL property is HTMLElement-only; SVGElement needs
+          // an explicit attribute toggle to flip `[hidden]` CSS state.
+          icon.toggleAttribute('hidden', icon.dataset.icon !== theme);
         }
       };
 
