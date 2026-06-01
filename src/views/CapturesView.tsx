@@ -563,7 +563,7 @@ const CapturesView: Component = () => {
           onReset={() => setListPaneWidth(LIST_PANE_DEFAULT)}
         />
 
-        <div class="overflow-hidden">
+        <div class="overflow-hidden min-w-[180px]">
           <DetailPanes capture={selected()} />
         </div>
       </div>

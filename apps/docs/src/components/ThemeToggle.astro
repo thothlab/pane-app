@@ -1,15 +1,16 @@
 ---
 // Override of Starlight's default `ThemeSelect` component.
 //
-// Replaces the labelled <select> dropdown with a single click-to-cycle
+// Replaces the segmented control with a single click-to-cycle icon
 // button that mirrors the desktop app: auto → light → dark → auto.
-// Persists the choice under the same `starlight-theme` localStorage key
-// Starlight's `ThemeProvider` reads, so the no-FOUC inline script still
-// resolves the theme before paint.
+// The visible icon reflects the current choice. Persists under the
+// same `starlight-theme` localStorage key Starlight's `ThemeProvider`
+// reads, so the no-FOUC inline script still resolves the theme before
+// paint.
 ---
 
 <starlight-theme-toggle>
-  <button type="button" aria-label="Cycle theme">
+  <button type="button" aria-label="Cycle theme" title="Cycle theme">
     <svg data-icon="auto" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <rect x="2" y="3" width="20" height="14" rx="2"></rect>
       <line x1="8" y1="21" x2="16" y2="21"></line>
@@ -22,7 +23,6 @@
     <svg data-icon="dark" hidden xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
     </svg>
-    <span data-label>Auto</span>
   </button>
 </starlight-theme-toggle>
 
@@ -30,15 +30,14 @@
   starlight-theme-toggle button {
     display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.3rem 0.7rem;
+    justify-content: center;
+    padding: 0.35rem;
     border: 1px solid var(--sl-color-gray-5);
     border-radius: 999px;
     background: transparent;
     color: var(--sl-color-text);
     font: inherit;
-    font-size: var(--sl-text-xs);
-    line-height: 1;
+    line-height: 0;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s;
   }
@@ -48,6 +47,7 @@
   }
   starlight-theme-toggle svg {
     flex: none;
+    display: block;
   }
 </style>
 
@@ -56,7 +56,6 @@
 
   const STORAGE_KEY = 'starlight-theme';
   const CYCLE: Theme[] = ['auto', 'light', 'dark'];
-  const LABEL: Record<Theme, string> = { auto: 'Auto', light: 'Light', dark: 'Dark' };
 
   function parse(value: unknown): Theme {
     return value === 'light' || value === 'dark' ? value : 'auto';
@@ -97,8 +96,6 @@
         for (const icon of this.querySelectorAll<HTMLElement>('[data-icon]')) {
           icon.hidden = icon.dataset.icon !== theme;
         }
-        const label = this.querySelector<HTMLElement>('[data-label]');
-        if (label) label.textContent = LABEL[theme];
       };
 
       const initial = load();
