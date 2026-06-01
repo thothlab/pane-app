@@ -8,6 +8,10 @@
     "dialog:default",
     "fs:default",
     "os:default",
-    "shell:default"
+    "shell:default",
+    {
+      "identifier": "shell:allow-open",
+      "allow": [{ "validator": "^https://pane\\.thothlab\\.tech/" }]
+    }
   ]
 }

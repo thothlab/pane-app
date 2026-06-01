@@ -2,6 +2,7 @@ import { type Component, createResource, createSignal, For, Show } from "solid-j
 import { RefreshCw, Download } from "lucide-solid";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "@/ipc/client";
+import HelpButton from "@/components/HelpButton";
 import { setTheme, theme, type Theme } from "@/stores/theme";
 
 const THEME_OPTIONS: Array<{ value: Theme; label: string }> = [
@@ -56,7 +57,10 @@ const SettingsView: Component = () => {
 
   return (
     <div class="h-full overflow-auto p-6 space-y-6 max-w-3xl">
-      <h1 class="text-xl font-semibold">Settings</h1>
+      <div class="flex items-center gap-2">
+        <h1 class="text-xl font-semibold">Settings</h1>
+        <HelpButton path="/getting-started/" title="First-time setup: install, CA export, proxy on device" />
+      </div>
 
       <section class="space-y-3">
         <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Appearance</h2>

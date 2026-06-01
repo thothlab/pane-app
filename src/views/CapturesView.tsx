@@ -16,6 +16,7 @@ import {
   setPaused,
 } from "@/stores/captures";
 import { refreshFilters, saveFilter } from "@/stores/saved-filters";
+import HelpButton from "@/components/HelpButton";
 
 const FILTER_PALETTE = [
   "#60a5fa", // blue
@@ -453,6 +454,7 @@ const CapturesView: Component = () => {
         >
           <Trash2 size={12} /> Clear
         </button>
+        <HelpButton path="/filtering/" title="Filter syntax: host, method, status, path, glob, ranges, negation" class="px-1" />
       </div>
 
       <div

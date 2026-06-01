@@ -1,8 +1,11 @@
 import { type ParentComponent, createEffect, createMemo, createSignal, onMount, For, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X, Shuffle } from "lucide-solid";
+import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X, Shuffle, BookOpen } from "lucide-solid";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
+import { getVersion } from "@tauri-apps/api/app";
 import { api } from "@/ipc/client";
 import { VerticalResizer } from "@/components/VerticalResizer";
+import { docsUrl } from "@/components/HelpButton";
 import { setFilter } from "@/stores/captures";
 import { filters, deleteFilter, refreshFilters } from "@/stores/saved-filters";
 import type { ProxyStatusDto } from "@/ipc/types";
@@ -26,6 +29,7 @@ function loadSidebarWidth(): number {
 
 const Layout: ParentComponent = (props) => {
   const [status, setStatus] = createSignal<ProxyStatusDto | null>(null);
+  const [appVersion, setAppVersion] = createSignal<string>("");
   const [sidebarWidth, setSidebarWidth] = createSignal(loadSidebarWidth());
   const gridTemplate = createMemo(() => `${sidebarWidth()}px 6px 1fr`);
   createEffect(() => {
@@ -47,6 +51,7 @@ const Layout: ParentComponent = (props) => {
   onMount(() => {
     refresh();
     refreshFilters();
+    getVersion().then(setAppVersion).catch(() => {});
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
   });
@@ -69,7 +74,7 @@ const Layout: ParentComponent = (props) => {
       <aside class="bg-bg-subtle flex flex-col overflow-hidden">
         <div class="px-4 py-4 border-b border-border">
           <div class="font-semibold text-lg">Pane</div>
-          <div class="text-xs text-fg-muted">v0.1.0-dev</div>
+          <div class="text-xs text-fg-muted">{appVersion() ? `v${appVersion()}` : ""}</div>
         </div>
         <nav class="flex-1 overflow-auto p-2 space-y-1">
           <NavLink href="/" icon={<Activity size={16} />}>Captures</NavLink>
@@ -77,9 +82,18 @@ const Layout: ParentComponent = (props) => {
           <NavLink href="/rules" icon={<Shuffle size={16} />}>Rules</NavLink>
           <NavLink href="/settings" icon={<Settings size={16} />}>Settings</NavLink>
           <NavLink href="/about" icon={<Info size={16} />}>About</NavLink>
+          <button
+            type="button"
+            class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-bg-muted text-fg"
+            title="Open documentation in browser"
+            onClick={() => void openExternal(docsUrl("/"))}
+          >
+            <BookOpen size={16} />
+            Docs
+          </button>
 
           <Show when={filters().length > 0}>
-            <div class="mt-4 px-2 text-xs uppercase tracking-wide text-fg-muted">Filters</div>
+            <div class="mt-8 pt-3 border-t border-border px-2 text-xs uppercase tracking-wide text-fg-muted">Filters</div>
             <For each={filters()}>
               {(f) => (
                 <div

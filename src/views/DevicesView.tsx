@@ -1,6 +1,7 @@
 import { type Component, createSignal, createResource, For, Show } from "solid-js";
 import { Smartphone, Plus, RefreshCw, RotateCw, Trash2, AlertCircle, CheckCircle } from "lucide-solid";
 import { api } from "@/ipc/client";
+import HelpButton from "@/components/HelpButton";
 import type { DeviceDto, DiscoveredDeviceDto } from "@/ipc/types";
 
 const DevicesView: Component = () => {
@@ -51,7 +52,10 @@ const DevicesView: Component = () => {
   return (
     <div class="h-full overflow-auto p-6 space-y-6">
       <header class="flex items-center justify-between">
-        <h1 class="text-xl font-semibold">Devices</h1>
+        <div class="flex items-center gap-2">
+          <h1 class="text-xl font-semibold">Devices</h1>
+          <HelpButton path="/getting-started/#first-device" title="USB pairing: iOS / Android setup walkthrough" />
+        </div>
         <button
           class="text-xs px-3 py-1.5 rounded border border-border hover:bg-bg-muted inline-flex items-center gap-1"
           onClick={() => {

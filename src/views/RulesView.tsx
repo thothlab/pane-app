@@ -12,6 +12,7 @@ import {
   FolderPlus,
 } from "lucide-solid";
 import { api } from "@/ipc/client";
+import HelpButton from "@/components/HelpButton";
 import type {
   RuleDto,
   RuleUpsertArgs,
@@ -218,7 +219,10 @@ const RulesView: Component = () => {
       <header class="border-b border-border bg-bg-subtle px-4 py-3 flex items-center gap-3">
         <Shuffle size={16} class="text-accent" />
         <div>
-          <div class="text-sm font-semibold">Response stubs</div>
+          <div class="text-sm font-semibold flex items-center gap-1.5">
+            Response stubs
+            <HelpButton path="/rules/" title="How rules work — stub vs patch, matcher, examples" />
+          </div>
           <div class="text-xs text-fg-muted">
             Group rules into collections. Drag a rule onto a collection to move it.
           </div>
@@ -878,7 +882,7 @@ const RuleEditor: Component<{
       </Section>
 
       <Section title="Response">
-        <FieldRow label="Mode">
+        <FieldRow label="Mode" help={{ path: "/rules/", title: "Stub vs Patch — explained in the docs" }}>
           <select
             class="bg-bg border border-border rounded px-2 py-1 text-sm"
             value={d().mode}
@@ -1021,7 +1025,7 @@ const RuleEditor: Component<{
         </FieldRow>
         </Show>
         <Show when={d().mode === "patch"}>
-          <FieldRow label="Patches">
+          <FieldRow label="Patches" help={{ path: "/rules/#синтаксис-path", title: "Path syntax, ops, examples" }}>
             <PatchesEditor
               patches={d().patches}
               onChange={(arr) => patch({ patches: arr })}
@@ -1134,9 +1138,14 @@ const Section: Component<{ title: string; children: any }> = (p) => (
   </div>
 );
 
-const FieldRow: Component<{ label: string; children: any }> = (p) => (
+const FieldRow: Component<{ label: string; help?: { path: string; title?: string }; children: any }> = (p) => (
   <div class="flex items-start gap-3">
-    <div class="w-40 text-xs text-fg-muted pt-1.5 shrink-0">{p.label}</div>
+    <div class="w-40 text-xs text-fg-muted pt-1.5 shrink-0 inline-flex items-center gap-1">
+      {p.label}
+      <Show when={p.help}>
+        {(h) => <HelpButton path={h().path} title={h().title} size={12} />}
+      </Show>
+    </div>
     <div class="flex-1 flex items-center gap-2 flex-wrap">{p.children}</div>
   </div>
 );
