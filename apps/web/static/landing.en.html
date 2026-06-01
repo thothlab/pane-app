@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pane — сетевой отладчик для мобильных приложений</title>
-<meta name="description" content="Pane — быстрый сетевой отладчик для iOS и Android: TLS-расшифровывающий MITM-прокси, настройка устройства одной командой, скриптуемая подмена ответов.">
+<title>Pane — network debugger for mobile apps</title>
+<meta name="description" content="Pane is a fast network debugger for iOS and Android — TLS-decrypting MITM proxy, one-command device setup, scriptable response stubs.">
 <link rel="alternate" hreflang="ru" href="https://pane.thothlab.tech/">
 <link rel="alternate" hreflang="en" href="https://pane.thothlab.tech/en/">
 <link rel="icon" type="image/png" href="/logo.png">
@@ -75,77 +75,77 @@
 </style>
 </head>
 <body>
-<nav class="lang" aria-label="Язык"><a href="/" class="active">RU</a><span class="sep">·</span><a href="/en/">EN</a></nav>
+<nav class="lang" aria-label="Language"><a href="/">RU</a><span class="sep">·</span><a href="/en/" class="active">EN</a></nav>
 <main>
   <header>
     <img class="logo" src="/logo.png" alt="Pane" width="44" height="44">
     <div>
       <h1>Pane <span class="pill">closed alpha</span></h1>
-      <p class="tag">Сетевой отладчик для мобильных приложений — TLS-расшифровывающий MITM-прокси с настройкой устройства одной командой.</p>
+      <p class="tag">Network debugger for mobile apps — TLS-inspecting MITM proxy with one-command device setup.</p>
     </div>
   </header>
 
   <section class="hero">
-    <p>Подключи iPhone или Android, нажми Start — и каждый HTTP/HTTPS-запрос приложения окажется расшифрованным: тело, заголовки, тайминги. Trust setup, установка CA и настройка прокси происходят по USB; без ручного танца с root-сертификатами. Подмени или пропатчь те ответы, которые тебе нужны, остальное проходит насквозь.</p>
+    <p>Plug an iOS or Android phone in, hit Start, and every HTTP/HTTPS request the app makes shows up decoded — body, headers, timing. Trust setup, CA install and proxy config happen over USB; no manual root certificate dance. Stub or patch responses for the requests that matter while everything else passes through untouched.</p>
   </section>
 
   <section>
-    <h2>Скачать</h2>
+    <h2>Download</h2>
     <div class="grid">
-      <a class="btn" href="/download/macos-aarch64" title="Скачать Pane для Mac на Apple Silicon">
+      <a class="btn" href="/download/macos-aarch64" title="Download Pane for Apple Silicon Macs">
         <span class="name">macOS — Apple Silicon</span>
         <span class="sub">.dmg</span>
       </a>
-      <span class="btn disabled" aria-disabled="true" title="Нативной сборки для Intel пока нет — собери из исходников или жди будущего релиза">
+      <span class="btn disabled" aria-disabled="true" title="No native Intel build yet — build from source or wait for a future release">
         <span class="name">macOS — Intel</span>
-        <span class="sub">скоро</span>
+        <span class="sub">soon</span>
       </span>
-      <a class="btn" href="/download/linux-x64" title="Скачать Pane для Linux (AppImage)">
+      <a class="btn" href="/download/linux-x64" title="Download Pane for Linux (AppImage)">
         <span class="name">Linux — x86_64</span>
         <span class="sub">.AppImage</span>
       </a>
-      <a class="btn" href="/download/windows-x64" title="Скачать Pane для Windows (NSIS installer)">
+      <a class="btn" href="/download/windows-x64" title="Download Pane for Windows (NSIS installer)">
         <span class="name">Windows — x86_64</span>
         <span class="sub">.exe</span>
       </a>
     </div>
     <div class="install">
-      <p><strong>macOS — первый запуск.</strong> dmg пока не подписан Apple Developer ID, так что macOS может сказать <em>«Pane is damaged and can't be opened.»</em> Это не так — просто unsigned. Установка одной командой:</p>
+      <p><strong>macOS first launch.</strong> The dmg isn't signed with an Apple Developer ID yet, so macOS may say <em>"Pane is damaged and can't be opened."</em> It isn't — it's just unsigned. Install with one command:</p>
       <pre>curl -fsSL https://pane.thothlab.tech/install-macos.sh | bash</pre>
-      <p>Либо после перетаскивания из dmg выполни:</p>
+      <p>Or, after dragging the app from the dmg, run this once:</p>
       <pre>xattr -dr com.apple.quarantine /Applications/Pane.app</pre>
-      <p><strong>Linux.</strong> Сделать AppImage исполняемым и запустить:</p>
+      <p><strong>Linux.</strong> Make the AppImage executable, then run it:</p>
       <pre>chmod +x Pane_*_amd64.AppImage &amp;&amp; ./Pane_*_amd64.AppImage</pre>
-      <p><strong>Windows.</strong> Инсталлер пока не подписан EV-сертификатом, SmartScreen покажет варнинг — нажми <em>More info → Run anyway</em>.</p>
+      <p><strong>Windows.</strong> The installer isn't signed with an EV certificate yet, so SmartScreen will show a warning — click <em>More info → Run anyway</em>.</p>
     </div>
-    <p class="note">Closed alpha. Пользователям Intel Mac — собирайте из исходников до выхода нативной сборки.</p>
+    <p class="note">Closed alpha. Intel Mac users — build from source until a native build is published.</p>
   </section>
 
   <section>
-    <h2>Что внутри</h2>
+    <h2>Highlights</h2>
     <ul class="feats">
-      <li>HTTP/1.1 MITM-прокси с per-host leaf-сертификатами</li>
-      <li>Trust + proxy setup для iOS / Android одной кнопкой через USB</li>
-      <li>Список captures с bareword + DSL фильтрами (<code>host:</code>, <code>status:</code>, …)</li>
-      <li>Body viewer в режимах Tree / Pretty / Raw для JSON и XML</li>
-      <li>Response stubs — заменить ответ целиком или подменить отдельные поля</li>
-      <li>Replay любого capture обратно в апстрим (плюс curl / HAR export)</li>
+      <li>HTTP/1.1 MITM proxy with per-host leaf-cert minting</li>
+      <li>One-command iOS / Android trust + proxy setup over USB</li>
+      <li>Capture list with bareword + DSL filters (<code>host:</code>, <code>status:</code>, …)</li>
+      <li>Tree / Pretty / Raw body viewer for JSON &amp; XML</li>
+      <li>Response stubs — replace a whole response or patch real fields</li>
+      <li>Replay any capture back upstream (curl / HAR export too)</li>
     </ul>
   </section>
 
   <section>
-    <h2>Ссылки</h2>
+    <h2>Links</h2>
     <div class="links">
-      <a href="/docs/">Документация</a>
+      <a href="/docs/">Documentation</a>
       <a href="https://github.com/thothlab/pane-app">GitHub</a>
-      <a href="/docs/getting-started/">Начало работы</a>
-      <a href="/docs/rules/">Подмена ответов</a>
+      <a href="/docs/getting-started/">Getting started</a>
+      <a href="/docs/rules/">Response stubs</a>
     </div>
   </section>
 
   <footer>
-    <p>Closed alpha — пожалуйста, сообщайте об ошибках на GitHub. Crash-репорты (если согласишься их отправлять) анонимны (без PII), хранятся на сервере команды Pane до 90 дней и используются только для починки конкретного panic'а.</p>
-    <p>Исходный код под Apache-2.0. © Pane contributors.</p>
+    <p>Closed alpha — please report issues on GitHub. Crash reports, when you opt in, are anonymous (no PII), stored on the Pane team's server for up to 90 days, and used only to fix the panic that triggered them.</p>
+    <p>Source code Apache-2.0. © Pane contributors.</p>
   </footer>
 </main>
 </body>

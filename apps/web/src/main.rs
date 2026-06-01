@@ -116,6 +116,8 @@ fn build_router(state: AppState, config: &Config) -> Router {
 
     Router::new()
         .route("/", get(routes::landing::index))
+        .route("/en", get(routes::landing::index_en))
+        .route("/en/", get(routes::landing::index_en))
         .route("/logo.png", get(routes::landing::logo))
         .route("/install-macos.sh", get(routes::landing::install_macos))
         .route("/pane-gpg.pub", get(routes::landing::pane_gpg_pub))

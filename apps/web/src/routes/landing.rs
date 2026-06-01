@@ -11,6 +11,7 @@ use axum::{
 /// buttons point at `/download/{target}` which then 302s to the actual
 /// GitHub Releases asset (configurable via `ARGOS_DOWNLOADS_BASE`).
 const LANDING_HTML: &str = include_str!("../../static/landing.html");
+const LANDING_EN_HTML: &str = include_str!("../../static/landing.en.html");
 
 /// 1024×1024 master app icon, served at `/logo.png` for the landing
 /// header (and anywhere else a brand mark is useful).
@@ -31,6 +32,14 @@ pub async fn index() -> Response {
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
         LANDING_HTML,
+    )
+        .into_response()
+}
+
+pub async fn index_en() -> Response {
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        LANDING_EN_HTML,
     )
         .into_response()
 }
@@ -103,6 +112,27 @@ mod tests {
         assert!(body.contains("Pane"));
         assert!(body.contains("btn disabled"));
         assert!(body.contains("Apple Silicon"));
+        // The RU landing should advertise the EN alternative.
+        assert!(body.contains("/en/"));
+        assert!(body.contains("lang=\"ru\""));
+    }
+
+    #[tokio::test]
+    async fn index_en_returns_english_html() {
+        let h = test_harness::make().await;
+        let res = h
+            .router
+            .clone()
+            .oneshot(Request::builder().uri("/en/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains("lang=\"en\""));
+        assert!(body.contains("Network debugger for mobile apps"));
     }
 
     #[tokio::test]
