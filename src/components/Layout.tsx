@@ -117,8 +117,6 @@ const Layout: ParentComponent = (props) => {
           </button>
           <div class="text-xs text-fg-muted text-center">
             {status()?.running ? status()?.listen ?? "running" : "stopped"}
-            <span class="mx-1">·</span>
-            <span>{status()?.captures_count ?? 0} captures</span>
           </div>
         </div>
       </aside>
