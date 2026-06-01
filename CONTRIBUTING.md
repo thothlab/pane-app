@@ -19,4 +19,4 @@ CI runs the same checks on three OSes — a green local pass should mean a green
 
 ## Where things live
 
-The PRD package under `docs/tasks/prd_01_mvp-network-debugger/` is the source of truth for scope and acceptance criteria. If a change would alter behaviour beyond what the PRD describes, update the PRD in the same PR.
+User-facing documentation lives in `apps/docs/` (Astro Starlight, published to https://pane.thothlab.tech/docs/). The pane-web service that hosts the landing + docs + release endpoints is in `apps/web/`.

@@ -2,7 +2,7 @@
 
 A modern HTTPS network debugger focused on one thing: making mobile-device setup take 30 seconds instead of 15 minutes. Plug your iPhone or Android in over USB, click **Add**, and start inspecting traffic — no Settings dance, no certificate trust spelunking, no Wi-Fi proxy editing.
 
-> **Status:** early MVP scaffold. Cross-platform shell, proxy engine (HTTP/1.1), capture/replay storage, device-setup pipelines, and CI are wired up. TLS-decrypted MITM (HTTPS body inspection beyond CONNECT metadata) is the next focused milestone. See `docs/tasks/prd_01_mvp-network-debugger/` for the full PRD + 14-task delivery plan.
+> **Status:** v0.1.0 — first public release. Cross-platform shell, proxy engine (HTTP/1.1 with TLS MITM), capture/replay storage, response stubs and patches, device-setup pipelines, and CI/release pipeline are wired up. See the [documentation](https://pane.thothlab.tech/docs/) for user-facing features and setup.
 
 ## What's inside
 
@@ -63,7 +63,9 @@ crates/
   pane-mobileconfig/  Apple .mobileconfig builder
   pane-setup-server/  LAN HTTP server for QR-fallback pairing
   pane-pinning/    Pinning heuristic + hint kinds
-docs/                   PRD, task decomposition, planning notes
+apps/
+  web/                  pane-web service (landing + docs + release endpoints)
+  docs/                 Astro Starlight documentation site
 .github/workflows/      CI + release
 scripts/                fetch-sidecars, dev launcher
 ```
