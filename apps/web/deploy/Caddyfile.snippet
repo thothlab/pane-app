@@ -1,0 +1,32 @@
+# Paste this block into /etc/caddy/Caddyfile on the VPS
+# (153.80.185.242), then:
+#
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# Caddy auto-issues a Let's Encrypt cert on first request — make sure
+# DNS for pane.thothlab.tech already points to the VPS IP before
+# reloading.
+
+pane.thothlab.tech {
+    # pane-web container on Mac Mini, exposed via the autossh
+    # reverse tunnel on port 8744.
+    #
+    # Rate limiting + content-type rules live inside pane-web (per
+    # `src/routes/crash.rs` etc), not here — keeps the Caddy block
+    # boring and adds zero per-route handle{} ambiguity.
+    reverse_proxy localhost:8744
+
+    # Static `/docs/_astro/*` assets get the long-cache headers
+    # Astro expects. The matcher is path-scoped so it doesn't
+    # conflict with the catch-all reverse_proxy above; `handle`
+    # captures the response after it comes back from the upstream.
+    @docs_assets path /docs/_astro/*
+    header @docs_assets Cache-Control "public, max-age=31536000, immutable"
+
+    encode gzip zstd
+
+    # Per-vhost log to a file would go here, but Caddy ships
+    # systemd-journal logging by default (see `journalctl -u caddy
+    # -t pane.thothlab.tech`), which is enough for closed alpha.
+}

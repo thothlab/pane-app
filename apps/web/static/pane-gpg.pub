@@ -1,0 +1,7 @@
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+(placeholder — replace with the armored export of `Pane Releases
+<releases@thothlab.tech>`. Generate the key once with `gpg --quick-gen-key`
+and export it via `gpg --armor --export releases@thothlab.tech`.)
+
+-----END PGP PUBLIC KEY BLOCK-----

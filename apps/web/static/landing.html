@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pane — network debugger for mobile apps</title>
+<meta name="description" content="Pane is a fast network debugger for iOS and Android — TLS-decrypting MITM proxy, one-command device setup, scriptable response stubs.">
+<link rel="icon" type="image/png" href="/logo.png">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafafa;
+    --fg: #18181b;
+    --muted: #6b6b75;
+    --card: #ffffff;
+    --border: #e5e5ea;
+    --accent: #2563eb;
+    --accent-fg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0b0f;
+      --fg: #f7f7fa;
+      --muted: #8a8a93;
+      --card: #15151a;
+      --border: #26262d;
+      --accent: #60a5fa;
+      --accent-fg: #0b0b0f;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 6rem 1.5rem 4rem; }
+  header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 2rem; }
+  .logo { width: 44px; height: 44px; display: block; border-radius: 10px; }
+  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+  .tag { color: var(--muted); margin-top: 0.5rem; font-size: 1rem; }
+  .hero p { font-size: 1.05rem; line-height: 1.5; color: var(--muted); }
+  .grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 2.5rem 0 1rem; }
+  .btn { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.9rem 1.1rem; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--fg); text-decoration: none; transition: border-color .15s; }
+  .btn:hover { border-color: var(--accent); }
+  .btn .name { font-weight: 600; }
+  .btn .sub { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.78rem; color: var(--muted); }
+  .btn.disabled { cursor: not-allowed; opacity: 0.55; }
+  .btn.disabled:hover { border-color: var(--border); }
+  .note { margin-top: 0.6rem; font-size: 0.82rem; color: var(--muted); line-height: 1.45; }
+  .note code { font-size: 0.92em; padding: 0.05em 0.4em; border-radius: 4px; background: var(--card); border: 1px solid var(--border); }
+  .note strong { color: var(--fg); }
+  .install { margin-top: 1rem; padding: 0.85rem 1rem; border: 1px solid var(--border); border-radius: 10px; background: var(--card); font-size: 0.85rem; line-height: 1.5; color: var(--muted); }
+  .install strong { color: var(--fg); }
+  .install pre { margin: 0.5rem 0 0; padding: 0.65rem 0.8rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 0.82rem; color: var(--fg); }
+  .install p + p { margin-top: 0.6rem; }
+  .pill { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; background: var(--accent); color: var(--accent-fg); font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+  section { margin-top: 2.5rem; }
+  h2 { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 0 0 0.75rem; }
+  ul.feats { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem 1.25rem; }
+  ul.feats li { padding-left: 1rem; position: relative; font-size: 0.95rem; }
+  ul.feats li::before { content: "→"; position: absolute; left: 0; color: var(--accent); }
+  .links { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; font-size: 0.92rem; }
+  .links a { color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--border); padding-bottom: 1px; }
+  .links a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+  footer { margin-top: 4rem; font-size: 0.78rem; color: var(--muted); line-height: 1.6; }
+  footer code { font-size: 0.85em; padding: 0.05em 0.4em; border-radius: 4px; background: var(--card); border: 1px solid var(--border); }
+  @media (max-width: 540px) {
+    .grid, ul.feats { grid-template-columns: 1fr; }
+    h1 { font-size: 1.65rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img class="logo" src="/logo.png" alt="Pane" width="44" height="44">
+    <div>
+      <h1>Pane <span class="pill">closed alpha</span></h1>
+      <p class="tag">Network debugger for mobile apps — TLS-inspecting MITM proxy with one-command device setup.</p>
+    </div>
+  </header>
+
+  <section class="hero">
+    <p>Plug an iOS or Android phone in, hit Start, and every HTTP/HTTPS request the app makes shows up decoded — body, headers, timing. Trust setup, CA install and proxy config happen over USB; no manual root certificate dance. Stub or patch responses for the requests that matter while everything else passes through untouched.</p>
+  </section>
+
+  <section>
+    <h2>Download</h2>
+    <div class="grid">
+      <a class="btn" href="/download/macos-aarch64" title="Download Pane for Apple Silicon Macs">
+        <span class="name">macOS — Apple Silicon</span>
+        <span class="sub">.dmg</span>
+      </a>
+      <span class="btn disabled" aria-disabled="true" title="No native Intel build yet — build from source or wait for a future release">
+        <span class="name">macOS — Intel</span>
+        <span class="sub">soon</span>
+      </span>
+      <a class="btn" href="/download/linux-x64" title="Download Pane for Linux (AppImage)">
+        <span class="name">Linux — x86_64</span>
+        <span class="sub">.AppImage</span>
+      </a>
+      <a class="btn" href="/download/windows-x64" title="Download Pane for Windows (NSIS installer)">
+        <span class="name">Windows — x86_64</span>
+        <span class="sub">.exe</span>
+      </a>
+    </div>
+    <div class="install">
+      <p><strong>macOS first launch.</strong> The dmg isn't signed with an Apple Developer ID yet, so macOS may say <em>"Pane is damaged and can't be opened."</em> It isn't — it's just unsigned. Install with one command:</p>
+      <pre>curl -fsSL https://pane.thothlab.tech/install-macos.sh | bash</pre>
+      <p>Or, after dragging the app from the dmg, run this once:</p>
+      <pre>xattr -dr com.apple.quarantine /Applications/Pane.app</pre>
+      <p><strong>Linux.</strong> Make the AppImage executable, then run it:</p>
+      <pre>chmod +x Pane_*_amd64.AppImage &amp;&amp; ./Pane_*_amd64.AppImage</pre>
+      <p><strong>Windows.</strong> The installer isn't signed with an EV certificate yet, so SmartScreen will show a warning — click <em>More info → Run anyway</em>.</p>
+    </div>
+    <p class="note">Closed alpha. Intel Mac users — build from source until a native build is published.</p>
+  </section>
+
+  <section>
+    <h2>Highlights</h2>
+    <ul class="feats">
+      <li>HTTP/1.1 MITM proxy with per-host leaf-cert minting</li>
+      <li>One-command iOS / Android trust + proxy setup over USB</li>
+      <li>Capture list with bareword + DSL filters (<code>host:</code>, <code>status:</code>, …)</li>
+      <li>Tree / Pretty / Raw body viewer for JSON &amp; XML</li>
+      <li>Response stubs — replace a whole response or patch real fields</li>
+      <li>Replay any capture back upstream (curl / HAR export too)</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Links</h2>
+    <div class="links">
+      <a href="/docs/">Documentation</a>
+      <a href="https://github.com/thothlab/pane-app">GitHub</a>
+      <a href="/docs/getting-started/">Getting started</a>
+      <a href="/docs/rules/">Response stubs</a>
+    </div>
+  </section>
+
+  <footer>
+    <p>Closed alpha — please report issues on GitHub. Crash reports, when you opt in, are anonymous (no PII), stored on the Pane team's server for up to 90 days, and used only to fix the panic that triggered them.</p>
+    <p>Source code Apache-2.0. © Pane contributors.</p>
+  </footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  autossh LaunchAgent for the Pane web service tunnel.
+
+  Mirrors the existing com.autossh.tunnel.plist pattern used for
+  Gitea, FileBrowser, Jellyfin etc — one agent per forwarded port so
+  failure of one tunnel doesn't take down the others.
+
+  Substitute the @PLACEHOLDERS@ before installing — `make install-launchagent`
+  in apps/web does this for you.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pane.tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>@AUTOSSH_BIN@</string>
+        <string>-M</string>
+        <string>0</string>
+        <string>-N</string>
+        <string>-o</string>
+        <string>ServerAliveInterval=30</string>
+        <string>-o</string>
+        <string>ServerAliveCountMax=3</string>
+        <string>-o</string>
+        <string>StrictHostKeyChecking=accept-new</string>
+        <string>-o</string>
+        <string>ExitOnForwardFailure=yes</string>
+        <string>-i</string>
+        <string>@TUNNEL_KEY@</string>
+        <string>-R</string>
+        <string>127.0.0.1:@PORT@:localhost:@PORT@</string>
+        <string>tunnel@@VPS_IP@</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/pane-tunnel.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/pane-tunnel.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>AUTOSSH_GATETIME</key>
+        <string>0</string>
+    </dict>
+</dict>
+</plist>

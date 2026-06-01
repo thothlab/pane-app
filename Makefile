@@ -1,4 +1,4 @@
-.PHONY: help install dev build test lint typecheck format clean tauri-dev tauri-build
+.PHONY: help install dev build test lint typecheck format clean tauri-dev tauri-build docs-dev docs-build web-run
 
 help:
 	@echo "Pane — common dev commands:"
@@ -12,6 +12,9 @@ help:
 	@echo "  make lint         # Run linters (clippy + eslint)"
 	@echo "  make typecheck    # Run TypeScript typecheck"
 	@echo "  make format       # Format JS/TS via prettier"
+	@echo "  make docs-dev     # Astro Starlight dev server (apps/docs)"
+	@echo "  make docs-build   # Build static docs into apps/docs/dist/"
+	@echo "  make web-run      # Run pane-web locally on :8744 (serves docs + landing)"
 	@echo "  make clean        # Remove all build artefacts"
 
 install:
@@ -46,6 +49,15 @@ typecheck:
 format:
 	pnpm format
 
+docs-dev:
+	pnpm --filter @pane/docs dev
+
+docs-build:
+	pnpm --filter @pane/docs build
+
+web-run: docs-build
+	$(MAKE) -C apps/web run
+
 clean:
 	cargo clean
-	rm -rf node_modules dist
+	rm -rf node_modules dist apps/docs/dist apps/docs/node_modules

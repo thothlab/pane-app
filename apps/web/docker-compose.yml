@@ -1,0 +1,35 @@
+# Run pane-web on the Mac Mini bound to 127.0.0.1:8744 — Caddy on
+# the VPS reaches it through the autossh reverse tunnel. Don't bind
+# 0.0.0.0 on the host; the container handles 0.0.0.0 internally,
+# the docker port mapping below restricts external exposure.
+
+services:
+  pane-web:
+    build:
+      context: ../..      # repo root — Dockerfile references the workspace
+      dockerfile: apps/web/Dockerfile
+    container_name: pane-web
+    restart: unless-stopped
+    # 127.0.0.1:8744 on the host → 8744 in the container. Not reachable
+    # from LAN — only through the SSH tunnel that targets localhost.
+    ports:
+      - "127.0.0.1:8744:8744"
+    environment:
+      PANE_BIND: "0.0.0.0:8744"
+      PANE_DATA_DIR: "/var/lib/pane-web"
+      PANE_DOCS_DIR: "/srv/pane-docs"
+      PANE_DOWNLOADS_BASE: "${PANE_DOWNLOADS_BASE:-https://github.com/thothlab/pane-app/releases/latest/download}"
+      RUST_LOG: "${RUST_LOG:-pane_web=info,tower_http=info}"
+    volumes:
+      # Crash reports + manifest.json survive container rebuilds.
+      - pane-web-data:/var/lib/pane-web
+      # Astro docs build (apps/docs/dist) mounted read-only.
+      - ../../apps/docs/dist:/srv/pane-docs:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/pane-web", "--help"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pane-web-data:
