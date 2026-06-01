@@ -8,6 +8,7 @@
 PORT ?= 8744
 VPS_HOST ?= vps
 VPS_IP ?= 153.80.185.242
+SSH_PORT ?= 58222
 TUNNEL_KEY ?= $(HOME)/.ssh/id_ed25519_tunnel
 AUTOSSH_BIN ?= /opt/homebrew/bin/autossh
 LAUNCH_PLIST := $(HOME)/Library/LaunchAgents/com.pane.tunnel.plist
@@ -74,6 +75,7 @@ install-launchagent: $(LAUNCH_TEMPLATE)
 	  -e 's|@TUNNEL_KEY@|$(TUNNEL_KEY)|g' \
 	  -e 's|@PORT@|$(PORT)|g' \
 	  -e 's|@VPS_IP@|$(VPS_IP)|g' \
+	  -e 's|@SSH_PORT@|$(SSH_PORT)|g' \
 	  $(LAUNCH_TEMPLATE) > $(LAUNCH_PLIST)
 	@echo "Loading LaunchAgent..."
 	launchctl unload $(LAUNCH_PLIST) 2>/dev/null || true

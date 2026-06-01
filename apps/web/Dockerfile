@@ -10,6 +10,15 @@ FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY apps/web/Cargo.toml apps/web/Cargo.toml
 COPY crates/ crates/
+# src-tauri is a workspace member but pane-web doesn't depend on it,
+# so we ship just enough scaffolding (Cargo.toml + stub bin + stub
+# build.rs) to satisfy `cargo metadata`. The real sources arrive in
+# the builder stage's `COPY . .` and overwrite these.
+COPY src-tauri/Cargo.toml src-tauri/Cargo.toml
+RUN mkdir -p src-tauri/src \
+ && echo 'fn main() {}' > src-tauri/src/main.rs \
+ && echo 'pub fn run() {}' > src-tauri/src/lib.rs \
+ && echo 'fn main() {}' > src-tauri/build.rs
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder

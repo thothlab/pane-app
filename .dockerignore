@@ -1,0 +1,42 @@
+# Docker reads this from the build context root. apps/web/Dockerfile
+# uses `..` (repo root) as context so the workspace Cargo.toml,
+# Cargo.lock and crates/ are reachable.
+#
+# Everything below is either huge, irrelevant to pane-web, or both.
+
+# Rust build artefacts — 10+ GB locally.
+target/
+**/target/
+
+# JS — node_modules dwarf everything else.
+node_modules/
+**/node_modules/
+
+# UI build outputs.
+dist/
+**/dist/
+.astro/
+**/.astro/
+
+# Docs site — mounted as a separate read-only volume at runtime.
+apps/docs/dist/
+apps/docs/.astro/
+
+# Tauri generated artefacts.
+src-tauri/gen/
+src-tauri/WixTools/
+
+# VCS + editor.
+.git/
+.gitignore
+.gitattributes
+**/.DS_Store
+.vscode/
+.idea/
+
+# Repo docs (Markdown source) — already migrated into apps/docs/src/content/.
+docs/
+
+# Workspace tasks / examples — not needed in the image.
+tasks/
+examples/
