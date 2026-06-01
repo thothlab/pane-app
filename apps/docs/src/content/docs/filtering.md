@@ -1,72 +1,71 @@
 ---
-title: Filtering captures
-description: The small DSL on the capture search bar — keys, ranges, globs, negation, barewords.
+title: Фильтрация captures
+description: Маленький DSL в строке поиска — ключи, диапазоны, globs, отрицание, barewords.
 ---
 
-The capture list's search bar accepts a small filter DSL. It evaluates
-left to right, all space-separated terms must match (AND).
+Строка поиска в списке captures принимает маленький filter DSL.
+Парсер идёт слева направо, все термы через пробел должны совпасть (AND).
 
-## Keys
+## Ключи
 
-| Key | Matches | Example |
+| Ключ | С чем матчится | Пример |
 | --- | --- | --- |
-| `host:` | `server_host` substring (SQL `LIKE`, `*` works) | `host:api.example.com`, `host:*.dev` |
-| `method:` | exact method, case-insensitive | `method:POST` |
-| `status:` | single status or range | `status:200`, `status:500..599`, `status:5..` |
-| `mime:` | response `Content-Type` substring | `mime:json`, `mime:image/` |
-| `path:` | URL path substring (`*` works) | `path:/v1/*`, `path:auth` |
-| `size:` | response total bytes, single or range | `size:0`, `size:1000..` |
-| `duration:` | request duration in ms | `duration:1000..` (slow), `duration:..50` (fast) |
-| `error:` | exact `error_kind` value | `error:tls_handshake`, `error:pinning` |
+| `host:` | substring `server_host` (SQL `LIKE`, `*` работает) | `host:api.example.com`, `host:*.dev` |
+| `method:` | точный method, case-insensitive | `method:POST` |
+| `status:` | одиночный status или диапазон | `status:200`, `status:500..599`, `status:5..` |
+| `mime:` | substring response `Content-Type` | `mime:json`, `mime:image/` |
+| `path:` | substring URL path (`*` работает) | `path:/v1/*`, `path:auth` |
+| `size:` | размер response в байтах, одиночный или диапазон | `size:0`, `size:1000..` |
+| `duration:` | длительность запроса в мс | `duration:1000..` (медленные), `duration:..50` (быстрые) |
+| `error:` | точное значение `error_kind` | `error:tls_handshake`, `error:pinning` |
 
-Keys are **case-insensitive** — `host:`, `Host:` and `HOST:` all
-resolve to the same clause. Useful when iOS autocapitalises the first
-letter.
+Ключи **case-insensitive** — `host:`, `Host:` и `HOST:` сводятся к
+одному и тому же. Удобно, когда iOS автокапитализирует первую букву.
 
-## Negation
+## Отрицание
 
-Prefix any term with `!` to exclude matches:
+Префикс `!` исключает совпадения:
 
 ```text
-!error:tls_handshake          # drop everything that failed TLS
-!host:*.cdn.example.com       # ignore CDN noise
-!path:/healthz                # hide health-check pings
+!error:tls_handshake          # выбросить всё, что упало по TLS
+!host:*.cdn.example.com       # игнорировать CDN-шум
+!path:/healthz                # скрыть health-check'и
 ```
 
 ## Barewords
 
-A term without a colon is treated as a substring search across **host
-or path** simultaneously:
+Терм без двоеточия — substring-поиск одновременно по **host или path**:
 
 ```text
-google                        # any capture touching google.com or /google
+google                        # любой capture, где google.com или /google
 docs                          # matches host:docs.example.com OR path:/docs
 ```
 
-Quote phrases that contain spaces or special characters: `"some phrase"`.
+Фразу с пробелами или спецсимволами — в кавычки: `"some phrase"`.
 
-## Saving filters
+## Сохранение фильтров
 
-The ☆ button on the right of the search bar saves the current filter to
-the sidebar. Pinned filters live above non-pinned and survive restarts.
+Кнопка ☆ справа от строки поиска сохраняет текущий фильтр в sidebar.
+Сохранённые фильтры переживают перезапуск приложения.
 
-## Syntax highlighting
+## Подсветка синтаксиса
 
-Tokens light up as you type:
+Токены подсвечиваются по мере ввода:
 
-| Colour | Meaning |
+| Цвет | Значение |
 | --- | --- |
-| accent (blue) | Known key (`host`, `method`, …) |
-| red, dotted underline | Unknown key — backend will reject this term |
-| red | The `!` negation prefix |
-| muted | The `:` separator |
-| default | Values and barewords |
+| accent (синий) | Известный ключ (`host`, `method`, …) |
+| красный, dotted underline | Неизвестный ключ — backend отбросит этот терм |
+| красный | Префикс отрицания `!` |
+| muted | Разделитель `:` |
+| default | Значения и barewords |
 
-Unknown keys are flagged immediately, before sending to the backend.
+Неизвестные ключи флагуются сразу, до отправки в backend.
 
-## What's not (yet)
+## Чего пока нет
 
-- No `OR` between terms. Workaround: save two filters and switch.
-- No regex (deliberate — DSL is for skimming, not full grep).
-- Nothing matches inside the body. Use the body viewer's Tree mode to
-  navigate captured bodies.
+- Нет `OR` между термами. Workaround: сохранить два фильтра и
+  переключаться.
+- Нет regex (намеренно — DSL для skimming, не для grep).
+- Нет поиска внутри тела ответа. Используй Tree-режим в body viewer
+  для навигации по перехваченным телам.

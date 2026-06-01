@@ -13,7 +13,12 @@ export default defineConfig({
     starlight({
       title: 'Pane',
       description:
-        'Network debugger for mobile apps. MITM HTTPS proxy, one-command iOS / Android setup, response stubs and patches.',
+        'Сетевой отладчик для мобильных приложений. MITM HTTPS-прокси, настройка устройств одной кнопкой, подмена и патчинг ответов.',
+      defaultLocale: 'root',
+      locales: {
+        root: { label: 'Русский', lang: 'ru' },
+        en: { label: 'English', lang: 'en' },
+      },
       logo: { src: './public/logo-mark.png', replacesTitle: false },
       social: {
         github: 'https://github.com/thothlab/pane-app',
@@ -29,23 +34,46 @@ export default defineConfig({
       },
       sidebar: [
         {
-          label: 'Start here',
+          label: 'С чего начать',
+          translations: { en: 'Start here' },
           items: [
-            { label: 'What is Pane', link: '/' },
-            { label: 'Getting started', link: '/getting-started/' },
+            {
+              label: 'Что такое Pane',
+              translations: { en: 'What is Pane' },
+              link: '/',
+            },
+            {
+              label: 'Начало работы',
+              translations: { en: 'Getting started' },
+              link: '/getting-started/',
+            },
           ],
         },
         {
-          label: 'Features',
+          label: 'Возможности',
+          translations: { en: 'Features' },
           items: [
-            { label: 'Response stubs', link: '/rules/' },
-            { label: 'Filtering captures', link: '/filtering/' },
+            {
+              label: 'Подмена ответов',
+              translations: { en: 'Response stubs' },
+              link: '/rules/',
+            },
+            {
+              label: 'Фильтрация captures',
+              translations: { en: 'Filtering captures' },
+              link: '/filtering/',
+            },
           ],
         },
         {
-          label: 'Reference',
+          label: 'Справочник',
+          translations: { en: 'Reference' },
           items: [
-            { label: 'Release process', link: '/reference/releases/' },
+            {
+              label: 'Релизный процесс',
+              translations: { en: 'Release process' },
+              link: '/reference/releases/',
+            },
           ],
         },
       ],

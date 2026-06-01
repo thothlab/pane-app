@@ -1,32 +1,32 @@
 ---
-title: Getting started
-description: Install Pane, add a device, see your first capture.
+title: Начало работы
+description: Установить Pane, добавить устройство, увидеть первый перехваченный запрос.
 ---
 
-This page walks you from "haven't downloaded Pane yet" to "every request my app
-makes shows up in the capture list".
+Страница ведёт от «ещё не качал Pane» до «каждый запрос моего приложения
+виден в списке captures».
 
-## Install
+## Установка
 
-Grab the latest build for your OS from the [download page](https://pane.thothlab.tech/#download).
+Скачай свежую сборку для своей OS со [страницы загрузки](https://pane.thothlab.tech/#download).
 
-| Platform | File |
+| Платформа | Файл |
 | --- | --- |
 | macOS Apple Silicon | `.dmg` |
-| Linux x86_64 | `.AppImage` (portable) or `.deb` / `.rpm` |
-| Windows x86_64 | `.msi` (recommended) or `.exe` NSIS installer |
+| Linux x86_64 | `.AppImage` (портативный) или `.deb` / `.rpm` |
+| Windows x86_64 | `.msi` (рекомендуется) или `.exe` NSIS-инсталлер |
 
-### macOS first launch
+### macOS — первый запуск
 
-Closed-alpha builds aren't notarised yet, so the first launch is awkward.
-One-liner that downloads, copies to `/Applications` and strips the
-quarantine bit:
+Closed-alpha-сборки пока не нотаризованы, так что первый запуск неуютный.
+Однострочник, который качает, копирует в `/Applications` и снимает
+quarantine-флаг:
 
 ```sh
 curl -fsSL https://pane.thothlab.tech/install-macos.sh | bash
 ```
 
-…or after dragging the app from the dmg:
+…или после перетаскивания из dmg:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Pane.app
@@ -40,49 +40,49 @@ chmod +x Pane_*_amd64.AppImage && ./Pane_*_amd64.AppImage
 
 ### Windows
 
-The NSIS installer isn't signed with an EV cert yet, so SmartScreen will
-show a warning — click **More info → Run anyway**.
+NSIS-инсталлер пока не подписан EV-сертификатом, SmartScreen покажет
+предупреждение — **More info → Run anyway**.
 
-## First device
+## Первое устройство
 
-1. Open Pane. The sidebar shows **Captures**, **Devices**, **Rules**,
+1. Открой Pane. В sidebar — **Captures**, **Rules**, **Devices**,
    **Settings**.
-2. Connect your phone via USB. On Android, enable **USB debugging** under
-   Developer options. On iOS, trust the laptop the first time you plug in.
-3. Go to **Devices → Add device**. Pane discovers attached phones via
-   `adb` / `libimobiledevice` and shows them in a list.
-4. Pick your phone → **Install CA + set proxy**. Pane:
-   - generates a per-device leaf-cert chain rooted at Pane's local CA,
-   - pushes the root CA to the device's trust store,
-   - configures the Wi-Fi proxy to point at Pane's local listener
-     (`127.0.0.1:8888` by default).
-5. Hit **Start proxy** in the sidebar.
+2. Подключи телефон по USB. На Android включи **USB debugging** в
+   Developer options. На iOS — доверь компьютеру при первом подключении.
+3. **Devices → Add device**. Pane находит подключённые телефоны через
+   `adb` / `libimobiledevice` и показывает список.
+4. Выбери телефон → **Install CA + set proxy**. Pane:
+   - сгенерирует цепочку leaf-сертификатов от локального CA,
+   - запушит root CA в trust store устройства,
+   - настроит Wi-Fi-прокси на локальный listener
+     (`127.0.0.1:8888` по умолчанию).
+5. Нажми **Start proxy** в sidebar.
 
-The next request your phone's app makes is a capture in the list. Click
-a row to see method / URL / status, headers, body and timing.
+Следующий запрос приложения уже окажется в списке captures. Клик по
+строке открывает method / URL / status, заголовки, тело и timing.
 
-## Reading captures
+## Чтение captures
 
-The capture list supports a small filter DSL on the search bar:
+Строка поиска поддерживает маленький filter DSL:
 
 ```text
-host:api.example.com          # only requests to this host
-status:5..                    # any 5xx
-!error:tls_handshake          # exclude pinning + handshake failures
+host:api.example.com          # только запросы к этому хосту
+status:5..                    # любой 5xx
+!error:tls_handshake          # исключить pinning + handshake failures
 status:200..299 host:*.dev    # ranges + globs
 google                        # bareword: substring of host or path
 ```
 
-Save the current filter with the ☆ icon to pin it to the sidebar.
+Сохранить текущий фильтр — иконка ☆, он появится в sidebar.
 
-Right pane shows **Overview / Request / Response / Timing / TLS**. The
-body viewer auto-detects JSON / XML / text:
+Правая панель — **Overview / Request / Response / Timing / TLS**. Body
+viewer определяет JSON / XML / text:
 
-- **Tree** — collapsible nodes, copy by path or by value.
-- **Pretty** — formatted, syntax-highlighted text.
-- **Raw** — bytes as they came off the wire.
+- **Tree** — разворачиваемые узлы, копирование по path или value.
+- **Pretty** — отформатированный, подсвеченный текст.
+- **Raw** — байты как пришли.
 
-## Next
+## Дальше
 
-- [Response stubs](/docs/rules/) — replace or patch responses for testing.
-- [Release process](/docs/reference/releases/) — cutting tags, for maintainers.
+- [Подмена ответов](/docs/rules/) — Stub / Patch правила.
+- [Релизный процесс](/docs/reference/releases/) — для мейнтейнеров.

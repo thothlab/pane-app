@@ -1,57 +1,58 @@
 ---
-title: Release process
-description: Cut a versioned Pane release via tags and the GitHub Actions matrix.
+title: Релизный процесс
+description: Выпуск версионного релиза Pane через теги и GitHub Actions matrix.
 ---
 
 
-1. Cut a release branch: `git checkout -b release/v0.X.Y`.
-2. Bump versions in `Cargo.toml` (workspace), `package.json`, `src-tauri/tauri.conf.json`.
-   All three must agree.
-3. Update `CHANGELOG.md` (to be added on first release).
-4. Open PR, wait for green CI on all three OSes.
-5. Merge into `main`, then tag: `git tag -a v0.X.Y -m "v0.X.Y"`.
-6. Push tag: `git push --tags`. This triggers `.github/workflows/release.yml`,
-   which builds bundles for macOS Apple Silicon, Linux x86_64, and Windows
-   x86_64 in parallel via `tauri-apps/tauri-action`, then creates a **draft**
-   GitHub Release with the installers attached.
-7. Review the draft on the Releases page, then publish it.
+1. Создать релиз-ветку: `git checkout -b release/v0.X.Y`.
+2. Поднять версии в `Cargo.toml` (workspace), `package.json`,
+   `src-tauri/tauri.conf.json`. Все три должны совпадать.
+3. Обновить `CHANGELOG.md` (будет добавлен в первом релизе).
+4. Открыть PR, дождаться зелёного CI на всех трёх OS.
+5. Смерджить в `main`, поставить тег: `git tag -a v0.X.Y -m "v0.X.Y"`.
+6. Запушить тег: `git push --tags`. Триггерится
+   `.github/workflows/release.yml`, который собирает бандлы для
+   macOS Apple Silicon, Linux x86_64 и Windows x86_64 параллельно через
+   `tauri-apps/tauri-action`, и создаёт **draft** GitHub Release с
+   прикреплёнными инсталлерами.
+7. Проверить draft на странице Releases, опубликовать.
 
-Artefacts produced:
+Артефакты:
 
-| Platform | Files |
+| Платформа | Файлы |
 | --- | --- |
 | macOS (aarch64) | `Pane_<ver>_aarch64.dmg`, `Pane.app.tar.gz` |
 | Linux (x86_64)  | `pane_<ver>_amd64.AppImage`, `pane_<ver>_amd64.deb`, `pane-<ver>-1.x86_64.rpm` |
 | Windows (x86_64) | `Pane_<ver>_x64_en-US.msi`, `Pane_<ver>_x64-setup.exe` |
 
-When `TAURI_SIGNING_PRIVATE_KEY` is set, each bundle also ships with a
-matching `.sig` minisign signature for the Tauri updater chain.
+Когда задан `TAURI_SIGNING_PRIVATE_KEY`, каждый бандл сопровождается
+`.sig` minisign-подписью для updater-цепочки Tauri.
 
 ## GitHub secrets
 
-All secrets are **optional** for v0.x — without them the workflow still
-produces unsigned bundles. Each one unlocks an extra capability.
+Все secrets **опциональны** для v0.x — без них workflow всё равно
+производит unsigned-бандлы. Каждый открывает дополнительную возможность.
 
-| Secret | Purpose |
+| Secret | Назначение |
 | ------ | ------- |
-| `TAURI_SIGNING_PRIVATE_KEY` | Minisign private key. Drives the in-app updater. |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Passphrase of the above (empty for an unencrypted key). |
-| `APPLE_CERTIFICATE` | Base64 of Developer ID p12 — Gatekeeper-friendly macOS builds. |
-| `APPLE_CERTIFICATE_PASSWORD` | p12 password. |
-| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: ACME (TEAMID)`. |
+| `TAURI_SIGNING_PRIVATE_KEY` | Приватный minisign-ключ. Драйвит in-app updater. |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Пароль ключа (пусто для незашифрованного). |
+| `APPLE_CERTIFICATE` | Base64 Developer ID p12 — macOS-сборки без Gatekeeper-варнингов. |
+| `APPLE_CERTIFICATE_PASSWORD` | Пароль p12. |
+| `APPLE_SIGNING_IDENTITY` | например `Developer ID Application: ACME (TEAMID)`. |
 | `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | Notarisation. |
-| `WIN_CERT_P12` / `WIN_CERT_PASSWORD` | Authenticode signing (no SmartScreen warning). |
-| `GPG_PRIVATE_KEY` / `GPG_PASSPHRASE` / `GPG_KEY_ID` | Detached `.asc` signatures for the Linux artefacts. |
+| `WIN_CERT_P12` / `WIN_CERT_PASSWORD` | Authenticode-подпись (без SmartScreen-варнинга). |
+| `GPG_PRIVATE_KEY` / `GPG_PASSPHRASE` / `GPG_KEY_ID` | Detached `.asc`-подписи для Linux-артефактов. |
 
-`tauri-action` reads the Apple/Tauri secrets straight from the
-environment — see the [`environmentVariables` section of its
-README](https://github.com/tauri-apps/tauri-action) for the full list.
-Generate the Tauri updater key with `pnpm tauri signer generate`.
+`tauri-action` читает Apple/Tauri-secrets прямо из окружения — см.
+[`environmentVariables` в его README](https://github.com/tauri-apps/tauri-action)
+для полного списка. Tauri updater key генерируется через
+`pnpm tauri signer generate`.
 
 ## Updater endpoint
 
-Hosted JSON manifest at `releases.pane.tech/<channel>/<platform>/latest.json`.
-Schema:
+JSON-манифест на `releases.pane.tech/<channel>/<platform>/latest.json`.
+Схема:
 
 ```jsonc
 {

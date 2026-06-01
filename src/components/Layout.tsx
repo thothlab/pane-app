@@ -78,10 +78,9 @@ const Layout: ParentComponent = (props) => {
         </div>
         <nav class="flex-1 overflow-auto p-2 space-y-1">
           <NavLink href="/" icon={<Activity size={16} />}>Captures</NavLink>
-          <NavLink href="/devices" icon={<Smartphone size={16} />}>Devices</NavLink>
           <NavLink href="/rules" icon={<Shuffle size={16} />}>Rules</NavLink>
+          <NavLink href="/devices" icon={<Smartphone size={16} />}>Devices</NavLink>
           <NavLink href="/settings" icon={<Settings size={16} />}>Settings</NavLink>
-          <NavLink href="/about" icon={<Info size={16} />}>About</NavLink>
           <button
             type="button"
             class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-bg-muted text-fg"
@@ -91,6 +90,7 @@ const Layout: ParentComponent = (props) => {
             <BookOpen size={16} />
             Docs
           </button>
+          <NavLink href="/about" icon={<Info size={16} />}>About</NavLink>
 
           <Show when={filters().length > 0}>
             <div class="mt-8 pt-3 border-t border-border px-2 text-xs uppercase tracking-wide text-fg-muted">Filters</div>

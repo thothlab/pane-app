@@ -1,56 +1,56 @@
 ---
 title: Pane
-description: Network debugger for mobile apps. MITM HTTPS proxy, one-command iOS / Android setup, response stubs and patches.
+description: Сетевой отладчик для мобильных приложений. MITM HTTPS-прокси, настройка устройств одной кнопкой, подмена и патчинг ответов.
 template: splash
 hero:
-  tagline: A network debugger for iOS and Android — TLS-inspecting MITM proxy with one-command device setup.
+  tagline: Сетевой отладчик для iOS и Android — MITM HTTPS-прокси с настройкой устройства одной кнопкой.
   actions:
-    - text: Get started
+    - text: Начать работу
       link: /docs/getting-started/
       icon: right-arrow
       variant: primary
-    - text: View on GitHub
+    - text: GitHub
       link: https://github.com/thothlab/pane-app
       icon: external
 ---
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-## Why Pane
+## Зачем Pane
 
 <CardGrid>
-  <Card title="Trust setup over USB" icon="seti:apple">
-    Plug a phone in, hit Start, and Pane installs its root CA, configures
-    the device's Wi-Fi proxy, and pins everything down for the session.
-    No manual fiddling with profiles or root certs.
+  <Card title="Настройка устройства через USB" icon="seti:apple">
+    Подключи телефон, нажми Start — Pane сам поставит свой root CA,
+    настроит Wi-Fi-прокси и зафиксирует всё на время сессии. Никакой
+    ручной возни с профилями и сертификатами.
   </Card>
-  <Card title="MITM HTTPS, decoded" icon="seti:lock">
-    Per-host leaf certificates minted from a local root CA. Every request
-    your app makes shows up as a parsed capture — headers, body, timing —
-    with no extra config on the phone side.
+  <Card title="MITM HTTPS с расшифровкой" icon="seti:lock">
+    Per-host leaf-сертификаты, выписанные локальным root CA. Каждый
+    запрос приложения попадает в список как готовый capture — заголовки,
+    тело, тайминги — без дополнительной настройки на устройстве.
   </Card>
-  <Card title="Stub or patch responses" icon="random">
-    Replace a whole response with a canned one, or forward to the real
-    server and patch a single field (`user.uid`, a token, a timestamp).
-    Patch mode keeps server-generated state fresh.
+  <Card title="Подмена или патчинг ответов" icon="random">
+    Можно заменить ответ целиком, а можно прокинуть запрос к серверу и
+    подменить только одно поле (`user.uid`, токен, timestamp). В Patch-
+    режиме сервер-генерируемые данные остаются настоящими.
   </Card>
-  <Card title="Filtering that scales" icon="magnifier">
-    A small DSL on the search bar: `host:api.example.com`, `status:5..`,
-    `!error:tls_handshake`, plus barewords. Saved filters live in the
-    sidebar.
+  <Card title="Удобная фильтрация" icon="magnifier">
+    Маленький DSL в строке поиска: `host:api.example.com`, `status:5..`,
+    `!error:tls_handshake` плюс barewords. Сохранённые фильтры живут
+    в боковой панели.
   </Card>
 </CardGrid>
 
-## Quick taste
+## Быстрый пример
 
 ```text
-# Filter the capture list
+# Фильтр в списке captures
 host:rc1.test.dev-og.com status:200..299
 !error:pinning method:POST
 ```
 
 ```text
-# Stub a response — replace the whole body
+# Stub — заменить ответ целиком
 Match:    POST /api/auth, params login=root
 Mode:     Stub
 Status:   200
@@ -58,17 +58,16 @@ Body:     {"token": "test-stub-token", "user": {"fio": "Тестовый"}}
 ```
 
 ```text
-# Patch a response — keep the real token, swap one field
+# Patch — оставить настоящий токен, подменить одно поле
 Match:    POST /api/auth, params login=root
 Mode:     Patch
 Patches:  set user.fio = "Тестовый"
           set user.uid = 777
 ```
 
-## Next
+## Дальше
 
-- [Getting started](/docs/getting-started/) — install Pane, add a device,
-  see your first capture.
-- [Response stubs](/docs/rules/) — write rules that stub or patch responses,
-  group them into collections, share via drag-and-drop.
-- [Release process](/docs/reference/releases/) — for maintainers cutting a tag.
+- [Начало работы](/docs/getting-started/) — установка, добавление устройства,
+  первый перехваченный запрос.
+- [Подмена ответов](/docs/rules/) — правила Stub / Patch, коллекции, drag-and-drop.
+- [Релизный процесс](/docs/reference/releases/) — для мейнтейнеров, режущих тег.
