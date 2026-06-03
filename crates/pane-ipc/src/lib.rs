@@ -103,6 +103,13 @@ pub struct DiscoveredDeviceDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AndroidToolingStatusDto {
+    pub ok: bool,
+    pub adb_path: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceDto {
     pub id: Uuid,
     pub platform: String,

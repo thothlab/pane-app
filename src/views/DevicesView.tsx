@@ -9,6 +9,9 @@ const DevicesView: Component = () => {
   const [attached, { refetch: refetchAttached }] = createResource(() =>
     api.devices.listAttachedUsb(),
   );
+  const [adbStatus, { refetch: refetchAdbStatus }] = createResource(() =>
+    api.devices.androidToolingStatus(),
+  );
   const [busy, setBusy] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
 
@@ -61,6 +64,7 @@ const DevicesView: Component = () => {
           onClick={() => {
             refetch();
             refetchAttached();
+            refetchAdbStatus();
           }}
         >
           <RefreshCw size={12} /> Refresh
@@ -71,6 +75,16 @@ const DevicesView: Component = () => {
         <div class="rounded border border-danger/40 bg-danger/10 text-danger px-3 py-2 text-sm flex items-start gap-2">
           <AlertCircle size={14} class="mt-0.5" />
           <div>{error()}</div>
+        </div>
+      </Show>
+
+      <Show when={adbStatus() && !adbStatus()!.ok}>
+        <div class="rounded border border-warn/40 bg-warn/10 text-warn px-3 py-2 text-sm flex items-start gap-2">
+          <AlertCircle size={14} class="mt-0.5 shrink-0" />
+          <div>
+            <div class="font-medium">Android tooling not found</div>
+            <div class="text-fg-muted mt-1">{adbStatus()!.error}</div>
+          </div>
         </div>
       </Show>
 

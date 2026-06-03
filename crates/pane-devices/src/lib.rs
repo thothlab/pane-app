@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use pane_android::AndroidPlatform;
 use pane_ca::CaMaterial;
 use pane_ios::IosPlatform;
-use pane_ipc::{DeviceDto, DiscoveredDeviceDto, RemoveDeviceResult};
+use pane_ipc::{AndroidToolingStatusDto, DeviceDto, DiscoveredDeviceDto, RemoveDeviceResult};
 use pane_storage::Storage;
 use rusqlite::params;
 use time::OffsetDateTime;
@@ -36,6 +36,10 @@ impl DeviceManager {
         out.extend(self.ios.discover().await.unwrap_or_default());
         out.extend(self.android.discover().await.unwrap_or_default());
         Ok(out)
+    }
+
+    pub fn android_tooling_status(&self) -> AndroidToolingStatusDto {
+        self.android.tooling_status()
     }
 
     pub async fn add_ios_usb(&self, serial: &str, ca: CaMaterial) -> Result<DeviceDto> {

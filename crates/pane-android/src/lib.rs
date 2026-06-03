@@ -9,12 +9,20 @@
 //! Either way we set the device-side HTTP proxy and `adb reverse` so `localhost:8888`
 //! on the device reaches the desktop proxy without touching Wi-Fi config.
 
-use anyhow::{anyhow, Context, Result};
+use std::path::PathBuf;
+
+use anyhow::{anyhow, Result};
 use pane_ca::CaMaterial;
-use pane_ipc::{DeviceDto, DiscoveredDeviceDto};
+use pane_ipc::{AndroidToolingStatusDto, DeviceDto, DiscoveredDeviceDto};
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
 use uuid::Uuid;
+
+/// Single source of truth for the "where to look for adb" failure message.
+/// Surfaced in the UI verbatim, so phrase it as an instruction, not a log line.
+const ADB_NOT_FOUND_MSG: &str = "adb not found. Install Android platform-tools \
+    (https://developer.android.com/tools/releases/platform-tools) and either add it to PATH, \
+    set ANDROID_HOME, or install at the default Android SDK location.";
 
 pub struct AndroidPlatform;
 
@@ -129,6 +137,24 @@ impl AndroidPlatform {
         })
     }
 
+    /// Best-effort probe for whether we can talk to `adb` at all. Used by the UI
+    /// to show a clear "install platform-tools" banner instead of just an empty
+    /// "no devices detected" list when the real problem is missing tooling.
+    pub fn tooling_status(&self) -> AndroidToolingStatusDto {
+        match resolve_adb() {
+            Some(path) => AndroidToolingStatusDto {
+                ok: true,
+                adb_path: Some(path.to_string_lossy().into_owned()),
+                error: None,
+            },
+            None => AndroidToolingStatusDto {
+                ok: false,
+                adb_path: None,
+                error: Some(ADB_NOT_FOUND_MSG.into()),
+            },
+        }
+    }
+
     pub async fn remove(&self, serial: &str) -> Result<()> {
         let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8888"]).await;
         let _ = run(
@@ -184,7 +210,10 @@ fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
 
 async fn run(bin: &str, args: &[&str]) -> Result<String> {
     let resolved = if bin == "adb" {
-        sidecar_or_path("adb")
+        resolve_adb()
+            .ok_or_else(|| anyhow!(ADB_NOT_FOUND_MSG))?
+            .to_string_lossy()
+            .into_owned()
     } else {
         bin.to_string()
     };
@@ -202,16 +231,106 @@ async fn run(bin: &str, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn sidecar_or_path(bin: &str) -> String {
+/// Locate `adb` without relying on the inherited shell PATH.
+///
+/// macOS GUI processes (Finder/Launchpad launches of `.app` bundles) get a
+/// minimal PATH — `/usr/bin:/bin:/usr/sbin:/sbin` — so `adb` installed via
+/// Homebrew or the Android SDK is invisible to `Command::new("adb")` even
+/// though it works fine in a terminal. Same shape on Windows when launched
+/// from Explorer. We probe the well-known install locations explicitly,
+/// then fall through to PATH for completeness.
+///
+/// Probe order, first hit wins:
+///   1. Sidecar next to the current exe (reserved for a future bundled-adb
+///      build — cheap to check and matches Tauri's `externalBin` layout).
+///   2. `$ANDROID_HOME` / `$ANDROID_SDK_ROOT` + `platform-tools/`.
+///   3. OS-default Android SDK install
+///      (`~/Library/Android/sdk` on macOS, `~/Android/Sdk` on Linux,
+///      `%LOCALAPPDATA%/Android/Sdk` on Windows).
+///   4. Common package-manager bin dirs (Homebrew, `/usr/local/bin`,
+///      `/usr/bin`).
+///   5. Walk `$PATH` ourselves — covers the case where PATH *is* populated
+///      (e.g. dev runs from terminal) without relying on the OS PATH lookup
+///      which behaves differently across `Command::new` impls.
+fn resolve_adb() -> Option<PathBuf> {
+    let exe_name = adb_exe_name();
+
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            let candidate = parent.join(bin);
-            if candidate.exists() {
-                return candidate.to_string_lossy().to_string();
+            for name in ["adb", "adb.exe"] {
+                let p = parent.join(name);
+                if p.is_file() {
+                    return Some(p);
+                }
             }
         }
     }
-    bin.to_string()
+
+    for var in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
+        if let Ok(root) = std::env::var(var) {
+            let p = PathBuf::from(root).join("platform-tools").join(exe_name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+
+    if let Some(home) = home_dir() {
+        let parts: &[&str] = if cfg!(target_os = "macos") {
+            &["Library", "Android", "sdk", "platform-tools"]
+        } else if cfg!(target_os = "windows") {
+            &["AppData", "Local", "Android", "Sdk", "platform-tools"]
+        } else {
+            &["Android", "Sdk", "platform-tools"]
+        };
+        let mut p = home;
+        for part in parts {
+            p.push(part);
+        }
+        p.push(exe_name);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+
+    let common: &[&str] = if cfg!(target_os = "macos") {
+        &["/opt/homebrew/bin/adb", "/usr/local/bin/adb"]
+    } else if cfg!(target_os = "windows") {
+        &[]
+    } else {
+        &["/usr/local/bin/adb", "/usr/bin/adb"]
+    };
+    for p in common {
+        let pb = PathBuf::from(p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+    }
+
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let p = dir.join(exe_name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+
+    None
+}
+
+fn adb_exe_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "adb.exe"
+    } else {
+        "adb"
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
 }
 
 /// Snippet for non-rooted dev-build path.

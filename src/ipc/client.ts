@@ -8,6 +8,7 @@ import type {
   CaSaveResult,
   CaptureBodyDto,
   CaptureDto,
+  AndroidToolingStatusDto,
   DeviceDto,
   DiscoveredDeviceDto,
   FilterDto,
@@ -56,6 +57,8 @@ export const api = {
       call<{ cleaned: boolean; pending_cleanup: boolean }>("remove", { args: { id } }),
     get: (id: string) => call<DeviceDto>("devices_get", { id }),
     list: () => call<DeviceDto[]>("devices_list"),
+    androidToolingStatus: () =>
+      call<AndroidToolingStatusDto>("android_tooling_status"),
   },
   captures: {
     list: (filter?: string, limit = 500, before?: string) =>

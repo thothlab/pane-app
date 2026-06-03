@@ -49,6 +49,12 @@ export interface DiscoveredDeviceDto {
   name: string;
 }
 
+export interface AndroidToolingStatusDto {
+  ok: boolean;
+  adb_path: string | null;
+  error: string | null;
+}
+
 export interface DeviceDto {
   id: string;
   platform: "ios" | "android";

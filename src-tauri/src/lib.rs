@@ -38,6 +38,7 @@ pub fn run() {
             commands::devices::remove,
             commands::devices::devices_get,
             commands::devices::devices_list,
+            commands::devices::android_tooling_status,
             // captures
             commands::captures::captures_list,
             commands::captures::captures_get,

@@ -1,7 +1,8 @@
 use super::{to_api, CmdResult};
 use crate::state::AppState;
 use pane_ipc::{
-    AddDeviceArgs, DeviceDto, DiscoveredDeviceDto, RemoveDeviceArgs, RemoveDeviceResult,
+    AddDeviceArgs, AndroidToolingStatusDto, DeviceDto, DiscoveredDeviceDto, RemoveDeviceArgs,
+    RemoveDeviceResult,
 };
 use tauri::State;
 use uuid::Uuid;
@@ -59,4 +60,11 @@ pub async fn devices_get(state: State<'_, AppState>, id: Uuid) -> CmdResult<Devi
 #[tauri::command]
 pub async fn devices_list(state: State<'_, AppState>) -> CmdResult<Vec<DeviceDto>> {
     state.devices.list().map_err(to_api("db"))
+}
+
+#[tauri::command]
+pub async fn android_tooling_status(
+    state: State<'_, AppState>,
+) -> CmdResult<AndroidToolingStatusDto> {
+    Ok(state.devices.android_tooling_status())
 }
