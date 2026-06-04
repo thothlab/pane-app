@@ -98,11 +98,13 @@ impl AndroidPlatform {
             match install_user_ca(serial, &ca.cert_pem).await {
                 Ok(()) => {
                     last_error = Some(
-                        "Confirm the certificate install dialog on the device \
-                         and enter your screen-lock PIN. Apps that trust user \
-                         CAs (debug builds, or release builds opted in via \
-                         network_security_config) will then accept Pane. \
-                         Release builds with SSL pinning need extra bypass."
+                        "On the device: tap 'Install anyway' on the warning \
+                         screen, then in the file picker open Downloads and \
+                         select 'pane-ca.cer'. Enter your screen-lock PIN to \
+                         confirm. Apps that trust user CAs (debug builds, or \
+                         release builds opted in via network_security_config) \
+                         will then accept Pane. Release builds with SSL \
+                         pinning need extra bypass."
                             .into(),
                     );
                 }
@@ -182,21 +184,20 @@ impl AndroidPlatform {
     }
 }
 
-/// Push the CA cert to `/sdcard/Download/pane-ca.cer` (DER, with .cer
-/// extension) and fire the system "Install certificate" dialog
-/// (`com.android.certinstaller`). User confirms + enters PIN; the cert
-/// lands in Android's user trust store.
+/// Push the CA cert (DER, .cer) to `/sdcard/Download/` and open the
+/// system "Install CA certificate" warning screen on the device.
 ///
-/// We push DER, not PEM: CertInstaller across OEM-customized Android 11
-/// builds (Mindeo, etc.) is picky about PEM with `-----BEGIN ...-----`
-/// headers — it shows "couldn't install certificate" with no useful log.
-/// DER is the raw binary form CertInstaller parses without preprocessing,
-/// so it works reliably. The `.cer` extension nudges the file picker UI
-/// in the fallback "Install from storage" path to recognize it.
+/// On Android 11+ CertInstaller refuses `file://` URIs — it bounces
+/// everything through the SAF DocumentsUI picker as a side-effect of
+/// scoped storage. So we can't hand the file directly; the best we can
+/// do without a companion app + FileProvider is jump straight to the
+/// `InstallCaCertificateWarning` activity. That cuts the user flow to
+/// two taps: "Install anyway" → pick `pane-ca.cer` from Downloads.
 ///
-/// `file://` URIs from `adb shell am start` work because the intent is
-/// sent from the shell UID, which isn't subject to the file-URI exposure
-/// restriction that applies to regular apps on Android 7+.
+/// If the direct-activity launch fails (some heavily customized OEM
+/// builds rename or guard the class), we fall back to opening the
+/// Security settings root and let the user navigate the standard
+/// Encryption & credentials → Install certificate path.
 async fn install_user_ca(serial: &str, pem: &str) -> Result<()> {
     let der = pem_to_der(pem)?;
     let tmp = std::env::temp_dir().join("pane-ca.cer");
@@ -207,16 +208,25 @@ async fn install_user_ca(serial: &str, pem: &str) -> Result<()> {
         &["-s", serial, "push", tmp.to_str().unwrap(), device_path],
     )
     .await?;
-    run(
+    // Try the direct path first.
+    let direct = run(
         "adb",
         &[
             "-s", serial, "shell", "am", "start",
-            "-a", "android.intent.action.VIEW",
-            "-d", "file:///sdcard/Download/pane-ca.cer",
-            "-t", "application/x-x509-ca-cert",
+            "-n", "com.android.settings/.security.InstallCaCertificateWarning",
         ],
     )
-    .await?;
+    .await;
+    if direct.is_err() {
+        run(
+            "adb",
+            &[
+                "-s", serial, "shell", "am", "start",
+                "-a", "android.settings.SECURITY_SETTINGS",
+            ],
+        )
+        .await?;
+    }
     Ok(())
 }
 
