@@ -9,6 +9,8 @@
     "fs:default",
     "os:default",
     "shell:default",
+    "updater:default",
+    "process:default",
     {
       "identifier": "shell:allow-open",
       "allow": [{ "validator": "^https://pane\\.thothlab\\.tech/" }]

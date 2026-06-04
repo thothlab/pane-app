@@ -3,12 +3,14 @@ name: release
 # Cuts signed Tauri bundles on every `v*` tag (or manual dispatch).
 #
 # Outputs:
-#   - GitHub Release (draft) with platform installers attached:
+#   - GitHub Release with platform installers attached:
 #       * macOS Apple Silicon: .dmg
 #       * Linux x86_64:        .AppImage, .deb, .rpm
 #       * Windows x86_64:      .msi, .exe (NSIS)
-#   - `.sig` minisign signature next to each installer (when
-#      TAURI_SIGNING_PRIVATE_KEY secret is present).
+#   - `.sig` minisign signature next to each installer.
+#   - Combined `latest.json` updater manifest. The in-app updater
+#     pulls this from `releases/latest/download/latest.json` and
+#     verifies bundles against the minisign pubkey in tauri.conf.json.
 #
 # Required secrets (optional — release still produces unsigned
 # bundles without them):
@@ -100,6 +102,36 @@ jobs:
             - Windows — `.msi` (recommended) or `.exe` NSIS installer.
 
             See https://github.com/thothlab/pane-app for source and docs.
+          # Keep the release as a draft until the manifest job
+          # uploads `latest.json`. The publish step at the very end
+          # of this workflow flips draft=false. Otherwise users
+          # could hit a brief window where `releases/latest/download/
+          # latest.json` 404s.
           releaseDraft: true
+          # Not a prerelease — GitHub's `/releases/latest/download/`
+          # only resolves to non-prerelease entries, which is what
+          # the updater endpoint relies on.
           prerelease: false
           args: --target ${{ matrix.platform.rust }}
+
+  # Combine the per-platform `*.json` updater manifests that
+  # tauri-action emits into one `latest.json`, then mark the release
+  # as published. Once this finishes, `releases/latest/download/
+  # latest.json` resolves and the in-app updater wakes up.
+  publish:
+    name: assemble latest.json + publish release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose latest.json and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$TAG" --pattern '*.json' --dir dist
+          python3 .github/scripts/merge-tauri-manifests.py dist > latest.json
+          gh release upload "$TAG" latest.json --clobber
+          gh release edit "$TAG" --draft=false

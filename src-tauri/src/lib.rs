@@ -20,6 +20,11 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
+        // Auto-updater. Checks plugins.updater.endpoints in tauri.conf.json
+        // on demand from the renderer (see `src/lib/updater.ts`). The bundle
+        // is verified against the minisign pubkey before install.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             // proxy

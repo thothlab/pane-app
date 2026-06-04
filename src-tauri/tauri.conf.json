@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Pane",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "identifier": "tech.thothlab.pane",
   "build": {
     "frontendDist": "../dist",
@@ -49,6 +49,15 @@
         "applicationFolderPosition": { "x": 480, "y": 170 },
         "windowSize": { "width": 660, "height": 400 }
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/thothlab/pane-app/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2OEJFQUNDMjBGMjZCRjcKUldUM2EvSWd6T3FMZHRGMGxWZUVoSmNrYXBmdklEaEhOc3hCbTUzZEdVdWdvMFJZeG1zL25ESk8K"
     }
   }
 }

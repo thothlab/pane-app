@@ -1,6 +1,6 @@
 import { type ParentComponent, createEffect, createMemo, createSignal, onMount, For, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X, Shuffle, BookOpen } from "lucide-solid";
+import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X, Shuffle, BookOpen, Download } from "lucide-solid";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
 import { api } from "@/ipc/client";
@@ -8,6 +8,7 @@ import { VerticalResizer } from "@/components/VerticalResizer";
 import { docsUrl } from "@/components/HelpButton";
 import { setFilter } from "@/stores/captures";
 import { filters, deleteFilter, refreshFilters } from "@/stores/saved-filters";
+import { checkForUpdatesOnStartup, installPendingUpdate, pendingUpdate } from "@/lib/updater";
 import type { ProxyStatusDto } from "@/ipc/types";
 
 const SIDEBAR_DEFAULT = 240;
@@ -52,9 +53,20 @@ const Layout: ParentComponent = (props) => {
     refresh();
     refreshFilters();
     getVersion().then(setAppVersion).catch(() => {});
+    void checkForUpdatesOnStartup();
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
   });
+
+  const [installing, setInstalling] = createSignal(false);
+  const onInstallUpdate = async () => {
+    setInstalling(true);
+    try {
+      await installPendingUpdate();
+    } finally {
+      setInstalling(false);
+    }
+  };
 
   const toggleProxy = async () => {
     const s = status();
@@ -75,6 +87,20 @@ const Layout: ParentComponent = (props) => {
         <div class="px-4 py-4 border-b border-border">
           <div class="font-semibold text-lg">Pane</div>
           <div class="text-xs text-fg-muted">{appVersion() ? `v${appVersion()}` : ""}</div>
+          <Show when={pendingUpdate()}>
+            <button
+              type="button"
+              class="mt-2 w-full inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 text-accent px-2 py-1 text-xs font-medium hover:bg-accent/20 disabled:opacity-60"
+              onClick={() => void onInstallUpdate()}
+              disabled={installing()}
+              title={`Install Pane v${pendingUpdate()!.version} and restart`}
+            >
+              <Download size={12} />
+              {installing()
+                ? "Installing…"
+                : `Update to v${pendingUpdate()!.version}`}
+            </button>
+          </Show>
         </div>
         <nav class="flex-1 overflow-auto p-2 space-y-1">
           <NavLink href="/" icon={<Activity size={16} />}>Captures</NavLink>
