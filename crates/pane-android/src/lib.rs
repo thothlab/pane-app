@@ -111,7 +111,7 @@ impl AndroidPlatform {
                     last_error = Some(format!(
                         "couldn't open the cert install dialog ({e}). \
                          Install the CA manually: Settings → Security → \
-                         Install from storage → pick /sdcard/Download/pane-ca.crt."
+                         Install from storage → pick /sdcard/Download/pane-ca.cer."
                     ));
                 }
             }
@@ -182,18 +182,26 @@ impl AndroidPlatform {
     }
 }
 
-/// Push the CA PEM to `/sdcard/Download/pane-ca.crt` and fire the system
-/// "Install certificate" dialog (`com.android.certinstaller`). User confirms
-/// the prompt + enters PIN; the cert ends up in the Android user trust store.
+/// Push the CA cert to `/sdcard/Download/pane-ca.cer` (DER, with .cer
+/// extension) and fire the system "Install certificate" dialog
+/// (`com.android.certinstaller`). User confirms + enters PIN; the cert
+/// lands in Android's user trust store.
 ///
-/// `file://` URIs from `adb shell am start` work because the intent is sent
-/// from the shell UID, which isn't subject to the FileUriExposedException
-/// restriction that applies to apps on Android 7+. CertInstaller picks the
-/// file up via ContentResolver and treats it as a CA install request.
+/// We push DER, not PEM: CertInstaller across OEM-customized Android 11
+/// builds (Mindeo, etc.) is picky about PEM with `-----BEGIN ...-----`
+/// headers — it shows "couldn't install certificate" with no useful log.
+/// DER is the raw binary form CertInstaller parses without preprocessing,
+/// so it works reliably. The `.cer` extension nudges the file picker UI
+/// in the fallback "Install from storage" path to recognize it.
+///
+/// `file://` URIs from `adb shell am start` work because the intent is
+/// sent from the shell UID, which isn't subject to the file-URI exposure
+/// restriction that applies to regular apps on Android 7+.
 async fn install_user_ca(serial: &str, pem: &str) -> Result<()> {
-    let tmp = std::env::temp_dir().join("pane-ca.crt");
-    std::fs::write(&tmp, pem)?;
-    let device_path = "/sdcard/Download/pane-ca.crt";
+    let der = pem_to_der(pem)?;
+    let tmp = std::env::temp_dir().join("pane-ca.cer");
+    std::fs::write(&tmp, der)?;
+    let device_path = "/sdcard/Download/pane-ca.cer";
     run(
         "adb",
         &["-s", serial, "push", tmp.to_str().unwrap(), device_path],
@@ -204,7 +212,7 @@ async fn install_user_ca(serial: &str, pem: &str) -> Result<()> {
         &[
             "-s", serial, "shell", "am", "start",
             "-a", "android.intent.action.VIEW",
-            "-d", "file:///sdcard/Download/pane-ca.crt",
+            "-d", "file:///sdcard/Download/pane-ca.cer",
             "-t", "application/x-x509-ca-cert",
         ],
     )
