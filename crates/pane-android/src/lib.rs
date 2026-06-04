@@ -88,17 +88,33 @@ impl AndroidPlatform {
                 last_error = Some(format!("system install failed: {e}"));
             }
         } else {
-            // No root → can't install into /system/etc/security/cacerts.
-            // Apps on Android 7+ ignore user-installed CAs unless their
-            // network_security_config explicitly trusts them, so HTTPS
-            // decryption silently fails with `tls_handshake` errors. Be
-            // upfront about that — the device-row UI surfaces this.
-            last_error = Some(
-                "no root: HTTPS decryption requires either Magisk / system CA install \
-                 or the target app to opt-in via network_security_config (debug builds). \
-                 Plain HTTP still works."
-                    .into(),
-            );
+            // No root → push the CA to /sdcard/Download and fire the system
+            // "Install certificate" VIEW intent. CertInstaller prompts the
+            // user to name it + enter the lockscreen PIN. Once accepted, any
+            // app whose network_security_config trusts user CAs — which
+            // includes most debug builds with `<debug-overrides>` — will
+            // start trusting Pane. This is the same flow Charles uses; Pane
+            // previously skipped it entirely and showed only a warning.
+            match install_user_ca(serial, &ca.cert_pem).await {
+                Ok(()) => {
+                    last_error = Some(
+                        "Confirm the certificate install dialog on the device \
+                         and enter your screen-lock PIN. Apps that trust user \
+                         CAs (debug builds, or release builds opted in via \
+                         network_security_config) will then accept Pane. \
+                         Release builds with SSL pinning need extra bypass."
+                            .into(),
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "user CA install dialog failed");
+                    last_error = Some(format!(
+                        "couldn't open the cert install dialog ({e}). \
+                         Install the CA manually: Settings → Security → \
+                         Install from storage → pick /sdcard/Download/pane-ca.crt."
+                    ));
+                }
+            }
         }
 
         // Always set up proxy redirect (works regardless of trust path).
@@ -164,6 +180,36 @@ impl AndroidPlatform {
         .await;
         Ok(())
     }
+}
+
+/// Push the CA PEM to `/sdcard/Download/pane-ca.crt` and fire the system
+/// "Install certificate" dialog (`com.android.certinstaller`). User confirms
+/// the prompt + enters PIN; the cert ends up in the Android user trust store.
+///
+/// `file://` URIs from `adb shell am start` work because the intent is sent
+/// from the shell UID, which isn't subject to the FileUriExposedException
+/// restriction that applies to apps on Android 7+. CertInstaller picks the
+/// file up via ContentResolver and treats it as a CA install request.
+async fn install_user_ca(serial: &str, pem: &str) -> Result<()> {
+    let tmp = std::env::temp_dir().join("pane-ca.crt");
+    std::fs::write(&tmp, pem)?;
+    let device_path = "/sdcard/Download/pane-ca.crt";
+    run(
+        "adb",
+        &["-s", serial, "push", tmp.to_str().unwrap(), device_path],
+    )
+    .await?;
+    run(
+        "adb",
+        &[
+            "-s", serial, "shell", "am", "start",
+            "-a", "android.intent.action.VIEW",
+            "-d", "file:///sdcard/Download/pane-ca.crt",
+            "-t", "application/x-x509-ca-cert",
+        ],
+    )
+    .await?;
+    Ok(())
 }
 
 async fn install_system_ca(serial: &str, pem: &str) -> Result<()> {
