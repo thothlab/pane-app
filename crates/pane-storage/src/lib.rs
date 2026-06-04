@@ -351,11 +351,19 @@ impl Storage {
         // Body GC: after wiping captures, no row references any blob row
         // anymore. Drop the orphans so the bodies/ folder doesn't grow
         // unboundedly across Clear cycles.
+        //
+        // `rule.res_body_id` (V002) also references capture_body — when a
+        // user creates a stub from an existing response, the rule reuses
+        // the same body blob to avoid duplicating bytes. So body GC has
+        // to exclude rule-held bodies too, otherwise Clear hits a FOREIGN
+        // KEY violation as soon as any stub-from-response rule exists.
         conn.execute(
             "DELETE FROM capture_body
               WHERE id NOT IN (SELECT req_body_id FROM capture WHERE req_body_id IS NOT NULL
                                UNION
-                               SELECT res_body_id FROM capture WHERE res_body_id IS NOT NULL)",
+                               SELECT res_body_id FROM capture WHERE res_body_id IS NOT NULL
+                               UNION
+                               SELECT res_body_id FROM rule WHERE res_body_id IS NOT NULL)",
             [],
         )?;
         Ok(n)
