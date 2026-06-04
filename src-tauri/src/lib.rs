@@ -132,10 +132,39 @@ fn install_app_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 fn init_logging() {
+    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
     let filter = EnvFilter::try_from_env("MYCHARLES_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("info,pane=debug"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true)
+        .unwrap_or_else(|_| EnvFilter::new("info,pane=debug,pane_engine_mitm=debug"));
+    let stdout_layer = fmt::layer().with_target(true);
+
+    // GUI launches of Pane.app have no terminal — stdout logs vanish.
+    // Mirror them to ~/Library/Application Support/.../pane.log so users
+    // can attach a log to a bug report. tracing-appender keeps the file
+    // handle on a dedicated writer thread, which is the only safe way to
+    // satisfy `MakeWriter` without re-opening the file per record. The
+    // worker guard is leaked because there's no shutdown hook in Tauri's
+    // builder; dropping it would silently swallow the trailing log buffer.
+    let file_layer = log_file_appender().map(|writer| {
+        fmt::layer()
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_target(true)
+            .boxed()
+    });
+
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(stdout_layer)
+        .with(file_layer)
         .try_init();
+}
+
+fn log_file_appender() -> Option<tracing_appender::non_blocking::NonBlocking> {
+    let dirs = directories::ProjectDirs::from("tech", "thothlab", "pane")?;
+    let dir = dirs.data_dir();
+    std::fs::create_dir_all(dir).ok()?;
+    let file_appender = tracing_appender::rolling::never(dir, "pane.log");
+    let (nb, guard) = tracing_appender::non_blocking(file_appender);
+    Box::leak(Box::new(guard));
+    Some(nb)
 }

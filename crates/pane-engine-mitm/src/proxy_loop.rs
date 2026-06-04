@@ -118,6 +118,11 @@ pub async fn handle(
     // can mutate the upstream response below.
     let mut patch_rule: Option<pane_storage::ActiveRule> = None;
     if let Ok(rules) = storage.list_active_rules() {
+        tracing::debug!(
+            count = rules.len(),
+            ids = ?rules.iter().map(|r| (r.id, r.name.as_str())).collect::<Vec<_>>(),
+            "active rules loaded for HTTP request"
+        );
         let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
             host: &host,
@@ -127,6 +132,15 @@ pub async fn handle(
             content_type: content_type_lower.as_deref(),
         };
         if let Some(rule) = crate::rules::first_match(&rules, req) {
+            tracing::info!(
+                rule_id = %rule.id,
+                rule_name = %rule.name,
+                mode = ?rule.mode,
+                host = %host,
+                method = %method,
+                path = %path,
+                "rule matched HTTP request"
+            );
             match rule.mode {
                 pane_storage::RuleMode::Stub => {
                     serve_stub(&mut write_half, &storage, &events, cap_id, started_at, rule)
@@ -253,6 +267,11 @@ async fn handle_tls_inner(
     // fall through to upstream so we can mutate the response below.
     let mut patch_rule: Option<pane_storage::ActiveRule> = None;
     if let Ok(rules) = storage.list_active_rules() {
+        tracing::debug!(
+            count = rules.len(),
+            ids = ?rules.iter().map(|r| (r.id, r.name.as_str())).collect::<Vec<_>>(),
+            "active rules loaded for HTTPS request"
+        );
         let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
             host: &host,
@@ -262,6 +281,15 @@ async fn handle_tls_inner(
             content_type: content_type_lower.as_deref(),
         };
         if let Some(rule) = crate::rules::first_match(&rules, req) {
+            tracing::info!(
+                rule_id = %rule.id,
+                rule_name = %rule.name,
+                mode = ?rule.mode,
+                host = %host,
+                method = %method,
+                path = %path,
+                "rule matched HTTPS request"
+            );
             match rule.mode {
                 pane_storage::RuleMode::Stub => {
                     let mut tls_stream = reader.into_inner();

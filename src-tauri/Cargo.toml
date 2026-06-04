@@ -28,6 +28,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing-appender = "0.2"
 uuid.workspace = true
 time.workspace = true
 directories.workspace = true
