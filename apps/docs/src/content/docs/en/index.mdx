@@ -20,9 +20,10 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid>
   <Card title="Trust setup over USB" icon="seti:apple">
-    Plug a phone in, hit Start, and Pane installs its root CA, configures
-    the device's Wi-Fi proxy, and pins everything down for the session.
-    No manual fiddling with profiles or root certs.
+    Plug a phone in, hit Add device. Pane installs the root CA over USB
+    (on Android via a tiny helper APK, so Samsung's shell-install block
+    doesn't matter), tunnels traffic with `adb reverse`, and sets the
+    system proxy. No Wi-Fi config required.
   </Card>
   <Card title="MITM HTTPS, decoded" icon="seti:lock">
     Per-host leaf certificates minted from a local root CA. Every request

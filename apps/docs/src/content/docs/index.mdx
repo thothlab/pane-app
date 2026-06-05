@@ -20,9 +20,10 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid>
   <Card title="Настройка устройства через USB" icon="seti:apple">
-    Подключи телефон, нажми Start — Pane сам поставит свой root CA,
-    настроит Wi-Fi-прокси и зафиксирует всё на время сессии. Никакой
-    ручной возни с профилями и сертификатами.
+    Подключи телефон, нажми Add device — Pane через USB установит root
+    CA (на Android — через свой APK-хелпер, чтобы обойти Samsung-
+    блокировку shell-инсталла), пробросит трафик через `adb reverse`,
+    выставит системный прокси. Wi-Fi настраивать не надо.
   </Card>
   <Card title="MITM HTTPS с расшифровкой" icon="seti:lock">
     Per-host leaf-сертификаты, выписанные локальным root CA. Каждый

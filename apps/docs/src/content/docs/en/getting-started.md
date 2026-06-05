@@ -45,21 +45,80 @@ show a warning — click **More info → Run anyway**.
 
 ## First device
 
-1. Open Pane. The sidebar shows **Captures**, **Devices**, **Rules**,
-   **Settings**.
-2. Connect your phone via USB. On Android, enable **USB debugging** under
-   Developer options. On iOS, trust the laptop the first time you plug in.
-3. Go to **Devices → Add device**. Pane discovers attached phones via
-   `adb` / `libimobiledevice` and shows them in a list.
-4. Pick your phone → **Install CA + set proxy**. Pane:
-   - generates a per-device leaf-cert chain rooted at Pane's local CA,
-   - pushes the root CA to the device's trust store,
-   - configures the Wi-Fi proxy to point at Pane's local listener
-     (`127.0.0.1:8888` by default).
-5. Hit **Start proxy** in the sidebar.
+1. Open Pane. Sidebar shows **Captures**, **Rules**, **Devices**;
+   below them as a separate group: **Settings**, **Docs**, **About**;
+   at the bottom — the **Start proxy** button.
+2. Hit **Start proxy** first. If you skip this, **Add device** refuses
+   on purpose: pushing the proxy setting onto a phone when nothing
+   listens on `127.0.0.1:8888` silently kills all internet on the
+   device.
+3. Connect your phone via USB:
+   - **Android** — enable **USB debugging** in Developer options. The
+     device must have a **PIN / pattern / password** lock screen set;
+     Android won't install user CAs without one.
+   - **iOS** — trust the laptop the first time you plug in.
+4. **Devices → Add device**. Pane discovers attached phones via `adb`
+   / `libimobiledevice`. Pick yours → **+ Add**. Pane then automatically:
+   - generates a root CA (ECDSA P-256) and stores it locally;
+   - on Android: installs a small helper APK
+     (`tech.thothlab.pane.helper`, ~600 KB, no launcher icon); the
+     helper calls the system `KeyChain.createInstallIntent()` and
+     shows a single "Install Pane Root CA?" dialog;
+   - on iOS: pushes the mobileconfig profile over USB;
+   - sets up `adb reverse tcp:8888 tcp:8888` (on iOS — usbmuxd tunnel)
+     — traffic flows over USB, **no Wi-Fi setup needed**;
+   - sets the device's HTTP proxy to `127.0.0.1:8888`.
+5. Confirm the CA-install dialog on the phone and enter your screen-
+   lock PIN.
 
-The next request your phone's app makes is a capture in the list. Click
-a row to see method / URL / status, headers, body and timing.
+The next request your app makes is a capture in the list. Click a row
+to see method / URL / status, headers, body and timing.
+
+### Why the helper APK on Android
+
+Android 11+ bounces shell-initiated CA installs through the scoped-
+storage SAF file picker; Samsung One UI on Android 16 blocks them
+outright ("Этот сертификат от приложения Оболочка необходимо
+установить в меню Настройки"). The helper launches the install from
+its own UID instead of from `adb shell`, which both keeps Samsung
+happy and skips the file picker — one dialog + PIN. The APK sticks
+around between sessions; uninstall via **Settings → Apps** if you
+want it gone.
+
+### When something goes sideways
+
+- **`adb not found`** — Pane looks in `ANDROID_HOME`, `~/Library/
+  Android/sdk`, `/opt/homebrew/bin`, `/usr/local/bin`. If the Devices
+  page shows a yellow "Android tooling not found" banner, install
+  `platform-tools` from the Android SDK or Android Studio.
+- **`adb reverse failed`** — usually after USB reseating or an adb-
+  server restart. Hit **Re-sync** on the paired device row.
+- **Device has "no internet" after Stop proxy** — Pane v0.1.12+
+  auto-clears the proxy setting on every paired Android when the
+  proxy stops. On older builds: `adb shell settings put global
+  http_proxy :0` to recover, or **Remove device**.
+- **HTTPS in my app isn't decrypted** — the app has to trust user
+  CAs. In a debug build, add `network_security_config.xml` with
+  `<debug-overrides>` → `<trust-anchors><certificates src="user"/>
+  </trust-anchors>`. Release builds need an explicit opt-in. Chrome
+  / Samsung Internet ignore user CAs by design — test with Firefox
+  or your own app instead.
+- **TLS pinning** — Pane doesn't try to bypass pinning. Disable
+  pinning in your debug build. For owned-device security research,
+  Frida or Magisk modules layer on top of Pane.
+
+## Updates
+
+Pane checks for new releases:
+
+- at launch,
+- once an hour while the window is open,
+- whenever the window regains focus.
+
+When a newer build is out, an **Update to vX.Y.Z** button appears in
+the sidebar under the version. Click it and Pane downloads the
+minisign-signed bundle and relaunches. Force a check with the refresh
+icon next to the version, or from **About → Check for updates**.
 
 ## Reading captures
 
