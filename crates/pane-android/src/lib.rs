@@ -185,19 +185,29 @@ impl AndroidPlatform {
 }
 
 /// Push the CA cert (DER, .cer) to `/sdcard/Download/` and open the
-/// system "Install CA certificate" warning screen on the device.
+/// system "Install CA certificate" flow on the device.
 ///
-/// On Android 11+ CertInstaller refuses `file://` URIs — it bounces
-/// everything through the SAF DocumentsUI picker as a side-effect of
-/// scoped storage. So we can't hand the file directly; the best we can
-/// do without a companion app + FileProvider is jump straight to the
-/// `InstallCaCertificateWarning` activity. That cuts the user flow to
-/// two taps: "Install anyway" → pick `pane-ca.cer` from Downloads.
+/// We try three intents in order, falling through on failure:
 ///
-/// If the direct-activity launch fails (some heavily customized OEM
-/// builds rename or guard the class), we fall back to opening the
-/// Security settings root and let the user navigate the standard
-/// Encryption & credentials → Install certificate path.
+/// 1. `android.credentials.INSTALL` with MIME `application/x-x509-ca-cert` —
+///    this is the documented, vendor-neutral action that every Android
+///    Settings implementation (AOSP, Samsung One UI, MIUI, OxygenOS, etc.)
+///    must resolve to its own CA-install screen. Samsung's S25/Android 16
+///    silently ignores the AOSP class name `com.android.settings/
+///    .security.InstallCaCertificateWarning` (they renamed it under
+///    `com.samsung.android.settings`), but always honours this action.
+///
+/// 2. AOSP class direct — kept as a fallback for stripped-down Android
+///    builds where the standard action isn't registered (rare, but seen
+///    on some custom ROMs).
+///
+/// 3. Security settings root — last resort if neither resolves.
+///    Better than nothing: the user can at least navigate from here.
+///
+/// On Android 11+ even the right Activity routes the user through SAF
+/// DocumentsUI to pick the file (scoped-storage side-effect, can't be
+/// avoided without a companion app + FileProvider). We push to Downloads
+/// so the file is easy to find in the picker.
 async fn install_user_ca(serial: &str, pem: &str) -> Result<()> {
     let der = pem_to_der(pem)?;
     let tmp = std::env::temp_dir().join("pane-ca.cer");
@@ -208,26 +218,47 @@ async fn install_user_ca(serial: &str, pem: &str) -> Result<()> {
         &["-s", serial, "push", tmp.to_str().unwrap(), device_path],
     )
     .await?;
-    // Try the direct path first.
-    let direct = run(
-        "adb",
+
+    let attempts: &[&[&str]] = &[
+        // Standard action — works on Samsung, Pixel, Xiaomi, etc.
+        &[
+            "-s", serial, "shell", "am", "start",
+            "-a", "android.credentials.INSTALL",
+            "-t", "application/x-x509-ca-cert",
+        ],
+        // AOSP class fallback.
         &[
             "-s", serial, "shell", "am", "start",
             "-n", "com.android.settings/.security.InstallCaCertificateWarning",
         ],
-    )
-    .await;
-    if direct.is_err() {
-        run(
-            "adb",
-            &[
-                "-s", serial, "shell", "am", "start",
-                "-a", "android.settings.SECURITY_SETTINGS",
-            ],
-        )
-        .await?;
+        // Settings root fallback.
+        &[
+            "-s", serial, "shell", "am", "start",
+            "-a", "android.settings.SECURITY_SETTINGS",
+        ],
+    ];
+
+    let mut last_err = None;
+    for args in attempts {
+        match run("adb", args).await {
+            Ok(out) => {
+                // `am start` returns 0 even when no Activity is matched —
+                // it writes "Error: Activity not started" to stderr. We
+                // already capture stderr in run() on non-zero exit, but
+                // here we explicitly check stdout for that string too.
+                if out.contains("Error: Activity not started")
+                    || out.contains("Error type")
+                {
+                    last_err = Some(anyhow!("intent rejected: {}", out.trim()));
+                    continue;
+                }
+                tracing::info!(serial, args = ?args, "CA install intent dispatched");
+                return Ok(());
+            }
+            Err(e) => last_err = Some(e),
+        }
     }
-    Ok(())
+    Err(last_err.unwrap_or_else(|| anyhow!("no CA-install intent succeeded")))
 }
 
 async fn install_system_ca(serial: &str, pem: &str) -> Result<()> {
