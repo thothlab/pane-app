@@ -220,18 +220,21 @@ async fn install_user_ca(serial: &str, pem: &str) -> Result<()> {
     .await?;
 
     let attempts: &[&[&str]] = &[
-        // Standard action — works on Samsung, Pixel, Xiaomi, etc.
+        // Standard action. Note: NO `-t application/x-x509-ca-cert` here —
+        // Samsung's CertInstaller (and others) registers the action filter
+        // *without* a MIME type. Adding `-t` makes the intent unresolved
+        // ("No activities found") on those builds, even though plain
+        // action launches the activity correctly.
         &[
             "-s", serial, "shell", "am", "start",
             "-a", "android.credentials.INSTALL",
-            "-t", "application/x-x509-ca-cert",
         ],
-        // AOSP class fallback.
+        // AOSP class direct fallback (kept for stripped-down ROMs).
         &[
             "-s", serial, "shell", "am", "start",
             "-n", "com.android.settings/.security.InstallCaCertificateWarning",
         ],
-        // Settings root fallback.
+        // Last resort: open the Security settings root.
         &[
             "-s", serial, "shell", "am", "start",
             "-a", "android.settings.SECURITY_SETTINGS",
