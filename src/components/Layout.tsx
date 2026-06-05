@@ -160,17 +160,6 @@ const Layout: ParentComponent = (props) => {
           <NavLink href="/" icon={<Activity size={16} />}>Captures</NavLink>
           <NavLink href="/rules" icon={<Shuffle size={16} />}>Rules</NavLink>
           <NavLink href="/devices" icon={<Smartphone size={16} />}>Devices</NavLink>
-          <NavLink href="/settings" icon={<Settings size={16} />}>Settings</NavLink>
-          <button
-            type="button"
-            class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-bg-muted text-fg"
-            title="Open documentation in browser"
-            onClick={() => void openExternal(docsUrl("/"))}
-          >
-            <BookOpen size={16} />
-            Docs
-          </button>
-          <NavLink href="/about" icon={<Info size={16} />}>About</NavLink>
 
           <Show when={filters().length > 0}>
             <div class="mt-8 pt-3 border-t border-border px-2 text-xs uppercase tracking-wide text-fg-muted">Filters</div>
@@ -200,6 +189,22 @@ const Layout: ParentComponent = (props) => {
             </For>
           </Show>
         </nav>
+        {/* Secondary nav (settings / help) pinned above the proxy control —
+            separated from the primary navigation so the main list stays
+            focused on workflow surfaces (Captures, Rules, Devices). */}
+        <div class="p-2 border-t border-border space-y-1">
+          <NavLink href="/settings" icon={<Settings size={16} />}>Settings</NavLink>
+          <button
+            type="button"
+            class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-bg-muted text-fg"
+            title="Open documentation in browser"
+            onClick={() => void openExternal(docsUrl("/"))}
+          >
+            <BookOpen size={16} />
+            Docs
+          </button>
+          <NavLink href="/about" icon={<Info size={16} />}>About</NavLink>
+        </div>
         <div class="p-3 border-t border-border space-y-2">
           <button
             class={`w-full inline-flex items-center justify-center gap-2 rounded px-3 py-2 text-sm font-medium transition
