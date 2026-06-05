@@ -33,6 +33,17 @@ pub async fn add_android_usb(
     state: State<'_, AppState>,
     args: AddDeviceArgs,
 ) -> CmdResult<DeviceDto> {
+    // Refuse to wire up a device while the proxy is stopped — otherwise
+    // we'd push http_proxy=127.0.0.1:8888 onto the phone with nothing
+    // listening, and the user would lose all internet on the device
+    // (the typical symptom: "I added a device and now nothing works").
+    if state.proxy_handle.lock().is_none() {
+        return Err(to_api("proxy_not_running")(anyhow::anyhow!(
+            "Start the proxy first (Start proxy button in the sidebar), \
+             then add the device. Otherwise the device would point at a \
+             dead 127.0.0.1:8888 and lose internet."
+        )));
+    }
     state
         .devices
         .add_android_usb(&args.serial, state.ca.material())

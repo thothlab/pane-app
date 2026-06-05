@@ -103,6 +103,30 @@ impl DeviceManager {
         Ok(row)
     }
 
+    /// Best-effort: clear the system http_proxy + adb-reverse on every
+    /// paired Android device. Called from proxy.stop so users don't end
+    /// up with a phone pointing at a now-dead 127.0.0.1:8888 (which
+    /// means: no internet at all on the device until they remove or
+    /// re-pair). Errors per device are swallowed — adb may not be
+    /// connected; that's fine, the proxy setting will get cleaned up
+    /// the next time `remove()` runs for that device.
+    pub async fn clear_all_android_proxies(&self) -> Vec<String> {
+        let serials: Vec<String> = self
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| d.platform == "android" && d.connection == "usb")
+            .map(|d| d.serial)
+            .collect();
+        let mut cleaned = Vec::with_capacity(serials.len());
+        for serial in serials {
+            if self.android.remove(&serial).await.is_ok() {
+                cleaned.push(serial);
+            }
+        }
+        cleaned
+    }
+
     pub fn list(&self) -> Result<Vec<DeviceDto>> {
         let conn = self.storage.conn().lock();
         let mut stmt = conn.prepare(

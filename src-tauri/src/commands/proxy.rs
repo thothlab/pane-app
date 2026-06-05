@@ -51,7 +51,15 @@ pub async fn stop(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
     if let Some(h) = handle {
         h.shutdown().await.map_err(to_api("engine_stop"))?;
     }
-    Ok(serde_json::json!({ "stopped_at": time::OffsetDateTime::now_utc().to_string() }))
+    // Clear http_proxy + adb-reverse on every paired Android device.
+    // Otherwise the phone keeps pointing at 127.0.0.1:8888 which now
+    // refuses connections — manifesting on the device as "no internet"
+    // until the user notices and removes the device manually.
+    let cleared = state.devices.clear_all_android_proxies().await;
+    Ok(serde_json::json!({
+        "stopped_at": time::OffsetDateTime::now_utc().to_string(),
+        "cleared_devices": cleared,
+    }))
 }
 
 #[tauri::command]
