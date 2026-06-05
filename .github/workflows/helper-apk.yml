@@ -1,0 +1,77 @@
+name: helper-apk
+
+# Builds the Pane Helper APK and commits it to the repo so the desktop
+# release pipeline can bundle it. Runs only when the helper sources
+# change (or on manual dispatch). The committed APK is what the Pane
+# .app installs on the user's phone via adb when a new device is added.
+#
+# We commit the binary (~200KB) instead of pulling it as a release
+# artifact at desktop-build time because the desktop CI matrix runs on
+# three OSes and chaining artifacts across workflows is fragile. One
+# checked-in APK is the simplest source of truth.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/pane-helper-android/**"
+      - ".github/workflows/helper-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build + commit pane-helper.apk
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build release APK
+        working-directory: tools/pane-helper-android
+        run: |
+          # Gradle wrapper isn't checked in (saves ~60KB of binaries);
+          # use the system gradle that setup-android pulled in instead.
+          gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Stage APK into src-tauri/binaries
+        run: |
+          mkdir -p src-tauri/binaries
+          SRC=tools/pane-helper-android/app/build/outputs/apk/release/app-release.apk
+          DEST=src-tauri/binaries/pane-helper.apk
+          if [ ! -f "$SRC" ]; then
+            echo "::error::expected APK at $SRC" >&2
+            ls -la tools/pane-helper-android/app/build/outputs/apk/ || true
+            exit 1
+          fi
+          install -m 0644 "$SRC" "$DEST"
+          ls -la "$DEST"
+          sha256sum "$DEST"
+
+      - name: Commit updated APK if it changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- src-tauri/binaries/pane-helper.apk; then
+            echo "APK unchanged — nothing to commit."
+            exit 0
+          fi
+          git add src-tauri/binaries/pane-helper.apk
+          git commit -m "chore(helper): rebuild pane-helper.apk
+
+[skip ci]
+"
+          git push origin HEAD:${GITHUB_REF_NAME}

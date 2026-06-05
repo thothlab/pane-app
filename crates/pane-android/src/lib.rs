@@ -24,11 +24,28 @@ const ADB_NOT_FOUND_MSG: &str = "adb not found. Install Android platform-tools \
     (https://developer.android.com/tools/releases/platform-tools) and either add it to PATH, \
     set ANDROID_HOME, or install at the default Android SDK location.";
 
-pub struct AndroidPlatform;
+pub struct AndroidPlatform {
+    /// Path to the bundled `pane-helper.apk`, set once at Tauri setup
+    /// time. OnceLock so the rest of the program can read it without
+    /// holding a lock and so we don't accidentally swap it under a
+    /// running pairing flow. When unset (dev runs before the helper
+    /// CI has produced anything, or third-party builds without it),
+    /// `add_usb` falls back to firing CertInstaller directly.
+    helper_apk: std::sync::OnceLock<PathBuf>,
+}
 
 impl AndroidPlatform {
     pub fn new() -> Self {
-        Self
+        Self {
+            helper_apk: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Publish the bundled-APK path. Called once during Tauri setup,
+    /// after the app handle is available and `resource_dir()` resolves.
+    /// Subsequent calls are silently ignored (OnceLock semantics).
+    pub fn set_helper_apk(&self, path: PathBuf) {
+        let _ = self.helper_apk.set(path);
     }
 
     pub async fn discover(&self) -> Result<Vec<DiscoveredDeviceDto>> {
@@ -88,23 +105,30 @@ impl AndroidPlatform {
                 last_error = Some(format!("system install failed: {e}"));
             }
         } else {
-            // No root → push the CA to /sdcard/Download and fire the system
-            // "Install certificate" VIEW intent. CertInstaller prompts the
-            // user to name it + enter the lockscreen PIN. Once accepted, any
-            // app whose network_security_config trusts user CAs — which
-            // includes most debug builds with `<debug-overrides>` — will
-            // start trusting Pane. This is the same flow Charles uses; Pane
-            // previously skipped it entirely and showed only a warning.
-            match install_user_ca(serial, &ca.cert_pem).await {
+            // No root → install via the helper APK if we have one,
+            // otherwise fall back to firing CertInstaller through a
+            // VIEW intent. The helper is preferred because Samsung One
+            // UI / Android 16+ blocks shell-initiated CA installs
+            // outright ("Невозможно установить сертификаты СА —
+            // приложение Оболочка должно использовать Настройки"),
+            // while a KeyChain.createInstallIntent() call from the
+            // helper app shows the standard "Install Pane Root CA?"
+            // dialog and is accepted.
+            let outcome = match self.helper_apk.get() {
+                Some(apk) if apk_is_present(apk) => {
+                    install_user_ca_via_helper(serial, &ca.cert_pem, apk).await
+                }
+                _ => install_user_ca(serial, &ca.cert_pem).await,
+            };
+            match outcome {
                 Ok(()) => {
                     last_error = Some(
-                        "On the device: tap 'Install anyway' on the warning \
-                         screen, then in the file picker open Downloads and \
-                         select 'pane-ca.cer'. Enter your screen-lock PIN to \
-                         confirm. Apps that trust user CAs (debug builds, or \
-                         release builds opted in via network_security_config) \
-                         will then accept Pane. Release builds with SSL \
-                         pinning need extra bypass."
+                        "On the device: confirm the 'Install Pane Root CA?' \
+                         dialog and enter your screen-lock PIN. Apps that \
+                         trust user CAs (debug builds, or release builds \
+                         opted in via network_security_config) will then \
+                         accept Pane. Release builds with SSL pinning need \
+                         extra bypass."
                             .into(),
                     );
                 }
@@ -181,6 +205,81 @@ impl AndroidPlatform {
         )
         .await;
         Ok(())
+    }
+}
+
+/// Install the helper APK if not already present, then launch its
+/// InstallCaActivity with the CA PEM passed in as a base64 extra. The
+/// helper calls KeyChain.createInstallIntent() under its own UID, which
+/// is what makes the install dialog show up instead of getting blocked
+/// by Samsung's shell-source check.
+const HELPER_PACKAGE: &str = "tech.thothlab.pane.helper";
+const HELPER_ACTIVITY: &str = "tech.thothlab.pane.helper/.InstallCaActivity";
+
+async fn install_user_ca_via_helper(
+    serial: &str,
+    pem: &str,
+    apk_path: &std::path::Path,
+) -> Result<()> {
+    use base64::Engine as _;
+
+    if !is_helper_installed(serial).await {
+        tracing::info!(serial, apk = %apk_path.display(), "installing pane-helper APK");
+        run(
+            "adb",
+            &[
+                "-s",
+                serial,
+                "install",
+                "-r",
+                "-g",
+                apk_path.to_str().ok_or_else(|| anyhow!("non-UTF8 apk path"))?,
+            ],
+        )
+        .await
+        .map_err(|e| anyhow!("pane-helper apk install failed: {e}"))?;
+    } else {
+        tracing::debug!(serial, "pane-helper already installed");
+    }
+
+    let pem_b64 = base64::engine::general_purpose::STANDARD.encode(pem.as_bytes());
+    run(
+        "adb",
+        &[
+            "-s",
+            serial,
+            "shell",
+            "am",
+            "start",
+            "-n",
+            HELPER_ACTIVITY,
+            "--es",
+            "ca_pem_base64",
+            &pem_b64,
+            "--es",
+            "ca_name",
+            "Pane Root CA",
+        ],
+    )
+    .await
+    .map_err(|e| anyhow!("launching helper activity failed: {e}"))?;
+    Ok(())
+}
+
+async fn is_helper_installed(serial: &str) -> bool {
+    match run("adb", &["-s", serial, "shell", "pm", "path", HELPER_PACKAGE]).await {
+        Ok(out) => out.contains("package:"),
+        Err(_) => false,
+    }
+}
+
+fn apk_is_present(path: &std::path::Path) -> bool {
+    match std::fs::metadata(path) {
+        // Treat 0-byte placeholder as "no APK available" — the helper
+        // CI hasn't produced one yet, fall back to the CertInstaller
+        // path so add_usb still does something useful.
+        Ok(m) => m.len() > 0,
+        Err(_) => false,
     }
 }
 

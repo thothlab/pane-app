@@ -31,10 +31,22 @@ logs/
 .env
 .env.local
 
-# Sidecar binaries (fetched per-platform)
-src-tauri/binaries/
+# Sidecar binaries (fetched per-platform), except the helper APK which
+# is built+committed by .github/workflows/helper-apk.yml so the desktop
+# release pipeline can bundle it without chaining cross-workflow artifacts.
+# Glob the dir contents instead of the dir itself — git can't re-include
+# a file underneath an ignored directory.
+src-tauri/binaries/*
+!src-tauri/binaries/pane-helper.apk
 
 # Test artefacts
 coverage/
 playwright-report/
 test-results/
+
+# Android helper APK build output
+tools/pane-helper-android/.gradle/
+tools/pane-helper-android/build/
+tools/pane-helper-android/app/build/
+tools/pane-helper-android/local.properties
+tools/pane-helper-android/.idea/
