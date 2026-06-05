@@ -8,7 +8,12 @@ import { VerticalResizer } from "@/components/VerticalResizer";
 import { docsUrl } from "@/components/HelpButton";
 import { setFilter } from "@/stores/captures";
 import { filters, deleteFilter, refreshFilters } from "@/stores/saved-filters";
-import { checkForUpdatesOnStartup, installPendingUpdate, pendingUpdate } from "@/lib/updater";
+import {
+  checkForUpdatesNow,
+  checkForUpdatesOnStartup,
+  installPendingUpdate,
+  pendingUpdate,
+} from "@/lib/updater";
 import type { ProxyStatusDto } from "@/ipc/types";
 
 const SIDEBAR_DEFAULT = 240;
@@ -55,7 +60,24 @@ const Layout: ParentComponent = (props) => {
     getVersion().then(setAppVersion).catch(() => {});
     void checkForUpdatesOnStartup();
     const t = setInterval(refresh, 2000);
-    return () => clearInterval(t);
+
+    // Poll the update endpoint hourly so long-running sessions notice
+    // new releases without needing a restart. Cheap (one HTTP GET to a
+    // GitHub release asset) and only triggers a UI change if a newer
+    // version is offered.
+    const updateTimer = setInterval(() => void checkForUpdatesNow(), 60 * 60 * 1000);
+
+    // Also re-check when the window regains focus — covers the common
+    // "left it overnight, came back in the morning" case immediately
+    // instead of up to an hour later.
+    const onFocus = () => void checkForUpdatesNow();
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      clearInterval(t);
+      clearInterval(updateTimer);
+      window.removeEventListener("focus", onFocus);
+    };
   });
 
   const [installing, setInstalling] = createSignal(false);
