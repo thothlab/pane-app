@@ -265,14 +265,47 @@ pub const DEVICE_CA_PATH: &str = "/sdcard/Pane/pane-ca.pem";
 async fn push_ca_file(serial: &str, pem: &str) -> Result<()> {
     let tmp = std::env::temp_dir().join("pane-ca.pem");
     std::fs::write(&tmp, pem)?;
+
+    // Sweep stale pane-ca.* files out of /sdcard/Download/ before push.
+    // Samsung's file picker offers Downloads as the default landing
+    // folder, so if a previous Pane version (or a debug push) left
+    // anything called pane-ca.* there, the user clicks it instead of
+    // walking to /sdcard/Pane/ and Android rejects it with
+    // "Нет сертификата для установки." Best-effort — we don't care if
+    // there's nothing to delete.
+    let _ = run(
+        "adb",
+        &[
+            "-s", serial, "shell", "sh", "-c",
+            "rm -f /sdcard/Download/pane-ca.* /sdcard/Documents/pane-ca.*",
+        ],
+    )
+    .await;
+
     // mkdir is best-effort: succeeds if folder doesn't exist yet,
     // silently no-ops if it does. Either outcome is fine.
     let _ = run("adb", &["-s", serial, "shell", "mkdir", "-p", "/sdcard/Pane"]).await;
+
     run(
         "adb",
         &["-s", serial, "push", tmp.to_str().unwrap(), DEVICE_CA_PATH],
     )
     .await?;
+
+    // Verify the file landed and looks like a PEM. `adb push` returns
+    // success even when the destination is unwritable on some OEM
+    // builds (Samsung Knox), leaving the user with a phantom file.
+    // Cheap sanity check: read the first line back and confirm it's
+    // the PEM header.
+    let head = run("adb", &["-s", serial, "shell", "head", "-1", DEVICE_CA_PATH])
+        .await
+        .unwrap_or_default();
+    if !head.contains("BEGIN CERTIFICATE") {
+        return Err(anyhow!(
+            "push appeared to succeed but {DEVICE_CA_PATH} doesn't look like a PEM (got: {})",
+            head.trim()
+        ));
+    }
     Ok(())
 }
 
