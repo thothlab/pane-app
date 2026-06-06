@@ -413,7 +413,7 @@ const CollectionSection: Component<{
         <button
           class="text-fg-muted hover:text-fg shrink-0"
           onClick={p.onToggleCollapsed}
-          aria-label={p.collapsed ? "Expand" : "Collapse"}
+          aria-label={p.collapsed ? t()("rules.expand") : t()("rules.collapse")}
         >
           <Show when={p.collapsed} fallback={<ChevronDown size={14} />}>
             <ChevronRight size={14} />
@@ -462,7 +462,7 @@ const CollectionSection: Component<{
             </button>
             <button
               class="text-xs p-1 rounded hover:bg-danger/10 text-danger"
-              title="Delete collection"
+              title={t()("rules.delete_collection_title")}
               onClick={p.onDelete}
             >
               <Trash2 size={12} />
@@ -553,7 +553,7 @@ const RuleRow: Component<{
     >
       <button
         class={`mt-0.5 w-9 h-5 rounded-full relative transition shrink-0 ${p.rule.enabled ? "bg-accent" : "bg-bg-muted"}`}
-        title={p.rule.enabled ? "Disable" : "Enable"}
+        title={p.rule.enabled ? t()("rules.disable") : t()("rules.enable")}
         onClick={p.onToggle}
       >
         <span
@@ -769,19 +769,19 @@ const RuleEditor: Component<{
       <div class="flex items-center gap-2 flex-wrap">
         <button
           class="text-fg-muted hover:text-fg shrink-0 p-0.5 rounded hover:bg-bg-muted"
-          title="Collapse without saving"
+          title={t()("rules.collapse_without_saving")}
           onClick={p.onCancel}
         >
           <ChevronUp size={14} />
         </button>
         <input {...NO_AC}
           class="flex-1 min-w-48 bg-bg border border-border rounded px-2 py-1 text-sm"
-          placeholder="Rule name"
+          placeholder={t()("rules.name_placeholder")}
           value={d().name}
           onInput={(e) => patch({ name: e.currentTarget.value })}
         />
         <label class="flex items-center gap-1 text-xs text-fg-muted">
-          priority
+          {t()("rules.priority_label")}
           <input {...NO_AC}
             type="number"
             class="w-16 bg-bg border border-border rounded px-1 py-1 text-sm"
@@ -795,46 +795,50 @@ const RuleEditor: Component<{
             checked={d().enabled}
             onChange={(e) => patch({ enabled: e.currentTarget.checked })}
           />
-          enabled
+          {t()("rules.enabled_label")}
         </label>
       </div>
 
-      <Section title="Match">
-        <FieldRow label="Host (glob)">
+      <Section title={t()("rules.match_section")}>
+        <FieldRow label={t()("rules.host_label")}>
           <input {...NO_AC}
             class="flex-1 bg-bg border border-border rounded px-2 py-1 text-sm font-mono"
-            placeholder="* or rc1.test.dev-og.com or *.dev-og.com"
+            placeholder={t()("rules.host_placeholder")}
             value={d().match_host_glob}
             onInput={(e) => patch({ match_host_glob: e.currentTarget.value })}
           />
         </FieldRow>
-        <FieldRow label="Method">
+        <FieldRow label={t()("rules.method_label")}>
           <select
             class="bg-bg border border-border rounded px-2 py-1 text-sm"
             value={d().match_method}
             onChange={(e) => patch({ match_method: e.currentTarget.value })}
           >
             <For each={["ANY", "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}>
-              {(m) => <option value={m}>{m}</option>}
+              {(m) => (
+                <option value={m}>
+                  {m === "ANY" ? t()("rules.method_any") : m}
+                </option>
+              )}
             </For>
           </select>
         </FieldRow>
-        <FieldRow label="Path (glob)">
+        <FieldRow label={t()("rules.path_label")}>
           <input {...NO_AC}
             class="flex-1 bg-bg border border-border rounded px-2 py-1 text-sm font-mono"
-            placeholder="/api/v1/document or /api/v1/*"
+            placeholder={t()("rules.path_placeholder")}
             value={d().match_path_glob}
             onInput={(e) => patch({ match_path_glob: e.currentTarget.value })}
           />
         </FieldRow>
-        <FieldRow label="Params (all AND, query or body)">
+        <FieldRow label={t()("rules.params_label")}>
           <div class="flex-1 space-y-1">
             <Index each={d().match_params}>
               {(q, i) => (
                 <div class="flex items-center gap-2">
                   <input {...NO_AC}
                     class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
-                    placeholder="name"
+                    placeholder={t()("rules.param_name_placeholder")}
                     value={q().name}
                     onInput={(e) => {
                       const arr = d().match_params.slice();
@@ -844,7 +848,7 @@ const RuleEditor: Component<{
                   />
                   <input {...NO_AC}
                     class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
-                    placeholder="value"
+                    placeholder={t()("rules.param_value_placeholder")}
                     value={q().value}
                     onInput={(e) => {
                       const arr = d().match_params.slice();
@@ -869,28 +873,25 @@ const RuleEditor: Component<{
                 patch({ match_params: [...d().match_params, { name: "", value: "" }] })
               }
             >
-              + add param
+              {t()("rules.add_param")}
             </button>
-            <div class="text-xs text-fg-muted italic">
-              Each row must be found either in the URL query, or at the top level of a JSON
-              request body.
-            </div>
+            <div class="text-xs text-fg-muted italic">{t()("rules.params_note")}</div>
           </div>
         </FieldRow>
       </Section>
 
-      <Section title="Response">
-        <FieldRow label="Mode" help={{ path: "/rules/", title: "Stub vs Patch — explained in the docs" }}>
+      <Section title={t()("rules.response_section")}>
+        <FieldRow label={t()("rules.mode_label")} help={{ path: "/rules/", title: t()("rules.mode_help_title") }}>
           <select
             class="bg-bg border border-border rounded px-2 py-1 text-sm"
             value={d().mode}
             onChange={(e) => patch({ mode: e.currentTarget.value as RuleMode })}
           >
-            <option value="stub">Stub — replace whole response</option>
-            <option value="patch">Patch — forward, then mutate</option>
+            <option value="stub">{t()("rules.mode_stub_long")}</option>
+            <option value="patch">{t()("rules.mode_patch_long")}</option>
           </select>
           <label class="flex items-center gap-1 text-xs text-fg-muted ml-3">
-            delay (ms)
+            {t()("rules.delay_label")}
             <input {...NO_AC}
               type="number"
               class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm"
@@ -900,7 +901,7 @@ const RuleEditor: Component<{
           </label>
         </FieldRow>
         <Show when={d().mode === "stub"}>
-        <FieldRow label="Status">
+        <FieldRow label={t()("rules.status_label")}>
           <input {...NO_AC}
             type="number"
             class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm"
@@ -908,14 +909,14 @@ const RuleEditor: Component<{
             onInput={(e) => patch({ res_status: Number(e.currentTarget.value) || 200 })}
           />
         </FieldRow>
-        <FieldRow label="Headers">
+        <FieldRow label={t()("rules.headers_label")}>
           <div class="flex-1 space-y-1">
             <Index each={d().res_headers}>
               {(h, i) => (
                 <div class="flex items-center gap-2">
                   <input {...NO_AC}
                     class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
-                    placeholder='name (paste "name: value" to split)'
+                    placeholder={t()("rules.header_name_placeholder")}
                     value={h().name}
                     onInput={(e) => {
                       const arr = d().res_headers.slice();
@@ -935,7 +936,7 @@ const RuleEditor: Component<{
                   />
                   <input {...NO_AC}
                     class="flex-[2] bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
-                    placeholder="value"
+                    placeholder={t()("rules.header_value_placeholder")}
                     value={h().value}
                     onInput={(e) => {
                       const arr = d().res_headers.slice();
@@ -969,11 +970,11 @@ const RuleEditor: Component<{
                 class="text-xs text-accent hover:underline"
                 onClick={() => patch({ res_headers: [...d().res_headers, { name: "", value: "" }] })}
               >
-                + add header
+                {t()("rules.add_header")}
               </button>
               <button
                 class="text-xs text-accent hover:underline"
-                title='Read clipboard, parse "name: value", insert as a new header'
+                title={t()("rules.paste_header_title")}
                 onClick={async () => {
                   try {
                     const text = await navigator.clipboard.readText();
@@ -986,29 +987,29 @@ const RuleEditor: Component<{
                   }
                 }}
               >
-                + paste header
+                {t()("rules.paste_header")}
               </button>
             </div>
           </div>
         </FieldRow>
-        <FieldRow label="Body mime">
+        <FieldRow label={t()("rules.body_mime_label")}>
           <input {...NO_AC}
             class="flex-1 bg-bg border border-border rounded px-2 py-1 text-sm font-mono"
-            placeholder="application/json"
+            placeholder={t()("rules.body_mime_placeholder")}
             value={d().res_body_mime}
             onInput={(e) => patch({ res_body_mime: e.currentTarget.value })}
           />
         </FieldRow>
-        <FieldRow label="Body">
+        <FieldRow label={t()("rules.body_label")}>
           <div class="flex-1">
             <textarea {...NO_AC}
               class="w-full bg-bg border border-border rounded px-2 py-1 text-xs font-mono min-h-32"
               placeholder={
                 bodyLoading()
-                  ? "Loading existing body…"
+                  ? t()("rules.body_loading_placeholder")
                   : existingBodyId()
-                  ? "Body is empty — type to set a response body"
-                  : "Paste response body here"
+                  ? t()("rules.body_existing_placeholder")
+                  : t()("rules.body_new_placeholder")
               }
               disabled={bodyLoading()}
               value={d().res_body_text}
@@ -1016,14 +1017,14 @@ const RuleEditor: Component<{
             />
             <Show when={!!existingBodyId() && !bodyLoading()}>
               <div class="text-xs text-fg-muted mt-1">
-                Stored body: {existingBodySize()}B. Edits replace it on save.
+                {tr("rules.body_stored_note", { size: existingBodySize() })}
               </div>
             </Show>
           </div>
         </FieldRow>
         </Show>
         <Show when={d().mode === "patch"}>
-          <FieldRow label="Patches" help={{ path: "/rules/#синтаксис-path", title: "Path syntax, ops, examples" }}>
+          <FieldRow label={t()("rules.patches_section")} help={{ path: "/rules/#синтаксис-path", title: t()("rules.patches_help_title") }}>
             <PatchesEditor
               patches={d().patches}
               onChange={(arr) => patch({ patches: arr })}
@@ -1042,21 +1043,24 @@ const RuleEditor: Component<{
           onClick={p.onCancel}
           disabled={busy()}
         >
-          Cancel
+          {t()("rules.cancel")}
         </button>
         <button
           class="text-sm px-3 py-1.5 rounded bg-accent text-white hover:opacity-90 inline-flex items-center gap-1 disabled:opacity-50"
           onClick={save}
           disabled={busy() || bodyLoading()}
         >
-          <Check size={14} /> {busy() ? "Saving…" : bodyLoading() ? "Loading…" : "Save"}
+          <Check size={14} />{" "}
+          {busy()
+            ? t()("rules.saving")
+            : bodyLoading()
+            ? t()("rules.loading")
+            : t()("rules.save")}
         </button>
       </div>
     </div>
   );
 };
-
-const PATCH_PATH_EXAMPLES = "user.fio · list[0] · headers.Content-Type · status";
 
 const PatchesEditor: Component<{
   patches: RulePatchOpDto[];
@@ -1087,7 +1091,7 @@ const PatchesEditor: Component<{
             <input
               {...NO_AC}
               class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
-              placeholder={PATCH_PATH_EXAMPLES}
+              placeholder={t()("rules.patch_path_placeholder")}
               value={op().path}
               onInput={(e) => setRow(i, { path: e.currentTarget.value })}
             />
@@ -1095,7 +1099,7 @@ const PatchesEditor: Component<{
               <input
                 {...NO_AC}
                 class="flex-[2] bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
-                placeholder='value (JSON: "X", 777, true, null, {"a":1})'
+                placeholder={t()("rules.patch_value_placeholder")}
                 value={
                   typeof op().value === "string"
                     ? (op().value as string)
@@ -1116,15 +1120,9 @@ const PatchesEditor: Component<{
         )}
       </Index>
       <button class="text-xs text-accent hover:underline" onClick={addRow}>
-        + add patch
+        {t()("rules.add_patch")}
       </button>
-      <div class="text-xs text-fg-muted italic">
-        Path heads: <code>status</code>, <code>headers.&lt;Name&gt;</code>,{" "}
-        <code>body.&lt;dot.path&gt;</code> — the <code>body.</code> prefix is optional, so{" "}
-        <code>user.fio</code> means the same as <code>body.user.fio</code>. Use <code>[i]</code> for
-        array index and <code>[-]</code> to append. Value is parsed as JSON; non-JSON text is
-        treated as a string.
-      </div>
+      <div class="text-xs text-fg-muted italic" innerHTML={t()("rules.patches_note_html")} />
     </div>
   );
 };
