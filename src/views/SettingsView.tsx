@@ -4,11 +4,15 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import { setTheme, theme, type Theme } from "@/stores/theme";
+import { t, locale, setLocale, LOCALES } from "@/i18n";
 
-const THEME_OPTIONS: Array<{ value: Theme; label: string }> = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" },
+// Theme button labels are looked up via i18n in the JSX. Statically
+// listed key names keep the i18n key set discoverable by grep and let
+// the translator type-check each call site.
+const THEME_OPTIONS: Array<{ value: Theme; labelKey: "settings.theme_light" | "settings.theme_dark" | "settings.theme_system" }> = [
+  { value: "light", labelKey: "settings.theme_light" },
+  { value: "dark", labelKey: "settings.theme_dark" },
+  { value: "system", labelKey: "settings.theme_system" },
 ];
 
 type CaFormat = "pem" | "der" | "qr" | "mobileconfig";
@@ -58,31 +62,58 @@ const SettingsView: Component = () => {
   return (
     <div class="h-full overflow-auto p-6 space-y-6 max-w-3xl">
       <div class="flex items-center gap-2">
-        <h1 class="text-xl font-semibold">Settings</h1>
+        <h1 class="text-xl font-semibold">{t()("settings.title")}</h1>
         <HelpButton path="/getting-started/" title="First-time setup: install, CA export, proxy on device" />
       </div>
 
       <section class="space-y-3">
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Appearance</h2>
-        <div
-          role="radiogroup"
-          aria-label="Application theme"
-          class="inline-flex rounded border border-border overflow-hidden text-xs"
-        >
-          <For each={THEME_OPTIONS}>
-            {(opt) => (
-              <button
-                role="radio"
-                aria-checked={theme() === opt.value}
-                onClick={() => setTheme(opt.value)}
-                class="px-3 py-1.5 hover:bg-bg-muted aria-checked:bg-accent aria-checked:text-white not-[:last-child]:border-r not-[:last-child]:border-border"
-              >
-                {opt.label}
-              </button>
-            )}
-          </For>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle">
+          {t()("settings.appearance_section")}
+        </h2>
+
+        <div class="flex items-center gap-3">
+          <div class="text-sm w-24">{t()("settings.theme_label")}</div>
+          <div
+            role="radiogroup"
+            aria-label={t()("settings.theme_label")}
+            class="inline-flex rounded border border-border overflow-hidden text-xs"
+          >
+            <For each={THEME_OPTIONS}>
+              {(opt) => (
+                <button
+                  role="radio"
+                  aria-checked={theme() === opt.value}
+                  onClick={() => setTheme(opt.value)}
+                  class="px-3 py-1.5 hover:bg-bg-muted aria-checked:bg-accent aria-checked:text-white not-[:last-child]:border-r not-[:last-child]:border-border"
+                >
+                  {t()(opt.labelKey)}
+                </button>
+              )}
+            </For>
+          </div>
         </div>
-        <p class="text-xs text-fg-muted">System follows your OS appearance.</p>
+
+        <div class="flex items-center gap-3">
+          <div class="text-sm w-24">{t()("settings.language_label")}</div>
+          <div
+            role="radiogroup"
+            aria-label={t()("settings.language_label")}
+            class="inline-flex rounded border border-border overflow-hidden text-xs"
+          >
+            <For each={LOCALES}>
+              {(opt) => (
+                <button
+                  role="radio"
+                  aria-checked={locale() === opt.code}
+                  onClick={() => setLocale(opt.code)}
+                  class="px-3 py-1.5 hover:bg-bg-muted aria-checked:bg-accent aria-checked:text-white not-[:last-child]:border-r not-[:last-child]:border-border"
+                >
+                  {opt.label}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
       </section>
 
       <section class="space-y-3">

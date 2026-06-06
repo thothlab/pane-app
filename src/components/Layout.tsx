@@ -8,6 +8,7 @@ import { VerticalResizer } from "@/components/VerticalResizer";
 import { docsUrl } from "@/components/HelpButton";
 import { setFilter } from "@/stores/captures";
 import { filters, deleteFilter, refreshFilters } from "@/stores/saved-filters";
+import { t, tr } from "@/i18n";
 import {
   checkForUpdatesNow,
   checkForUpdatesOnStartup,
@@ -115,37 +116,39 @@ const Layout: ParentComponent = (props) => {
               class="mt-2 w-full inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 text-accent px-2 py-1 text-xs font-medium hover:bg-accent/20 disabled:opacity-60"
               onClick={() => void onInstallUpdate()}
               disabled={installing()}
-              title={`Install Pane v${pendingUpdate()!.version} and restart`}
+              title={t()("updates.install_title", { version: pendingUpdate()!.version })}
             >
               <Download size={12} />
               {installing()
-                ? "Installing…"
-                : `Update to v${pendingUpdate()!.version}`}
+                ? t()("updates.installing")
+                : t()("updates.update_to", { version: pendingUpdate()!.version })}
             </button>
           </Show>
         </div>
         <nav class="flex-1 overflow-auto p-2 space-y-1">
-          <NavLink href="/" icon={<Activity size={16} />}>Captures</NavLink>
-          <NavLink href="/rules" icon={<Shuffle size={16} />}>Rules</NavLink>
-          <NavLink href="/devices" icon={<Smartphone size={16} />}>Devices</NavLink>
+          <NavLink href="/" icon={<Activity size={16} />}>{t()("nav.captures")}</NavLink>
+          <NavLink href="/rules" icon={<Shuffle size={16} />}>{t()("nav.rules")}</NavLink>
+          <NavLink href="/devices" icon={<Smartphone size={16} />}>{t()("nav.devices")}</NavLink>
 
           <Show when={filters().length > 0}>
-            <div class="mt-8 pt-3 border-t border-border px-2 text-xs uppercase tracking-wide text-fg-muted">Filters</div>
+            <div class="mt-8 pt-3 border-t border-border px-2 text-xs uppercase tracking-wide text-fg-muted">
+              {t()("nav.filters")}
+            </div>
             <For each={filters()}>
               {(f) => (
                 <div
                   class="group px-2 py-1 rounded text-sm hover:bg-bg-muted cursor-pointer flex items-center gap-2"
-                  title={`Apply "${f.query}"`}
+                  title={t()("nav.apply_filter", { query: f.query })}
                   onClick={() => setFilter(f.query)}
                 >
                   <FilterIcon size={14} style={{ color: f.color }} />
                   <span class="truncate flex-1">{f.name}</span>
                   <button
                     class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0"
-                    title="Delete filter"
+                    title={t()("nav.delete_filter")}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm(`Delete filter "${f.name}"?`)) {
+                      if (confirm(tr("nav.delete_filter_confirm", { name: f.name }))) {
                         void deleteFilter(f.id);
                       }
                     }}
@@ -161,17 +164,17 @@ const Layout: ParentComponent = (props) => {
             separated from the primary navigation so the main list stays
             focused on workflow surfaces (Captures, Rules, Devices). */}
         <div class="p-2 border-t border-border space-y-1">
-          <NavLink href="/settings" icon={<Settings size={16} />}>Settings</NavLink>
+          <NavLink href="/settings" icon={<Settings size={16} />}>{t()("nav.settings")}</NavLink>
           <button
             type="button"
             class="w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-bg-muted text-fg"
-            title="Open documentation in browser"
+            title={t()("nav.docs_title")}
             onClick={() => void openExternal(docsUrl("/"))}
           >
             <BookOpen size={16} />
-            Docs
+            {t()("nav.docs")}
           </button>
-          <NavLink href="/about" icon={<Info size={16} />}>About</NavLink>
+          <NavLink href="/about" icon={<Info size={16} />}>{t()("nav.about")}</NavLink>
         </div>
         <div class="p-3 border-t border-border space-y-2">
           <button
@@ -180,10 +183,10 @@ const Layout: ParentComponent = (props) => {
             onClick={toggleProxy}
           >
             {status()?.running ? <Square size={14} /> : <Play size={14} />}
-            {status()?.running ? "Stop proxy" : "Start proxy"}
+            {status()?.running ? t()("proxy.stop") : t()("proxy.start")}
           </button>
           <div class="text-xs text-fg-muted text-center">
-            {status()?.running ? status()?.listen ?? "running" : "stopped"}
+            {status()?.running ? status()?.listen ?? t()("proxy.running") : t()("proxy.stopped")}
           </div>
         </div>
       </aside>
