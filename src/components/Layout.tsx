@@ -1,6 +1,6 @@
 import { type ParentComponent, createEffect, createMemo, createSignal, onMount, For, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X, Shuffle, BookOpen, Download, RefreshCw } from "lucide-solid";
+import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X, Shuffle, BookOpen, Download } from "lucide-solid";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
 import { api } from "@/ipc/client";
@@ -12,7 +12,6 @@ import {
   checkForUpdatesNow,
   checkForUpdatesOnStartup,
   installPendingUpdate,
-  isCheckingForUpdates,
   pendingUpdate,
 } from "@/lib/updater";
 import type { ProxyStatusDto } from "@/ipc/types";
@@ -91,20 +90,6 @@ const Layout: ParentComponent = (props) => {
     }
   };
 
-  const [checkToast, setCheckToast] = createSignal<string | null>(null);
-  let checkToastTimer: ReturnType<typeof setTimeout> | null = null;
-  const onCheckUpdates = async () => {
-    if (checkToastTimer) clearTimeout(checkToastTimer);
-    setCheckToast(null);
-    const res = await checkForUpdatesNow();
-    // Only toast when there's no update — if one was found, the install
-    // button appearing in the sidebar is feedback enough.
-    if (!res.found) {
-      setCheckToast(res.error ? "Couldn't reach update server" : "Up to date");
-      checkToastTimer = setTimeout(() => setCheckToast(null), 3000);
-    }
-  };
-
   const toggleProxy = async () => {
     const s = status();
     if (s?.running) {
@@ -123,24 +108,7 @@ const Layout: ParentComponent = (props) => {
       <aside class="bg-bg-subtle flex flex-col overflow-hidden">
         <div class="px-4 py-4 border-b border-border">
           <div class="font-semibold text-lg">Pane</div>
-          <div class="flex items-center gap-1">
-            <div class="text-xs text-fg-muted">{appVersion() ? `v${appVersion()}` : ""}</div>
-            <button
-              type="button"
-              class="ml-auto text-xs px-1.5 py-0.5 rounded text-fg-muted hover:bg-bg-muted hover:text-fg inline-flex items-center gap-1 disabled:opacity-60"
-              onClick={() => void onCheckUpdates()}
-              disabled={isCheckingForUpdates()}
-              title="Check for updates"
-            >
-              <RefreshCw
-                size={10}
-                class={isCheckingForUpdates() ? "animate-spin" : ""}
-              />
-            </button>
-          </div>
-          <Show when={checkToast()}>
-            <div class="mt-1 text-[10px] text-fg-muted">{checkToast()}</div>
-          </Show>
+          <div class="text-xs text-fg-muted">{appVersion() ? `v${appVersion()}` : ""}</div>
           <Show when={pendingUpdate()}>
             <button
               type="button"

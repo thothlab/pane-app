@@ -20,10 +20,11 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 
 <CardGrid>
   <Card title="Настройка устройства через USB" icon="seti:apple">
-    Подключи телефон, нажми Add device — Pane через USB установит root
-    CA (на Android — через свой APK-хелпер, чтобы обойти Samsung-
-    блокировку shell-инсталла), пробросит трафик через `adb reverse`,
-    выставит системный прокси. Wi-Fi настраивать не надо.
+    Подключи телефон, нажми Add device — Pane через USB поставит root
+    CA (на iOS и рутованном Android — полный авто; на non-root
+    Android из-за блокировки Google нужен один ручной шаг по
+    инструкции в UI), пробросит трафик через `adb reverse` и
+    выставит PAC-прокси. Wi-Fi настраивать не надо.
   </Card>
   <Card title="MITM HTTPS с расшифровкой" icon="seti:lock">
     Per-host leaf-сертификаты, выписанные локальным root CA. Каждый

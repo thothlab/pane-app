@@ -59,29 +59,48 @@ NSIS-инсталлер пока не подписан EV-сертификато
    `adb` / `libimobiledevice`. Выбери телефон → **+ Add**. Дальше Pane
    автоматически:
    - сгенерирует root CA (ECDSA P-256) и сохранит локально;
-   - на Android: установит маленький APK-хелпер
-     (`tech.thothlab.pane.helper`, ~600 КБ, без иконки в drawer);
-     хелпер вызывает системный `KeyChain.createInstallIntent()` и
-     показывает один диалог «Установить Pane Root CA?»;
-   - на iOS: пушит мобильный профиль через USB;
-   - проложит `adb reverse tcp:8888 tcp:8888` (на iOS — usbmuxd
-     tunnel) — трафик с устройства идёт через USB, **Wi-Fi не нужен
-     и не настраивается**;
-   - выставит системный HTTP-прокси на `127.0.0.1:8888`.
-5. На телефоне подтверди диалог установки CA и введи PIN/паттерн.
+   - **iOS** — пушит mobileconfig профиль через USB; пользователь
+     подтверждает установку в Settings;
+   - **Android (rooted)** — кладёт CA в системный trust store
+     `/system/etc/security/cacerts/`, **полный авто**;
+   - **Android (без root)** — пушит файл `/sdcard/Pane/pane-ca.pem`
+     на устройство, в строке Devices показывает пошаговую инструкцию
+     «Settings → Install certificate → выбрать pane-ca.pem» (см. ниже);
+   - проложит `adb reverse tcp:8888 tcp:8888` + `tcp:8889 tcp:8889`
+     (для PAC) — трафик с устройства идёт через USB, **Wi-Fi не
+     нужен и не настраивается**;
+   - выставит на устройстве `http_proxy_pac` на локальный PAC-сервер.
+5. На Android без root — выполни manual install по инструкции в Devices
+   (раскрывающийся блок «How to install the CA certificate»).
+6. На iOS — подтверди установку профиля в Settings → Profile Downloaded.
 
 Следующий запрос приложения окажется в списке captures. Клик по
 строке открывает method / URL / status, заголовки, тело и timing.
 
-### Зачем APK-хелпер на Android
+### Почему install CA на Android требует ручного шага
 
-На Android 11+ установка CA через `adb shell am start` бьётся в
-системный picker файлов (scoped storage), а на Samsung One UI с
-Android 16 — вообще блокируется с сообщением «приложение Оболочка
-должно установить через Настройки». Хелпер запускает установку из
-своего UID, не из shell — система пропускает. Снимок «один диалог
-+ PIN, без файл-пикера». APK живёт на устройстве между сессиями,
-переустанавливать не надо. Удаляется через **Настройки → Приложения**.
+На Android 11+ CertInstaller всегда ведёт через SAF file-picker
+(scoped-storage). На Samsung One UI с Android 16+ установка CA
+вообще заблокирована из любых программных источников (shell,
+`KeyChain.createInstallIntent` из приложения, и т.д.) — Google +
+Samsung сделали процесс **user-initiated-only**. У этой блокировки
+нет программного обхода без root.
+
+Pane всё, что в его силах, делает за тебя:
+- пушит `pane-ca.pem` в собственную папку `/sdcard/Pane/`, которая не
+  подвержена авточистке Samsung Smart Manager (Downloads чистится);
+- в UI строки Devices показывает раскрывающийся блок с точной
+  последовательностью кликов под твою прошивку, копируемым путём к
+  файлу и напоминанием про lock-screen PIN.
+
+### PAC-based proxy
+
+Pane выставляет на устройстве `http_proxy_pac`, а не direct `http_proxy`.
+Когда USB подключён — PAC-сервер доступен через `adb reverse`, и
+трафик идёт через Pane. Когда USB отключают (или Pane закрывается) —
+PAC URL становится недоступен, Android прозрачно делает fallback на
+DIRECT, и устройство **сохраняет интернет**. Прежний прямой
+http_proxy в этом сценарии «закрывал» интернет до Remove device.
 
 ### Когда что-то идёт не так
 
@@ -116,8 +135,7 @@ Pane сам проверяет новые релизы:
 
 Когда выходит новая версия — в sidebar под версией появляется кнопка
 **Update to vX.Y.Z**. Жмёшь, Pane скачивает подписанный bundle (minisign)
-и перезапускается. Принудительная проверка — иконка обновления рядом
-с версией, или **About → Check for updates**.
+и перезапускается. Принудительная проверка — **About → Check for updates**.
 
 ## Чтение captures
 

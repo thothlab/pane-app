@@ -30,7 +30,7 @@ pnpm install
 pnpm tauri:dev
 ```
 
-Click **Start proxy** in the lower-left. Then **Devices → Add device** — Pane installs the root CA over USB, sets up `adb reverse` and writes the system proxy. On Android the CA install goes through an auto-installed helper APK (one dialog + PIN, no SAF file picker). Traffic starts populating the **Captures** view.
+Click **Start proxy** in the lower-left. Then **Devices → Add device** — Pane installs the root CA over USB (fully auto on iOS and rooted Android; on non-root Android it pushes the file and shows an inline manual-install walkthrough), wires up `adb reverse`, and sets a PAC-based proxy (which gracefully falls back to DIRECT on unplug so the phone keeps its internet). Traffic starts populating the **Captures** view.
 
 ## How it compares
 
@@ -61,11 +61,7 @@ crates/
   pane-storage/    SQLite + body blobs + filter DSL + replay
   pane-devices/    Cross-platform device manager + state machine
   pane-ios/        libimobiledevice wrapper
-  pane-android/    adb wrapper, CA install paths
-tools/
-  pane-helper-android/  Kotlin APK helper that auto-installs the CA into
-                        the user trust store (sidesteps the scoped-storage
-                        SAF picker and Samsung One UI's shell-install block).
+  pane-android/    adb wrapper, CA install paths, PAC server wiring
   pane-mobileconfig/  Apple .mobileconfig builder
   pane-setup-server/  LAN HTTP server for QR-fallback pairing
   pane-pinning/    Pinning heuristic + hint kinds

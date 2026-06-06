@@ -30,7 +30,7 @@ pnpm install
 pnpm tauri:dev
 ```
 
-Нажми **Start proxy** в нижнем левом углу. Дальше **Devices → Add device** — Pane через USB поставит root CA, пробросит порт через `adb reverse` и выставит системный прокси. На Android установка CA идёт через автоматически устанавливаемый APK-хелпер (один диалог + PIN, без файл-пикера). После этого трафик начнёт попадать в **Captures**.
+Нажми **Start proxy** в нижнем левом углу. Дальше **Devices → Add device** — Pane через USB поставит root CA (полный авто на iOS и рутованном Android; на non-root Android — пушит файл и показывает inline-инструкцию для one-time manual install), пробросит порт через `adb reverse` и выставит PAC-прокси (которое корректно fallback'ает на DIRECT при unplug, не оставляя устройство без интернета). После этого трафик начнёт попадать в **Captures**.
 
 ## Чем отличается от других
 
@@ -61,11 +61,7 @@ crates/
   pane-storage/    SQLite + body blobs + filter DSL + replay
   pane-devices/    Кроссплатформенный device manager + state machine
   pane-ios/        libimobiledevice wrapper
-  pane-android/    adb wrapper, CA install paths
-tools/
-  pane-helper-android/  Kotlin APK helper для авто-установки CA в user trust
-                        store (обходит scoped-storage SAF picker и Samsung
-                        One UI shell-install block).
+  pane-android/    adb wrapper, CA install paths, PAC server wiring
   pane-mobileconfig/  Сборщик Apple .mobileconfig
   pane-setup-server/  LAN HTTP server для QR-fallback pairing
   pane-pinning/    Эвристика pinning + hint kinds

@@ -58,32 +58,53 @@ show a warning — click **More info → Run anyway**.
      Android won't install user CAs without one.
    - **iOS** — trust the laptop the first time you plug in.
 4. **Devices → Add device**. Pane discovers attached phones via `adb`
-   / `libimobiledevice`. Pick yours → **+ Add**. Pane then automatically:
+   / `libimobiledevice`. Pick yours → **+ Add**. Pane then:
    - generates a root CA (ECDSA P-256) and stores it locally;
-   - on Android: installs a small helper APK
-     (`tech.thothlab.pane.helper`, ~600 KB, no launcher icon); the
-     helper calls the system `KeyChain.createInstallIntent()` and
-     shows a single "Install Pane Root CA?" dialog;
-   - on iOS: pushes the mobileconfig profile over USB;
-   - sets up `adb reverse tcp:8888 tcp:8888` (on iOS — usbmuxd tunnel)
-     — traffic flows over USB, **no Wi-Fi setup needed**;
-   - sets the device's HTTP proxy to `127.0.0.1:8888`.
-5. Confirm the CA-install dialog on the phone and enter your screen-
-   lock PIN.
+   - **iOS** — pushes the mobileconfig profile over USB; user confirms
+     the install in Settings;
+   - **Android (rooted)** — drops the CA into the system trust store
+     at `/system/etc/security/cacerts/`. **Fully automatic.**
+   - **Android (no root)** — pushes the CA file to
+     `/sdcard/Pane/pane-ca.pem` and the device row shows a step-by-step
+     guide for the manual install (see below);
+   - wires up `adb reverse tcp:8888 tcp:8888` plus `tcp:8889 tcp:8889`
+     for the PAC server — traffic flows over USB, **no Wi-Fi setup
+     needed**;
+   - points the device at the PAC URL so DIRECT fallback kicks in on
+     unplug (see PAC section below).
+5. On Android without root — follow the manual-install guide in the
+   Devices row (collapsible "How to install the CA certificate" block).
+6. On iOS — confirm the profile in Settings → Profile Downloaded.
 
 The next request your app makes is a capture in the list. Click a row
 to see method / URL / status, headers, body and timing.
 
-### Why the helper APK on Android
+### Why CA install on Android needs a manual step
 
-Android 11+ bounces shell-initiated CA installs through the scoped-
-storage SAF file picker; Samsung One UI on Android 16 blocks them
-outright ("Этот сертификат от приложения Оболочка необходимо
-установить в меню Настройки"). The helper launches the install from
-its own UID instead of from `adb shell`, which both keeps Samsung
-happy and skips the file picker — one dialog + PIN. The APK sticks
-around between sessions; uninstall via **Settings → Apps** if you
-want it gone.
+Android 11+ always routes CertInstaller through the SAF file picker
+(scoped-storage). Samsung One UI on Android 16+ goes further and
+blocks programmatic CA installs from every source (shell,
+`KeyChain.createInstallIntent` from an app, MDM-style
+`DevicePolicyManager`) — Google and Samsung made the flow strictly
+user-initiated on recent builds. No programmatic workaround exists
+without root.
+
+Pane does everything it can to make the manual step painless:
+- pushes `pane-ca.pem` into its own `/sdcard/Pane/` folder so Samsung
+  Smart Manager doesn't sweep it (Downloads gets cleaned);
+- the device row in Devices shows a collapsible guide with the exact
+  click path for your Settings layout, a copy-to-clipboard for the
+  file path, and the lock-screen PIN prerequisite reminder.
+
+### PAC-based proxy
+
+Pane sets `http_proxy_pac` on the device, not a direct `http_proxy`.
+When USB is connected, the PAC server is reachable via `adb reverse`
+and traffic flows through Pane. When USB is unplugged (or Pane
+closes), the PAC URL becomes unreachable and Android transparently
+falls back to DIRECT — **the device keeps its internet**. The old
+direct-proxy approach used to strand the device on
+ERR_PROXY_CONNECTION_FAILED in that scenario.
 
 ### When something goes sideways
 
@@ -117,8 +138,8 @@ Pane checks for new releases:
 
 When a newer build is out, an **Update to vX.Y.Z** button appears in
 the sidebar under the version. Click it and Pane downloads the
-minisign-signed bundle and relaunches. Force a check with the refresh
-icon next to the version, or from **About → Check for updates**.
+minisign-signed bundle and relaunches. Force a check via
+**About → Check for updates**.
 
 ## Reading captures
 
