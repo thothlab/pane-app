@@ -238,7 +238,14 @@ impl AndroidPlatform {
 /// Constant: where on the device the CA file lives after `push_ca_file`.
 /// Public so the UI can show the path verbatim in the manual-install
 /// instructions and copy it to the clipboard.
-pub const DEVICE_CA_PATH: &str = "/sdcard/Pane/pane-ca.pem";
+///
+/// /sdcard/Documents/ on purpose: Samsung's CertInstaller file picker
+/// only lists "well-known" Android folders (Downloads, Documents,
+/// Pictures, Bluetooth) — custom paths like /sdcard/Pane/ stay hidden
+/// even when the file is there. Documents wins over Downloads because
+/// Samsung's Smart Manager doesn't periodically sweep it (Downloads
+/// gets aggressively cleaned, especially .cer files).
+pub const DEVICE_CA_PATH: &str = "/sdcard/Documents/pane-ca.pem";
 
 /// Push the CA cert to `/sdcard/Pane/pane-ca.pem` so the user can pick
 /// it up from the system "Install certificate" file picker. Two
@@ -266,25 +273,31 @@ async fn push_ca_file(serial: &str, pem: &str) -> Result<()> {
     let tmp = std::env::temp_dir().join("pane-ca.pem");
     std::fs::write(&tmp, pem)?;
 
-    // Sweep stale pane-ca.* files out of /sdcard/Download/ before push.
-    // Samsung's file picker offers Downloads as the default landing
-    // folder, so if a previous Pane version (or a debug push) left
-    // anything called pane-ca.* there, the user clicks it instead of
-    // walking to /sdcard/Pane/ and Android rejects it with
-    // "Нет сертификата для установки." Best-effort — we don't care if
-    // there's nothing to delete.
+    // Sweep stale pane-ca.* files out of /sdcard/Download/ and the
+    // old /sdcard/Pane/ before push. Two reasons:
+    //   - Samsung's CertInstaller picker defaults to Downloads, so a
+    //     leftover dummy there causes the user to pick the wrong file.
+    //   - /sdcard/Pane/ was an earlier (failed) choice — the picker
+    //     doesn't list custom paths, so the file there was invisible.
+    //     Remove it so the user has only one valid target.
+    // Best-effort — silent no-op if nothing to delete.
     let _ = run(
         "adb",
         &[
             "-s", serial, "shell", "sh", "-c",
-            "rm -f /sdcard/Download/pane-ca.* /sdcard/Documents/pane-ca.*",
+            "rm -f /sdcard/Download/pane-ca.* /sdcard/Pane/pane-ca.*",
         ],
     )
     .await;
 
-    // mkdir is best-effort: succeeds if folder doesn't exist yet,
-    // silently no-ops if it does. Either outcome is fine.
-    let _ = run("adb", &["-s", serial, "shell", "mkdir", "-p", "/sdcard/Pane"]).await;
+    // /sdcard/Documents/ exists by default on every Android, but make
+    // sure of it: some launcher-stripped builds skip the standard
+    // Android folders until something writes to them.
+    let _ = run(
+        "adb",
+        &["-s", serial, "shell", "mkdir", "-p", "/sdcard/Documents"],
+    )
+    .await;
 
     run(
         "adb",
@@ -306,6 +319,22 @@ async fn push_ca_file(serial: &str, pem: &str) -> Result<()> {
             head.trim()
         ));
     }
+
+    // Trigger a MediaStore scan so Samsung's CertInstaller picker sees
+    // the new file immediately. Without this, the freshly-pushed PEM
+    // may stay invisible to SAF until the daily indexing pass runs.
+    // The intent is deprecated on Android 11+ but Samsung still
+    // honours it for sdcard paths under /sdcard/Documents/ etc.
+    let _ = run(
+        "adb",
+        &[
+            "-s", serial, "shell", "am", "broadcast",
+            "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+            "-d", &format!("file://{DEVICE_CA_PATH}"),
+        ],
+    )
+    .await;
+
     Ok(())
 }
 
