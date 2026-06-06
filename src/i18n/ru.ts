@@ -68,7 +68,7 @@ const ru: Dict = {
     manual_install_step2:
       "На предупреждающем экране нажмите <strong>Установить всё равно</strong>.",
     manual_install_step3:
-      "В файл-пикере перейдите в <strong>Внутреннее хранилище → Documents</strong> и выберите <code>pane-ca.pem</code>.",
+      "Файл-пикер откроется в <strong>Downloads</strong> — там сразу выберите <code>pane-ca.pem</code>.",
     manual_install_step4: "Введите PIN/паттерн блокировки экрана.",
     manual_install_lockscreen_note:
       "Без PIN/паттерна блокировки экрана Android не разрешает установку user CA — выставьте блокировку при необходимости. После установки debug-сборки с",

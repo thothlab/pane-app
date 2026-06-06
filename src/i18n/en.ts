@@ -71,7 +71,7 @@ const en = {
       "On the phone, open <strong>Settings → Biometrics & security → Other security settings → Install from device storage → CA certificate</strong>.",
     manual_install_step2: "On the warning screen tap <strong>Install anyway</strong>.",
     manual_install_step3:
-      "In the file picker tap <strong>Internal storage → Documents</strong> and pick <code>pane-ca.pem</code>.",
+      "The file picker opens in <strong>Downloads</strong> by default — tap <code>pane-ca.pem</code> right there.",
     manual_install_step4: "Enter your screen-lock PIN/pattern when prompted.",
     manual_install_lockscreen_note:
       "Without a lock-screen PIN/pattern, Android refuses user CA installs — set one first if needed. After installation, debug builds with",
