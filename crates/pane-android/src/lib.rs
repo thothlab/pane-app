@@ -81,11 +81,17 @@ impl AndroidPlatform {
         .to_string();
 
         let mut last_error: Option<String> = None;
+        // Drives the device-row UI: which CA-install state we're in.
+        //   "auto_succeeded" — CA in system store via root; nothing to do.
+        //   "manual_required" — CA file pushed, user must install via Settings.
+        //   "failed"          — even the push failed; user has to retry or copy file by hand.
+        let mut ca_install_state = "auto_succeeded";
 
         if rooted {
             if let Err(e) = install_system_ca(serial, &ca.cert_pem).await {
                 tracing::warn!(error = %e, "system CA install failed — falling back to debug-build snippet");
                 last_error = Some(format!("system install failed: {e}"));
+                ca_install_state = "failed";
             }
         } else {
             // No root → push the CA file and tell the user how to
@@ -98,27 +104,18 @@ impl AndroidPlatform {
             // no shell/intent/app-source workaround gets past it.
             // We pre-push the file to a well-known location so the
             // user's manual flow is exactly "Settings → Install
-            // certificate → pick pane-ca.cer in Downloads".
+            // certificate → pick pane-ca.pem from Internal storage/Pane".
             match push_ca_file(serial, &ca.cert_pem).await {
                 Ok(()) => {
+                    ca_install_state = "manual_required";
                     last_error = Some(format!(
-                        "CA file pushed to {DEVICE_CA_PATH}. Install it: \
-                         Settings → Security → Install a certificate → \
-                         CA certificate → Install anyway → in the file \
-                         picker open Internal storage/Pane → pane-ca.pem. \
-                         After that, debug builds with \
-                         network_security_config trusting user CAs will \
-                         accept Pane. Release builds with SSL pinning \
-                         need extra bypass."
+                        "Manual CA install needed. File at {DEVICE_CA_PATH}."
                     ));
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "couldn't push CA file");
-                    last_error = Some(format!(
-                        "couldn't push CA to the device ({e}). Try \
-                         Re-sync, or export the CA from Pane → Settings \
-                         → Export CA and copy it across manually."
-                    ));
+                    ca_install_state = "failed";
+                    last_error = Some(format!("couldn't push CA to the device ({e})"));
                 }
             }
         }
@@ -188,6 +185,9 @@ impl AndroidPlatform {
                 "rooted": rooted,
                 "android_release": android_release,
                 "manufacturer": manufacturer,
+                // Drives the device-row UI on the desktop:
+                "ca_install_state": ca_install_state,
+                "ca_install_path": DEVICE_CA_PATH,
             }),
             last_error,
         })

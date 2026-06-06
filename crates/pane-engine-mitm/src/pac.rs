@@ -12,6 +12,17 @@
 //! No framework, no router, no MIME library. The HTTP/1.1 surface we need
 //! is a single GET → 200 OK → static body, and we serve any path the same
 //! way so the device can pick `/proxy.pac`, `/wpad.dat`, whatever.
+//!
+//! **OEM compatibility.** PAC + DIRECT-fallback is documented Android
+//! behaviour and present since API 21 (Lollipop, 2014). End-to-end smoke
+//! test passed on Samsung Galaxy S25 / Android 16 / One UI 8 (the OEM
+//! with the strictest networking policies in our matrix). Pixel,
+//! Xiaomi, OnePlus etc. expose the same `http_proxy_pac` setting, so
+//! this should work universally — but if some OEM ships a custom
+//! Settings layer that drops the setting, the failure mode is benign:
+//! the device behaves as if no proxy were set and just doesn't reach
+//! Pane at all. No "stranded with dead proxy" footgun like the previous
+//! direct-proxy approach had.
 
 use std::net::SocketAddr;
 

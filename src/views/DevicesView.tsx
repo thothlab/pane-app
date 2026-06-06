@@ -1,8 +1,23 @@
 import { type Component, createSignal, createResource, For, Show } from "solid-js";
-import { Smartphone, Plus, RefreshCw, RotateCw, Trash2, AlertCircle, CheckCircle } from "lucide-solid";
+import { Smartphone, Plus, RefreshCw, RotateCw, Trash2, AlertCircle, CheckCircle, Copy, Check, ChevronDown, ChevronRight } from "lucide-solid";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import type { DeviceDto, DiscoveredDeviceDto } from "@/ipc/types";
+
+/** What ca_install_state means visually — see pane-android::add_usb. */
+type CaInstallState = "auto_succeeded" | "manual_required" | "failed" | "unknown";
+
+function caState(d: DeviceDto): CaInstallState {
+  const v = (d.capabilities as Record<string, unknown>)?.["ca_install_state"];
+  return v === "auto_succeeded" || v === "manual_required" || v === "failed"
+    ? v
+    : "unknown";
+}
+
+function caPath(d: DeviceDto): string {
+  const v = (d.capabilities as Record<string, unknown>)?.["ca_install_path"];
+  return typeof v === "string" ? v : "/sdcard/Pane/pane-ca.pem";
+}
 
 const DevicesView: Component = () => {
   const [devices, { refetch }] = createResource(() => api.devices.list());
@@ -161,43 +176,139 @@ const DeviceRow: Component<{
   onResync: () => void;
   onRemove: () => void;
 }> = (p) => {
-  const isFullyReady = () => p.device.state === "ready" && !p.device.last_error;
+  const state = () => caState(p.device);
+  const isFullyReady = () => p.device.state === "ready" && state() === "auto_succeeded";
+  // Expand the manual-install guide by default for fresh manual_required
+  // devices — the user just clicked Add and needs to see what to do next.
+  // Once they've installed and there's no warning to surface, collapse it.
+  const [guideOpen, setGuideOpen] = createSignal(state() === "manual_required");
+
   return (
-  <li class="flex items-start justify-between p-3 rounded border border-border bg-bg-subtle gap-3">
-    <div class="flex items-start gap-3 min-w-0 flex-1">
-      <Show
-        when={isFullyReady()}
-        fallback={<AlertCircle size={16} class="text-warn shrink-0 mt-0.5" />}
-      >
-        <CheckCircle size={16} class="text-success shrink-0 mt-0.5" />
-      </Show>
-      <div class="min-w-0 flex-1">
-        <div class="text-sm font-medium truncate">{p.device.display_name}</div>
-        <div class="text-xs text-fg-muted font-mono">
-          {p.device.platform} · {p.device.state}
+    <li class="rounded border border-border bg-bg-subtle">
+      <div class="flex items-start justify-between p-3 gap-3">
+        <div class="flex items-start gap-3 min-w-0 flex-1">
+          <Show
+            when={isFullyReady()}
+            fallback={<AlertCircle size={16} class="text-warn shrink-0 mt-0.5" />}
+          >
+            <CheckCircle size={16} class="text-success shrink-0 mt-0.5" />
+          </Show>
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium truncate">{p.device.display_name}</div>
+            <div class="text-xs text-fg-muted font-mono">
+              {p.device.platform} · {p.device.state}
+            </div>
+            <Show when={state() === "manual_required"}>
+              <div class="text-xs text-warn mt-1">
+                Almost there — finish CA install on the device.
+              </div>
+            </Show>
+            <Show when={state() === "failed"}>
+              <div class="text-xs text-danger mt-1">{p.device.last_error}</div>
+            </Show>
+          </div>
         </div>
-        <Show when={p.device.last_error}>
-          <div class="text-xs text-warn mt-1">{p.device.last_error}</div>
+        <div class="flex items-center gap-1">
+          <button
+            class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-50"
+            onClick={p.onResync}
+            disabled={p.busy}
+            title="Re-apply USB port-forwarding + proxy setup"
+          >
+            <RotateCw size={12} class={p.busy ? "animate-spin" : ""} /> Re-sync
+          </button>
+          <button
+            class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-danger inline-flex items-center gap-1"
+            onClick={p.onRemove}
+          >
+            <Trash2 size={12} /> Remove
+          </button>
+        </div>
+      </div>
+
+      {/* Expanded manual-install guide. Collapsible because once the user
+          has done it, the row should compress back to just the headline. */}
+      <Show when={state() === "manual_required"}>
+        <button
+          type="button"
+          class="w-full px-3 py-2 border-t border-border text-xs text-fg-muted hover:bg-bg-muted flex items-center gap-1"
+          onClick={() => setGuideOpen(!guideOpen())}
+        >
+          <Show when={guideOpen()} fallback={<ChevronRight size={12} />}>
+            <ChevronDown size={12} />
+          </Show>
+          How to install the CA certificate
+        </button>
+        <Show when={guideOpen()}>
+          <ManualInstallGuide path={caPath(p.device)} />
         </Show>
+      </Show>
+    </li>
+  );
+};
+
+/** Step-by-step manual CA install instructions. Shown when programmatic
+ *  install was blocked (Samsung One UI on Android 16, primarily). */
+const ManualInstallGuide: Component<{ path: string }> = (p) => {
+  const [copied, setCopied] = createSignal(false);
+  const copyPath = async () => {
+    try {
+      await navigator.clipboard.writeText(p.path);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* no clipboard permission — fine, path is visible inline */
+    }
+  };
+
+  return (
+    <div class="px-3 pb-3 pt-1 border-t border-border space-y-3 text-xs">
+      <div class="text-fg-muted">
+        Your Android build (most commonly Samsung One UI on Android 16+)
+        blocks programmatic CA installs. Pane has already pushed the
+        certificate to your device — finish the install yourself:
+      </div>
+
+      <ol class="list-decimal pl-5 space-y-1.5 text-fg">
+        <li>
+          On the phone, open <strong>Settings → Biometrics & security →
+          Other security settings → Install from device storage → CA
+          certificate</strong>.
+        </li>
+        <li>
+          On the warning screen tap <strong>Install anyway</strong>.
+        </li>
+        <li>
+          In the file picker, open <strong>Internal storage → Pane</strong>{" "}
+          and pick <code class="font-mono">pane-ca.pem</code>.
+        </li>
+        <li>
+          Enter your screen-lock PIN/pattern when prompted.
+        </li>
+      </ol>
+
+      <div class="rounded bg-bg-muted px-2 py-1.5 flex items-center justify-between gap-2">
+        <code class="font-mono text-fg truncate">{p.path}</code>
+        <button
+          type="button"
+          class="text-fg-muted hover:text-fg shrink-0 inline-flex items-center gap-1"
+          onClick={() => void copyPath()}
+          title="Copy path"
+        >
+          <Show when={copied()} fallback={<Copy size={12} />}>
+            <Check size={12} class="text-success" />
+          </Show>
+        </button>
+      </div>
+
+      <div class="text-fg-muted">
+        Without a lock-screen PIN/pattern, Android refuses user CA
+        installs — set one first if needed. After installation, debug
+        builds with <code class="font-mono">network_security_config</code>{" "}
+        trusting user CAs will accept Pane. Release builds with TLS
+        pinning need extra bypass.
       </div>
     </div>
-    <div class="flex items-center gap-1">
-      <button
-        class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-50"
-        onClick={p.onResync}
-        disabled={p.busy}
-        title="Re-apply USB port-forwarding + proxy setup"
-      >
-        <RotateCw size={12} class={p.busy ? "animate-spin" : ""} /> Re-sync
-      </button>
-      <button
-        class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-danger inline-flex items-center gap-1"
-        onClick={p.onRemove}
-      >
-        <Trash2 size={12} /> Remove
-      </button>
-    </div>
-  </li>
   );
 };
 
