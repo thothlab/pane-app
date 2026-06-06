@@ -23,9 +23,21 @@ use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
 mod leaf;
+mod pac;
 mod patch;
 mod proxy_loop;
 mod rules;
+
+/// Public helper for the `pac_smoke` example. Not intended for app code —
+/// it just runs the PAC server in the foreground and waits.
+#[doc(hidden)]
+pub async fn __pac_smoke_helper() -> anyhow::Result<()> {
+    let listen: std::net::SocketAddr = "127.0.0.1:8889".parse().unwrap();
+    let _tx = pac::start(listen, "127.0.0.1".into(), 8888).await?;
+    tracing::info!("PAC server up on {listen}. Ctrl-C to stop.");
+    tokio::signal::ctrl_c().await?;
+    Ok(())
+}
 
 pub struct MitmEngine {
     storage: Arc<Storage>,
@@ -94,7 +106,31 @@ impl ProxyEngine for MitmEngine {
             }
         });
 
-        Ok(EngineHandle { listen: cfg.listen, shutdown_tx })
+        // Spin up the PAC server if requested. Failure here is logged
+        // but doesn't abort proxy startup — without PAC the device gets
+        // the legacy direct-proxy experience (which still works while
+        // USB is connected), so it's strictly an enhancement.
+        let (pac_listen, pac_shutdown_tx) = match cfg.pac_listen {
+            Some(addr) => {
+                let proxy_host = cfg.listen.ip().to_string();
+                let proxy_port = cfg.listen.port();
+                match pac::start(addr, proxy_host, proxy_port).await {
+                    Ok(tx) => (Some(addr), Some(tx)),
+                    Err(e) => {
+                        tracing::warn!(error = %e, addr = %addr, "PAC server failed to bind");
+                        (None, None)
+                    }
+                }
+            }
+            None => (None, None),
+        };
+
+        Ok(EngineHandle {
+            listen: cfg.listen,
+            pac_listen,
+            shutdown_tx,
+            pac_shutdown_tx,
+        })
     }
 
     fn events(&self) -> broadcast::Receiver<EngineEvent> {

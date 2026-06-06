@@ -12,13 +12,18 @@ pub async fn start(
     state: State<'_, AppState>,
     args: ProxyStartArgs,
 ) -> CmdResult<SessionDto> {
-    let listen = format!(
-        "{}:{}",
-        args.host.unwrap_or_else(|| "127.0.0.1".into()),
-        args.port.unwrap_or(8888)
-    )
-    .parse()
-    .map_err(to_api("invalid_addr"))?;
+    let host = args.host.unwrap_or_else(|| "127.0.0.1".into());
+    let port = args.port.unwrap_or(8888);
+    let listen = format!("{host}:{port}")
+        .parse()
+        .map_err(to_api("invalid_addr"))?;
+
+    // PAC sits on the same host one port up. The Android `http_proxy_pac`
+    // setting points at it (via adb reverse); when Pane goes away the
+    // device falls back to DIRECT instead of stranding on a dead proxy.
+    let pac_listen: std::net::SocketAddr = format!("{host}:{}", port + 1)
+        .parse()
+        .map_err(to_api("invalid_addr"))?;
 
     let ca_material = state.ca.material();
     let engine: Arc<dyn ProxyEngine> = Arc::new(MitmEngine::new(state.storage.clone()));
@@ -26,6 +31,7 @@ pub async fn start(
         .start(EngineConfig {
             listen,
             ca: ca_material,
+            pac_listen: Some(pac_listen),
         })
         .await
         .map_err(to_api("engine_start"))?;

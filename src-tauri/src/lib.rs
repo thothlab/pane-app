@@ -8,7 +8,6 @@ mod state;
 
 use state::AppState;
 use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
-use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
 pub fn run() {
@@ -72,20 +71,6 @@ pub fn run() {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "Pane starting");
             if let Err(e) = install_app_menu(app.handle()) {
                 tracing::warn!(error = %e, "failed to install app menu");
-            }
-            // Hand the helper APK path to AndroidPlatform. Bundled by
-            // tauri.conf.json `bundle.resources`. resource_dir() returns
-            // None outside a packaged build — fine, dev runs just take
-            // the CertInstaller fallback.
-            if let Ok(res_dir) = app.path().resource_dir() {
-                let apk = res_dir.join("binaries").join("pane-helper.apk");
-                if apk.is_file() {
-                    let state: tauri::State<AppState> = app.state();
-                    state.devices.set_android_helper_apk(apk.clone());
-                    tracing::info!(path = %apk.display(), "pane-helper APK registered");
-                } else {
-                    tracing::debug!(path = %apk.display(), "pane-helper APK not present");
-                }
             }
             Ok(())
         })

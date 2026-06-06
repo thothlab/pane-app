@@ -16,6 +16,12 @@ use uuid::Uuid;
 pub struct EngineConfig {
     pub listen: SocketAddr,
     pub ca: CaMaterial,
+    /// Optional address for the PAC server. The MITM engine binds an
+    /// extra TCP listener here that serves a Proxy Auto-Config script
+    /// pointing at `listen`. Pane sets `http_proxy_pac` on devices to
+    /// this URL — Android falls back to DIRECT when it's unreachable
+    /// (USB unplugged, Pane stopped), so the phone keeps its internet.
+    pub pac_listen: Option<SocketAddr>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,12 +76,17 @@ impl EngineEvent {
 #[derive(Clone)]
 pub struct EngineHandle {
     pub listen: SocketAddr,
+    pub pac_listen: Option<SocketAddr>,
     pub shutdown_tx: tokio::sync::mpsc::Sender<()>,
+    pub pac_shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 impl EngineHandle {
     pub async fn shutdown(&self) -> anyhow::Result<()> {
         let _ = self.shutdown_tx.send(()).await;
+        if let Some(pac_tx) = &self.pac_shutdown_tx {
+            let _ = pac_tx.send(()).await;
+        }
         Ok(())
     }
 }

@@ -42,13 +42,6 @@ impl DeviceManager {
         self.android.tooling_status()
     }
 
-    /// Late-binds the path to the bundled pane-helper APK. Tauri's
-    /// resource_dir() isn't resolvable from `bootstrap()`, so the
-    /// desktop crate calls this from its setup handler instead.
-    pub fn set_android_helper_apk(&self, path: std::path::PathBuf) {
-        self.android.set_helper_apk(path);
-    }
-
     pub async fn add_ios_usb(&self, serial: &str, ca: CaMaterial) -> Result<DeviceDto> {
         self.transition("ios", serial, "pairing", None)?;
         let outcome = self.ios.add_usb(serial, &ca).await;

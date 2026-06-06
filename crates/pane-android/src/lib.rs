@@ -24,28 +24,11 @@ const ADB_NOT_FOUND_MSG: &str = "adb not found. Install Android platform-tools \
     (https://developer.android.com/tools/releases/platform-tools) and either add it to PATH, \
     set ANDROID_HOME, or install at the default Android SDK location.";
 
-pub struct AndroidPlatform {
-    /// Path to the bundled `pane-helper.apk`, set once at Tauri setup
-    /// time. OnceLock so the rest of the program can read it without
-    /// holding a lock and so we don't accidentally swap it under a
-    /// running pairing flow. When unset (dev runs before the helper
-    /// CI has produced anything, or third-party builds without it),
-    /// `add_usb` falls back to firing CertInstaller directly.
-    helper_apk: std::sync::OnceLock<PathBuf>,
-}
+pub struct AndroidPlatform;
 
 impl AndroidPlatform {
     pub fn new() -> Self {
-        Self {
-            helper_apk: std::sync::OnceLock::new(),
-        }
-    }
-
-    /// Publish the bundled-APK path. Called once during Tauri setup,
-    /// after the app handle is available and `resource_dir()` resolves.
-    /// Subsequent calls are silently ignored (OnceLock semantics).
-    pub fn set_helper_apk(&self, path: PathBuf) {
-        let _ = self.helper_apk.set(path);
+        Self
     }
 
     pub async fn discover(&self) -> Result<Vec<DiscoveredDeviceDto>> {
@@ -105,61 +88,92 @@ impl AndroidPlatform {
                 last_error = Some(format!("system install failed: {e}"));
             }
         } else {
-            // No root → install via the helper APK if we have one,
-            // otherwise fall back to firing CertInstaller through a
-            // VIEW intent. The helper is preferred because Samsung One
-            // UI / Android 16+ blocks shell-initiated CA installs
-            // outright ("Невозможно установить сертификаты СА —
-            // приложение Оболочка должно использовать Настройки"),
-            // while a KeyChain.createInstallIntent() call from the
-            // helper app shows the standard "Install Pane Root CA?"
-            // dialog and is accepted.
-            let outcome = match self.helper_apk.get() {
-                Some(apk) if apk_is_present(apk) => {
-                    install_user_ca_via_helper(serial, &ca.cert_pem, apk).await
-                }
-                _ => install_user_ca(serial, &ca.cert_pem).await,
-            };
-            match outcome {
+            // No root → push the CA file and tell the user how to
+            // finish the install themselves. We tried programmatic
+            // paths (CertInstaller VIEW intent, KeyChain via helper
+            // APK) — Samsung One UI on Android 16 blocks both with
+            // "Этот сертификат от приложения <X> необходимо
+            // установить в меню Настройки". Google + Samsung made
+            // this a user-initiated-only flow on recent builds, and
+            // no shell/intent/app-source workaround gets past it.
+            // We pre-push the file to a well-known location so the
+            // user's manual flow is exactly "Settings → Install
+            // certificate → pick pane-ca.cer in Downloads".
+            match push_ca_file(serial, &ca.cert_pem).await {
                 Ok(()) => {
-                    last_error = Some(
-                        "On the device: confirm the 'Install Pane Root CA?' \
-                         dialog and enter your screen-lock PIN. Apps that \
-                         trust user CAs (debug builds, or release builds \
-                         opted in via network_security_config) will then \
-                         accept Pane. Release builds with SSL pinning need \
-                         extra bypass."
-                            .into(),
-                    );
+                    last_error = Some(format!(
+                        "CA file pushed to {DEVICE_CA_PATH}. Install it: \
+                         Settings → Security → Install a certificate → \
+                         CA certificate → Install anyway → in the file \
+                         picker open Internal storage/Pane → pane-ca.pem. \
+                         After that, debug builds with \
+                         network_security_config trusting user CAs will \
+                         accept Pane. Release builds with SSL pinning \
+                         need extra bypass."
+                    ));
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e, "user CA install dialog failed");
+                    tracing::warn!(error = %e, "couldn't push CA file");
                     last_error = Some(format!(
-                        "couldn't open the cert install dialog ({e}). \
-                         Install the CA manually: Settings → Security → \
-                         Install from storage → pick /sdcard/Download/pane-ca.cer."
+                        "couldn't push CA to the device ({e}). Try \
+                         Re-sync, or export the CA from Pane → Settings \
+                         → Export CA and copy it across manually."
                     ));
                 }
             }
         }
 
-        // Always set up proxy redirect (works regardless of trust path).
-        // `adb reverse` is the only thing that makes 127.0.0.1:8888 on the
-        // device actually reach Pane on the host. If it fails (e.g. adb not
-        // on PATH for the GUI process), the device sees a connection refused
-        // and nothing works — surface that loudly instead of silently OK-ing.
+        // Proxy + PAC setup over USB. Two reverses needed:
+        //   8888 → the MITM proxy itself
+        //   8889 → the PAC server (returns "PROXY 127.0.0.1:8888")
+        // We point the device at the PAC URL (not the direct proxy).
+        // When the USB cable is yanked, the PAC URL becomes
+        // unreachable and Android falls back to DIRECT — the device
+        // keeps its internet. A direct `http_proxy` setting strands
+        // the device on ERR_PROXY_CONNECTION_FAILED in the same
+        // scenario, which is the bug we're fixing.
         if let Err(e) = run("adb", &["-s", serial, "reverse", "tcp:8888", "tcp:8888"]).await {
-            tracing::error!(error = %e, serial, "adb reverse failed — device cannot reach proxy");
+            tracing::error!(error = %e, serial, "adb reverse 8888 failed — device cannot reach proxy");
             last_error = Some(format!("adb reverse failed: {e}"));
         }
+        if let Err(e) = run("adb", &["-s", serial, "reverse", "tcp:8889", "tcp:8889"]).await {
+            tracing::warn!(error = %e, serial, "adb reverse 8889 (PAC) failed");
+        }
+
+        // Clear any stale direct-proxy setting from older Pane versions —
+        // it would otherwise override our PAC config and bring the
+        // strand-on-unplug bug right back.
+        let _ = run(
+            "adb",
+            &["-s", serial, "shell", "settings", "put", "global", "http_proxy", ":0"],
+        )
+        .await;
         if let Err(e) = run(
             "adb",
-            &["-s", serial, "shell", "settings", "put", "global", "http_proxy", "127.0.0.1:8888"],
+            &[
+                "-s", serial, "shell", "settings", "put", "global",
+                "global_proxy_pac_url",
+                "http://127.0.0.1:8889/proxy.pac",
+            ],
         )
         .await
         {
-            tracing::warn!(error = %e, serial, "setting global http_proxy failed");
-            // Many apps ignore the global proxy setting anyway — not fatal.
+            tracing::warn!(error = %e, serial, "setting PAC URL failed");
+        }
+        // http_proxy_pac is the alias Android uses on most builds;
+        // global_proxy_pac_url is the internal name. Set both to be
+        // resilient against OEM variants.
+        if let Err(e) = run(
+            "adb",
+            &[
+                "-s", serial, "shell", "settings", "put", "global",
+                "http_proxy_pac",
+                "http://127.0.0.1:8889/proxy.pac",
+            ],
+        )
+        .await
+        {
+            tracing::debug!(error = %e, "http_proxy_pac not accepted (older Android)");
         }
 
         Ok(DeviceDto {
@@ -199,168 +213,67 @@ impl AndroidPlatform {
 
     pub async fn remove(&self, serial: &str) -> Result<()> {
         let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8888"]).await;
+        let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8889"]).await;
+        // Clear all three proxy-related settings — both spellings of PAC
+        // plus the direct-proxy fallback that older Pane versions used.
         let _ = run(
             "adb",
             &["-s", serial, "shell", "settings", "put", "global", "http_proxy", ":0"],
+        )
+        .await;
+        let _ = run(
+            "adb",
+            &["-s", serial, "shell", "settings", "delete", "global", "http_proxy_pac"],
+        )
+        .await;
+        let _ = run(
+            "adb",
+            &["-s", serial, "shell", "settings", "delete", "global", "global_proxy_pac_url"],
         )
         .await;
         Ok(())
     }
 }
 
-/// Install the helper APK if not already present, then launch its
-/// InstallCaActivity with the CA PEM passed in as a base64 extra. The
-/// helper calls KeyChain.createInstallIntent() under its own UID, which
-/// is what makes the install dialog show up instead of getting blocked
-/// by Samsung's shell-source check.
-const HELPER_PACKAGE: &str = "tech.thothlab.pane.helper";
-const HELPER_ACTIVITY: &str = "tech.thothlab.pane.helper/.InstallCaActivity";
+/// Constant: where on the device the CA file lives after `push_ca_file`.
+/// Public so the UI can show the path verbatim in the manual-install
+/// instructions and copy it to the clipboard.
+pub const DEVICE_CA_PATH: &str = "/sdcard/Pane/pane-ca.pem";
 
-async fn install_user_ca_via_helper(
-    serial: &str,
-    pem: &str,
-    apk_path: &std::path::Path,
-) -> Result<()> {
-    use base64::Engine as _;
-
-    if !is_helper_installed(serial).await {
-        tracing::info!(serial, apk = %apk_path.display(), "installing pane-helper APK");
-        run(
-            "adb",
-            &[
-                "-s",
-                serial,
-                "install",
-                "-r",
-                "-g",
-                apk_path.to_str().ok_or_else(|| anyhow!("non-UTF8 apk path"))?,
-            ],
-        )
-        .await
-        .map_err(|e| anyhow!("pane-helper apk install failed: {e}"))?;
-    } else {
-        tracing::debug!(serial, "pane-helper already installed");
-    }
-
-    let pem_b64 = base64::engine::general_purpose::STANDARD.encode(pem.as_bytes());
+/// Push the CA cert to `/sdcard/Pane/pane-ca.pem` so the user can pick
+/// it up from the system "Install certificate" file picker. Two
+/// non-obvious choices here:
+///
+/// 1. **Own folder, not /sdcard/Download/.** Samsung's Smart Manager
+///    and similar OEM cleaners periodically sweep Downloads, and they
+///    seem to be especially eager with `.cer` files (flagged as
+///    security-relevant). Our own /sdcard/Pane/ isn't on any cleanup
+///    allowlist, and the named folder is what users actually look for.
+///
+/// 2. **PEM, not DER.** PEM is text — opens in any viewer, lets the
+///    user eyeball "yep this is a certificate" before installing.
+///    Android's CertInstaller accepts both forms, so DER buys nothing
+///    here. .pem is also what most Samsung Files UIs file as
+///    "Document → Other" rather than hiding it altogether.
+///
+/// We don't try to fire any install intent any more. Samsung One UI on
+/// Android 16+ rejects programmatic CA installs from every source
+/// (shell, third-party apps, KeyChain) — those builds make CA install
+/// strictly user-initiated. Pane's UI surfaces step-by-step
+/// instructions instead; the file is already on the device so the
+/// picker step lands on the right file.
+async fn push_ca_file(serial: &str, pem: &str) -> Result<()> {
+    let tmp = std::env::temp_dir().join("pane-ca.pem");
+    std::fs::write(&tmp, pem)?;
+    // mkdir is best-effort: succeeds if folder doesn't exist yet,
+    // silently no-ops if it does. Either outcome is fine.
+    let _ = run("adb", &["-s", serial, "shell", "mkdir", "-p", "/sdcard/Pane"]).await;
     run(
         "adb",
-        &[
-            "-s",
-            serial,
-            "shell",
-            "am",
-            "start",
-            "-n",
-            HELPER_ACTIVITY,
-            "--es",
-            "ca_pem_base64",
-            &pem_b64,
-            "--es",
-            "ca_name",
-            "Pane Root CA",
-        ],
-    )
-    .await
-    .map_err(|e| anyhow!("launching helper activity failed: {e}"))?;
-    Ok(())
-}
-
-async fn is_helper_installed(serial: &str) -> bool {
-    match run("adb", &["-s", serial, "shell", "pm", "path", HELPER_PACKAGE]).await {
-        Ok(out) => out.contains("package:"),
-        Err(_) => false,
-    }
-}
-
-fn apk_is_present(path: &std::path::Path) -> bool {
-    match std::fs::metadata(path) {
-        // Treat 0-byte placeholder as "no APK available" — the helper
-        // CI hasn't produced one yet, fall back to the CertInstaller
-        // path so add_usb still does something useful.
-        Ok(m) => m.len() > 0,
-        Err(_) => false,
-    }
-}
-
-/// Push the CA cert (DER, .cer) to `/sdcard/Download/` and open the
-/// system "Install CA certificate" flow on the device.
-///
-/// We try three intents in order, falling through on failure:
-///
-/// 1. `android.credentials.INSTALL` with MIME `application/x-x509-ca-cert` —
-///    this is the documented, vendor-neutral action that every Android
-///    Settings implementation (AOSP, Samsung One UI, MIUI, OxygenOS, etc.)
-///    must resolve to its own CA-install screen. Samsung's S25/Android 16
-///    silently ignores the AOSP class name `com.android.settings/
-///    .security.InstallCaCertificateWarning` (they renamed it under
-///    `com.samsung.android.settings`), but always honours this action.
-///
-/// 2. AOSP class direct — kept as a fallback for stripped-down Android
-///    builds where the standard action isn't registered (rare, but seen
-///    on some custom ROMs).
-///
-/// 3. Security settings root — last resort if neither resolves.
-///    Better than nothing: the user can at least navigate from here.
-///
-/// On Android 11+ even the right Activity routes the user through SAF
-/// DocumentsUI to pick the file (scoped-storage side-effect, can't be
-/// avoided without a companion app + FileProvider). We push to Downloads
-/// so the file is easy to find in the picker.
-async fn install_user_ca(serial: &str, pem: &str) -> Result<()> {
-    let der = pem_to_der(pem)?;
-    let tmp = std::env::temp_dir().join("pane-ca.cer");
-    std::fs::write(&tmp, der)?;
-    let device_path = "/sdcard/Download/pane-ca.cer";
-    run(
-        "adb",
-        &["-s", serial, "push", tmp.to_str().unwrap(), device_path],
+        &["-s", serial, "push", tmp.to_str().unwrap(), DEVICE_CA_PATH],
     )
     .await?;
-
-    let attempts: &[&[&str]] = &[
-        // Standard action. Note: NO `-t application/x-x509-ca-cert` here —
-        // Samsung's CertInstaller (and others) registers the action filter
-        // *without* a MIME type. Adding `-t` makes the intent unresolved
-        // ("No activities found") on those builds, even though plain
-        // action launches the activity correctly.
-        &[
-            "-s", serial, "shell", "am", "start",
-            "-a", "android.credentials.INSTALL",
-        ],
-        // AOSP class direct fallback (kept for stripped-down ROMs).
-        &[
-            "-s", serial, "shell", "am", "start",
-            "-n", "com.android.settings/.security.InstallCaCertificateWarning",
-        ],
-        // Last resort: open the Security settings root.
-        &[
-            "-s", serial, "shell", "am", "start",
-            "-a", "android.settings.SECURITY_SETTINGS",
-        ],
-    ];
-
-    let mut last_err = None;
-    for args in attempts {
-        match run("adb", args).await {
-            Ok(out) => {
-                // `am start` returns 0 even when no Activity is matched —
-                // it writes "Error: Activity not started" to stderr. We
-                // already capture stderr in run() on non-zero exit, but
-                // here we explicitly check stdout for that string too.
-                if out.contains("Error: Activity not started")
-                    || out.contains("Error type")
-                {
-                    last_err = Some(anyhow!("intent rejected: {}", out.trim()));
-                    continue;
-                }
-                tracing::info!(serial, args = ?args, "CA install intent dispatched");
-                return Ok(());
-            }
-            Err(e) => last_err = Some(e),
-        }
-    }
-    Err(last_err.unwrap_or_else(|| anyhow!("no CA-install intent succeeded")))
+    Ok(())
 }
 
 async fn install_system_ca(serial: &str, pem: &str) -> Result<()> {
