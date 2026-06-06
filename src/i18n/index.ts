@@ -69,13 +69,19 @@ export function setLocale(next: Locale): void {
   setLocaleSignal(next);
 }
 
-/** Reactive translator. Call as `t()(key, params?)` inside JSX. */
-export const t = createMemo(() => i18n.translator(() => dictionaries[locale()]));
+/** Reactive translator. Call as `t()(key, params?)` inside JSX.
+ *  `resolveTemplate` is the critical 2nd argument — without it, strings
+ *  like "Update to v{version}" come out literally as "Update to v{version}".
+ *  @solid-primitives/i18n's default resolver is identity (no substitution),
+ *  so you opt into template interpolation explicitly. */
+export const t = createMemo(() =>
+  i18n.translator(() => dictionaries[locale()], i18n.resolveTemplate),
+);
 
 /** Imperative one-off (for non-reactive call sites: throw new Error,
  *  prompt(), confirm(), etc). Doesn't track the locale signal. */
 export function tr(key: string, params?: Record<string, string | number>): string {
-  const fn = i18n.translator(() => dictionaries[locale()]);
+  const fn = i18n.translator(() => dictionaries[locale()], i18n.resolveTemplate);
   // The translator's type is templated on the dict path-set, which a
   // dynamic string can't satisfy. Cast through `any` here — call sites
   // using the reactive `t()` get full type safety; this escape hatch
