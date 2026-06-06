@@ -48,6 +48,22 @@ pub async fn start(
     let session = state.storage.session_record(listen).map_err(to_api("db"))?;
     *state.proxy_handle.lock() = Some(handle);
     let _ = app.emit("proxy.status_changed", &session);
+
+    // Re-apply PAC + adb reverse on every paired Android. Without this,
+    // a Stop → Start cycle (or any time Pane was closed while devices
+    // were paired) leaves the phone with cleared proxy settings and no
+    // reverse — traffic never reaches Pane until the user clicks
+    // Re-sync on each device row by hand. This makes the proxy "just
+    // work" again after restart.
+    let ca_for_reapply = state.ca.material();
+    let devices = state.devices.clone();
+    tokio::spawn(async move {
+        let reapplied = devices.reapply_all_android_proxies(ca_for_reapply).await;
+        if !reapplied.is_empty() {
+            tracing::info!(devices = ?reapplied, "auto-reapplied proxy on paired Android");
+        }
+    });
+
     Ok(session)
 }
 

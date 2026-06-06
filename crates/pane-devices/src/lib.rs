@@ -103,6 +103,29 @@ impl DeviceManager {
         Ok(row)
     }
 
+    /// Best-effort: re-apply PAC + adb reverse on every paired Android
+    /// device. Called from proxy.start so paired phones reconnect to
+    /// the freshly-started proxy without the user having to click
+    /// Re-sync on each row by hand. Returns the serials we successfully
+    /// re-applied. Errors per device are swallowed — adb may not be
+    /// connected, the user may have unplugged, etc.
+    pub async fn reapply_all_android_proxies(&self, ca: CaMaterial) -> Vec<String> {
+        let serials: Vec<String> = self
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| d.platform == "android" && d.connection == "usb")
+            .map(|d| d.serial)
+            .collect();
+        let mut ok = Vec::with_capacity(serials.len());
+        for serial in serials {
+            if self.android.add_usb(&serial, &ca).await.is_ok() {
+                ok.push(serial);
+            }
+        }
+        ok
+    }
+
     /// Best-effort: clear the system http_proxy + adb-reverse on every
     /// paired Android device. Called from proxy.stop so users don't end
     /// up with a phone pointing at a now-dead 127.0.0.1:8888 (which
