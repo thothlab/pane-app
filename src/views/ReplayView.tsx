@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "@solidjs/router";
 import { Play, Plus, Trash2 } from "lucide-solid";
 import { api } from "@/ipc/client";
 import type { HeaderDto } from "@/ipc/types";
+import { t, tr } from "@/i18n";
 
 const ReplayView: Component = () => {
   const params = useParams<{ id: string }>();
@@ -44,9 +45,9 @@ const ReplayView: Component = () => {
         },
         params.id,
       );
-      setResult(`Sent. New capture: ${r.result_capture_id}`);
+      setResult(`✓ ${r.result_capture_id}`);
     } catch (e: any) {
-      setResult(`Error: ${e?.message ?? e}`);
+      setResult(tr("replay.send_failed", { message: e?.message ?? String(e) }));
     } finally {
       setSending(false);
     }
@@ -55,8 +56,10 @@ const ReplayView: Component = () => {
   return (
     <div class="h-full overflow-auto p-6 space-y-4 max-w-4xl">
       <header class="flex items-center justify-between">
-        <h1 class="text-xl font-semibold">Replay</h1>
-        <button class="text-xs text-fg-muted" onClick={() => navigate("/")}>← back to captures</button>
+        <h1 class="text-xl font-semibold">{t()("replay.title")}</h1>
+        <button class="text-xs text-fg-muted" onClick={() => navigate("/")}>
+          ← {t()("nav.captures")}
+        </button>
       </header>
 
       <Show when={source()}>
@@ -86,18 +89,20 @@ const ReplayView: Component = () => {
           onClick={send}
           disabled={sending()}
         >
-          <Play size={14} /> {sending() ? "Sending…" : "Send"}
+          <Play size={14} /> {sending() ? t()("replay.sending") : t()("replay.send")}
         </button>
       </div>
 
       <section>
         <div class="flex items-center justify-between mb-2">
-          <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle">Headers</h2>
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle">
+            {t()("replay.headers_label")}
+          </h2>
           <button
             class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1"
             onClick={() => setHeaders([...headers(), { name: "", value: "" }])}
           >
-            <Plus size={12} /> Add
+            <Plus size={12} /> {t()("devices.add")}
           </button>
         </div>
         <div class="space-y-1">
@@ -137,7 +142,9 @@ const ReplayView: Component = () => {
       </section>
 
       <section>
-        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle mb-2">Body</h2>
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle mb-2">
+          {t()("replay.body_label")}
+        </h2>
         <textarea
           class="w-full h-48 bg-bg-subtle border border-border rounded p-2 text-xs font-mono"
           value={body()}

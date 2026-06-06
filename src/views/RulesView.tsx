@@ -13,6 +13,7 @@ import {
 } from "lucide-solid";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
+import { t, tr } from "@/i18n";
 import type {
   RuleDto,
   RuleUpsertArgs,
@@ -139,7 +140,7 @@ const RulesView: Component = () => {
   };
 
   const deleteCollection = async (c: RuleCollectionDto) => {
-    if (!confirm(`Delete collection "${c.name}"? Its rules will move to Ungrouped.`)) return;
+    if (!confirm(tr("rules.delete_collection_confirm", { name: c.name }))) return;
     await api.collections.delete(c.id);
     await refresh();
   };
@@ -174,7 +175,7 @@ const RulesView: Component = () => {
   };
 
   const removeRule = async (r: RuleDto) => {
-    if (!confirm(`Delete rule "${r.name}"?`)) return;
+    if (!confirm(tr("rules.delete_rule_confirm", { name: r.name }))) return;
     await api.rules.delete(r.id);
     const ed = editing();
     if (ed?.kind === "rule" && ed.id === r.id) setEditing(null);
@@ -220,18 +221,15 @@ const RulesView: Component = () => {
         <Shuffle size={16} class="text-accent" />
         <div>
           <div class="text-sm font-semibold flex items-center gap-1.5">
-            Response stubs
-            <HelpButton path="/rules/" title="How rules work — stub vs patch, matcher, examples" />
-          </div>
-          <div class="text-xs text-fg-muted">
-            Group rules into collections. Drag a rule onto a collection to move it.
+            {t()("rules.title")}
+            <HelpButton path="/rules/" title={t()("rules.help_title")} />
           </div>
         </div>
         <button
           class="ml-auto inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-border hover:bg-bg-muted"
           onClick={() => openCreateForm()}
         >
-          <FolderPlus size={14} /> New collection
+          <FolderPlus size={14} /> {t()("rules.new_collection")}
         </button>
       </header>
 
@@ -242,7 +240,7 @@ const RulesView: Component = () => {
             <input {...NO_AC}
               ref={(el) => setTimeout(() => el?.focus(), 0)}
               class="flex-1 bg-bg border border-border rounded px-2 py-1 text-sm"
-              placeholder="Collection name"
+              placeholder={t()("rules.new_collection")}
               value={creatingName() ?? ""}
               onInput={(e) => setCreatingName(e.currentTarget.value)}
               onKeyDown={(e) => {
@@ -258,13 +256,13 @@ const RulesView: Component = () => {
               disabled={!creatingName()?.trim()}
               onClick={confirmCreate}
             >
-              Create
+              {t()("rules.save")}
             </button>
             <button
               class="text-sm px-3 py-1 rounded hover:bg-bg-muted text-fg-muted"
               onClick={cancelCreate}
             >
-              Cancel
+              {t()("rules.cancel")}
             </button>
           </div>
         </Show>
@@ -426,7 +424,7 @@ const CollectionSection: Component<{
           when={isRenaming()}
           fallback={
             <>
-              <div class="font-medium text-sm">{p.collection?.name ?? "Ungrouped"}</div>
+              <div class="font-medium text-sm">{p.collection?.name ?? t()("rules.ungrouped")}</div>
               <div class="text-xs text-fg-muted">({p.rules.length})</div>
             </>
           }
@@ -452,12 +450,12 @@ const CollectionSection: Component<{
             class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1"
             onClick={p.onAddRule}
           >
-            <Plus size={12} /> Rule
+            <Plus size={12} /> {t()("rules.new_rule")}
           </button>
           <Show when={!isUngrouped()}>
             <button
               class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted"
-              title="Rename"
+              title={t()("rules.rename")}
               onClick={p.onRename}
             >
               <Pencil size={12} />
@@ -565,7 +563,7 @@ const RuleRow: Component<{
       </button>
       <div class="flex-1 min-w-0">
         <div class="flex items-baseline gap-2">
-          <div class="font-medium text-sm truncate">{p.rule.name || "(unnamed)"}</div>
+          <div class="font-medium text-sm truncate">{p.rule.name || t()("rules.unnamed_rule")}</div>
         </div>
         <div class="text-xs font-mono text-fg-subtle truncate mt-0.5">{summary()}</div>
         <div class="text-xs text-fg-muted mt-0.5">

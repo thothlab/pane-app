@@ -5,8 +5,18 @@ import { api } from "@/ipc/client";
 import type { CaptureBodyDto, CaptureDto } from "@/ipc/types";
 import BodyViewer from "./BodyViewer";
 import { HorizontalResizer } from "./HorizontalResizer";
+import { t } from "@/i18n";
 
 type Tab = "overview" | "request" | "response" | "timing" | "tls";
+
+// Tab label keys — keeps the i18n key set discoverable by grep.
+const TAB_LABELS: Record<Tab, "detail.overview" | "detail.request" | "detail.response" | "detail.timing" | "detail.tls"> = {
+  overview: "detail.overview",
+  request: "detail.request",
+  response: "detail.response",
+  timing: "detail.timing",
+  tls: "detail.tls",
+};
 
 const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
   const navigate = useNavigate();
@@ -49,14 +59,14 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
       <div class="h-full grid grid-rows-[auto_1fr]">
         <div class="border-b border-border flex items-center px-2 bg-bg-subtle">
           <For each={["overview", "request", "response", "timing", "tls"] as Tab[]}>
-            {(t) => (
+            {(tabKey) => (
               <button
                 class={`px-3 py-2 text-xs uppercase tracking-wide ${
-                  tab() === t ? "text-accent border-b-2 border-accent" : "text-fg-muted hover:text-fg"
+                  tab() === tabKey ? "text-accent border-b-2 border-accent" : "text-fg-muted hover:text-fg"
                 }`}
-                onClick={() => setTab(t)}
+                onClick={() => setTab(tabKey)}
               >
-                {t}
+                {t()(TAB_LABELS[tabKey])}
               </button>
             )}
           </For>
@@ -65,7 +75,7 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
               class="text-xs px-2 py-1 rounded hover:bg-bg-muted"
               onClick={() => navigate(`/replay/${full()!.id}`)}
             >
-              Replay
+              {t()("detail.replay")}
             </button>
             <button
               class="text-xs px-2 py-1 rounded hover:bg-bg-muted"
@@ -74,7 +84,7 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
                 navigator.clipboard.writeText(r.text);
               }}
             >
-              cURL
+              {t()("detail.curl")}
             </button>
           </div>
         </div>
@@ -148,7 +158,7 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
 
 const EmptyDetail: Component = () => (
   <div class="h-full flex items-center justify-center text-fg-muted text-sm">
-    Select a capture to see details.
+    {t()("detail.select_capture")}
   </div>
 );
 

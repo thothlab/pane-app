@@ -17,6 +17,7 @@ import {
 } from "@/stores/captures";
 import { refreshFilters, saveFilter } from "@/stores/saved-filters";
 import HelpButton from "@/components/HelpButton";
+import { t, tr } from "@/i18n";
 
 const FILTER_PALETTE = [
   "#60a5fa", // blue
@@ -59,14 +60,8 @@ const MIN_COL_WIDTH = 28;
 const WIDTHS_STORAGE_KEY = "pane:captures-col-widths";
 const AUTOFOLLOW_STORAGE_KEY = "pane:captures-autofollow";
 
-const FILTER_HELP = [
-  "Bare word: matches host OR path. E.g. 'google'.",
-  "key:value — host, path, method, status, mime, size, duration, error.",
-  "Wildcards: * inside the value (e.g. host:*google*).",
-  "Negate with ! (e.g. !error:tls_handshake, !host:cdn.*).",
-  "Range: status:500..599 — size:0..1024 — duration:..200.",
-  "Multiple tokens are ANDed (e.g. host:rc3.test.dev-og.com method:post).",
-].join("\n");
+// Filter help text — read via i18n at render time so it switches with
+// the locale. The Russian translation mirrors the same examples.
 
 function loadAutoFollow(): boolean {
   try {
@@ -234,7 +229,7 @@ const CapturesView: Component = () => {
       setSaveOpen(false);
     } catch (err) {
       console.error("save filter failed", err);
-      alert("Save failed: " + ((err as { message?: string })?.message ?? String(err)));
+      alert(tr("captures.save_failed", { message: (err as { message?: string })?.message ?? String(err) }));
     } finally {
       setSaveBusy(false);
     }
@@ -293,12 +288,12 @@ const CapturesView: Component = () => {
   const selected = createMemo(() => captures().find((c) => c.id === selectedId()) ?? null);
 
   const clearAll = async () => {
-    if (!confirm("Clear all captures? This cannot be undone.")) return;
+    if (!confirm(tr("captures.clear_confirm"))) return;
     try {
       await api.captures.clear();
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message ?? String(e);
-      alert(`Clear failed: ${msg}`);
+      alert(tr("captures.clear_failed", { message: msg }));
       return;
     }
     refresh();
@@ -325,7 +320,7 @@ const CapturesView: Component = () => {
             spellcheck={false}
             ref={(el) => (filterInput = el)}
             class="w-full bg-transparent outline-none text-sm placeholder:text-fg-muted font-mono pr-6 text-transparent caret-fg relative"
-            placeholder="google · host:api.example.com · status:5.. · !error:tls_handshake"
+            placeholder={t()("captures.filter_placeholder")}
             value={filter()}
             onInput={(e) => {
               setFilter(e.currentTarget.value);
@@ -342,14 +337,14 @@ const CapturesView: Component = () => {
             }}
             onKeyUp={syncFilterScroll}
             onClick={syncFilterScroll}
-            title={FILTER_HELP}
+            title={t()("captures.filter_help")}
           />
           <Show when={filter().trim()}>
             <button
               type="button"
               class="absolute right-0 text-fg-muted hover:text-warn p-0.5 rounded hover:bg-bg-muted"
-              title="Save current filter to sidebar"
-              aria-label="Save filter"
+              title={t()("captures.save_filter_title")}
+              aria-label={t()("captures.save_filter")}
               onClick={openSave}
             >
               <Star size={14} />
@@ -363,7 +358,7 @@ const CapturesView: Component = () => {
             >
               <form onSubmit={doSave} class="space-y-2">
                 <div class="font-semibold text-fg-subtle uppercase tracking-wide">
-                  Save filter
+                  {t()("captures.save_filter")}
                 </div>
                 <div class="font-mono text-fg-muted bg-bg-muted rounded px-2 py-1 truncate">
                   {filter()}
@@ -371,7 +366,7 @@ const CapturesView: Component = () => {
                 <input
                   type="text"
                   class="w-full px-2 py-1.5 rounded bg-bg-muted outline-none focus:ring-1 focus:ring-accent"
-                  placeholder="Name (e.g. my-backend)"
+                  placeholder={t()("captures.save_filter_name_placeholder")}
                   value={saveName()}
                   onInput={(e) => setSaveName(e.currentTarget.value)}
                   maxlength={64}
@@ -387,7 +382,7 @@ const CapturesView: Component = () => {
                           }`}
                           style={{ "background-color": c }}
                           onClick={() => setSaveColor(c)}
-                          aria-label={`Colour ${c}`}
+                          aria-label={tr("captures.color_label", { color: c })}
                         />
                       )}
                     </For>
@@ -399,7 +394,7 @@ const CapturesView: Component = () => {
                       checked={savePinned()}
                       onChange={(e) => setSavePinned(e.currentTarget.checked)}
                     />
-                    <Pin size={11} /> Pin
+                    <Pin size={11} /> {t()("captures.pin")}
                   </label>
                 </div>
                 <div class="flex justify-end gap-2 pt-1">
@@ -408,14 +403,14 @@ const CapturesView: Component = () => {
                     class="px-2 py-1 rounded hover:bg-bg-muted text-fg-muted"
                     onClick={() => setSaveOpen(false)}
                   >
-                    Cancel
+                    {t()("captures.cancel")}
                   </button>
                   <button
                     type="submit"
                     class="px-3 py-1 rounded bg-accent text-white hover:opacity-90 disabled:opacity-50"
                     disabled={!saveName().trim() || saveBusy()}
                   >
-                    {saveBusy() ? "Saving…" : "Save"}
+                    {saveBusy() ? t()("captures.saving") : t()("captures.save")}
                   </button>
                 </div>
               </form>
@@ -432,29 +427,26 @@ const CapturesView: Component = () => {
               : "hover:bg-bg-muted text-fg-muted"
           }`}
           onClick={toggleAutoFollow}
-          title={
-            autoFollow()
-              ? "Auto-scroll to newest is ON — click to lock the viewport"
-              : "Auto-scroll is OFF — click to follow the tail"
-          }
+          title={autoFollow() ? t()("captures.tail_on_title") : t()("captures.tail_off_title")}
           aria-pressed={autoFollow()}
         >
-          <ArrowDownToLine size={12} /> {autoFollow() ? "Tail" : "Tail off"}
+          <ArrowDownToLine size={12} />{" "}
+          {autoFollow() ? t()("captures.tail_on") : t()("captures.tail_off")}
         </button>
         <button
           class="text-xs px-2 py-1 rounded hover:bg-bg-muted"
           onClick={() => setPaused((p) => !p)}
-          title="Pause UI updates"
+          title={t()("captures.pause_title")}
         >
-          {paused() ? "Resume" : "Pause"}
+          {paused() ? t()("captures.resume") : t()("captures.pause")}
         </button>
         <button
           class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-danger inline-flex items-center gap-1"
           onClick={clearAll}
         >
-          <Trash2 size={12} /> Clear
+          <Trash2 size={12} /> {t()("captures.clear")}
         </button>
-        <HelpButton path="/filtering/" title="Filter syntax: host, method, status, path, glob, ranges, negation" class="px-1" />
+        <HelpButton path="/filtering/" title={t()("captures.filter_help_title")} class="px-1" />
       </div>
 
       <div
@@ -493,7 +485,7 @@ const CapturesView: Component = () => {
                           return copy;
                         });
                       }}
-                      title="Drag to resize · double-click to reset"
+                      title={t()("captures.column_resize_title")}
                     >
                       <div class="absolute right-1/2 top-1 bottom-1 w-px bg-border group-hover:bg-accent group-active:bg-accent" />
                     </div>
@@ -507,7 +499,7 @@ const CapturesView: Component = () => {
             fallback={
               <div class="px-4 py-8 text-center text-fg-muted">
                 <AlertTriangle class="inline mr-1" size={14} />
-                No captures yet. Start the proxy and pair a device.
+                {t()("captures.empty_state")}
               </div>
             }
           >
@@ -583,17 +575,20 @@ function statusColor(status: number | null, errorKind: string | null) {
 }
 
 function errorHint(errorKind: string | null): string | undefined {
+  // Map backend error_kind to a localized hint. tr() reads the active
+  // locale; this is called inline as a row's `title=` attribute, which
+  // recomputes when SolidJS reconciles, so locale switches do propagate.
   switch (errorKind) {
     case "tls_handshake":
-      return "TLS handshake failed — device doesn't trust Pane CA. Install root CA in system store (root/Magisk) or configure network_security_config.";
+      return tr("captures.error_tls_handshake");
     case "pinning":
-      return "Certificate pinning detected — app rejects Pane's leaf cert. Bypass requires Frida or similar.";
+      return tr("captures.error_pinning");
     case "upstream":
-      return "Upstream server connection failed.";
+      return tr("captures.error_upstream");
     case "connect_pipelined":
-      return "Client sent bytes before the CONNECT handshake completed — protocol violation.";
+      return tr("captures.error_connect_pipelined");
     case "connection_refused":
-      return "Could not connect to upstream host.";
+      return tr("captures.error_connection_refused");
     default:
       return errorKind ?? undefined;
   }

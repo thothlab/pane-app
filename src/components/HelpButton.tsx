@@ -1,6 +1,7 @@
 import { type Component, Show } from "solid-js";
 import { HelpCircle } from "lucide-solid";
 import { open } from "@tauri-apps/plugin-shell";
+import { t } from "@/i18n";
 
 const DOCS_BASE = "https://pane.thothlab.tech/docs";
 
@@ -28,7 +29,7 @@ const HelpButton: Component<Props> = (p) => {
     <button
       type="button"
       onClick={handle}
-      title={p.title ?? "Open documentation"}
+      title={p.title ?? t()("help.open_docs")}
       class={`inline-flex items-center gap-1 text-fg-muted hover:text-accent transition ${p.class ?? ""}`}
     >
       <HelpCircle size={p.size ?? 14} />

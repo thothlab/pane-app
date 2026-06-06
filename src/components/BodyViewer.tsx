@@ -1,6 +1,7 @@
 import { type Component, createSignal, createMemo, Show, For } from "solid-js";
 import { ChevronRight, ChevronDown, Copy, Check } from "lucide-solid";
 import type { CaptureBodyDto } from "@/ipc/types";
+import { t } from "@/i18n";
 
 type Mode = "tree" | "pretty" | "raw";
 
@@ -131,9 +132,9 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
 
 const ModeToggle: Component<{ mode: Mode; setMode: (m: Mode) => void; kind: Kind }> = (p) => {
   const modes = createMemo<{ id: Mode; label: string; disabled: boolean }[]>(() => [
-    { id: "tree", label: "Tree", disabled: p.kind !== "json" && p.kind !== "xml" },
-    { id: "pretty", label: "Pretty", disabled: false },
-    { id: "raw", label: "Raw", disabled: false },
+    { id: "tree", label: t()("body.view_tree"), disabled: p.kind !== "json" && p.kind !== "xml" },
+    { id: "pretty", label: t()("body.view_pretty"), disabled: false },
+    { id: "raw", label: t()("body.view_raw"), disabled: false },
   ]);
   return (
     <div class="flex border border-border rounded overflow-hidden text-xs">
