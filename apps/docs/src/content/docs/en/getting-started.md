@@ -128,6 +128,22 @@ ERR_PROXY_CONNECTION_FAILED in that scenario.
   pinning in your debug build. For owned-device security research,
   Frida or Magisk modules layer on top of Pane.
 
+## Interface language
+
+Pane ships in **English** and **Russian**. English is the default.
+Switch from **Settings → Appearance → Language**. The choice persists
+in `localStorage` and applies reactively — no restart needed.
+
+Every UI screen is translated (Captures, Rules, Devices, Settings,
+About, Replay, body viewer, manual-install guide). Backend-side
+`last_error` strings (from `pane-android` / `pane-engine`) stay in
+English on purpose — same policy as logs and source.
+
+Adding a new locale is one file: drop `src/i18n/<lang>.ts` with the
+same shape as `en.ts` (the `Dict` type contract enforces it at
+compile time), and register it in the `LOCALES` array in
+`src/i18n/index.ts`.
+
 ## Updates
 
 Pane checks for new releases:

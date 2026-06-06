@@ -9,7 +9,7 @@ A modern HTTPS network debugger focused on one thing: making mobile-device setup
 ## What's inside
 
 - **Tauri 2** desktop shell (Windows / macOS / Linux).
-- **SolidJS + Tailwind** UI: virtualised capture list, filter DSL, detail panes, replay composer.
+- **SolidJS + Tailwind** UI: virtualised capture list, filter DSL, detail panes, replay composer. Full EN / RU localization via `@solid-primitives/i18n`, switch reactively from Settings.
 - **Rust workspace** of focused crates: engine trait, native MITM proxy, root-CA management (rcgen + OS keychain), SQLite storage with content-addressed body blobs, iOS / Android device pipelines (libimobiledevice + adb sidecars), Apple `mobileconfig` builder, QR-fallback setup server, cert-pinning heuristic.
 - **CI** matrix on Windows, macOS, Linux — fmt + clippy + tests + Tauri debug build.
 
@@ -52,6 +52,7 @@ It is **not** a production traffic monitor, **not** a packet-level capture tool,
 
 ```
 src/                    SolidJS frontend (Tauri webview)
+src/i18n/               EN + RU translation dictionaries + reactive translator
 src-tauri/              Tauri main crate + IPC command modules
 crates/
   pane-ipc/        Shared DTOs between Rust and TS

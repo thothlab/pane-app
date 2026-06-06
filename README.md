@@ -9,7 +9,7 @@
 ## Что внутри
 
 - **Tauri 2** desktop shell (Windows / macOS / Linux).
-- **SolidJS + Tailwind** UI: виртуализированный список captures, filter DSL, detail panes, replay composer.
+- **SolidJS + Tailwind** UI: виртуализированный список captures, filter DSL, detail panes, replay composer. Полная двуязычная локализация EN / RU через `@solid-primitives/i18n`, переключение реактивно из Settings.
 - **Rust workspace** из сфокусированных крейтов: engine trait, нативный MITM-прокси, управление root-CA (rcgen + системный keychain), SQLite storage с content-addressed body blobs, пайплайны для iOS / Android (libimobiledevice + adb sidecars), сборщик Apple `mobileconfig`, QR-fallback setup server, эвристика детекции cert pinning.
 - **CI** matrix на Windows, macOS, Linux — fmt + clippy + tests + Tauri debug build.
 
@@ -52,6 +52,7 @@ Pane **не** монитор продакшен-трафика, **не** packet-
 
 ```
 src/                    SolidJS frontend (Tauri webview)
+src/i18n/               EN + RU translation dictionaries + reactive translator
 src-tauri/              Tauri main crate + IPC command modules
 crates/
   pane-ipc/        Shared DTOs между Rust и TS

@@ -125,6 +125,22 @@ http_proxy в этом сценарии «закрывал» интернет д
   сборке выключи pinning в коде. Для own-device security research —
   Frida или Magisk-модули bypass'a поверх Pane.
 
+## Язык интерфейса
+
+Pane доступен на **English** и **русском**. По умолчанию — English.
+Переключить: **Settings → Appearance → Language**. Выбор сохраняется
+в `localStorage` и применяется реактивно, без перезапуска приложения.
+
+Переведены все экраны UI (Captures, Rules, Devices, Settings, About,
+Replay, body viewer, manual-install guide). Технические сообщения от
+backend (`last_error` от `pane-android` / `pane-engine`) остаются
+английскими — это совпадает с политикой логов и исходников.
+
+Новый язык можно добавить за один файл: создай
+`src/i18n/<lang>.ts` со структурой совпадающей с `en.ts`
+(TypeScript-тип `Dict` это обеспечит), и зарегистрируй в `LOCALES`
+массиве в `src/i18n/index.ts`.
+
 ## Обновления
 
 Pane сам проверяет новые релизы:
