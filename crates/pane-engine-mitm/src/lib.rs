@@ -22,6 +22,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
+mod heartbeat;
 mod leaf;
 mod pac;
 mod patch;
@@ -125,11 +126,30 @@ impl ProxyEngine for MitmEngine {
             None => (None, None),
         };
 
+        // Heartbeat listener for the device-side companion APK. Same
+        // best-effort pattern as PAC: bind failure is logged but not
+        // fatal. Without it, the APK's watchdog can never connect and
+        // stays in "disconnected" mode forever — harmless, just means
+        // the unplug-no-internet protection doesn't kick in for this
+        // session.
+        let (heartbeat_listen, heartbeat_shutdown_tx) = match cfg.heartbeat_listen {
+            Some(addr) => match heartbeat::start(addr).await {
+                Ok(tx) => (Some(addr), Some(tx)),
+                Err(e) => {
+                    tracing::warn!(error = %e, addr = %addr, "heartbeat server failed to bind");
+                    (None, None)
+                }
+            },
+            None => (None, None),
+        };
+
         Ok(EngineHandle {
             listen: cfg.listen,
             pac_listen,
+            heartbeat_listen,
             shutdown_tx,
             pac_shutdown_tx,
+            heartbeat_shutdown_tx,
         })
     }
 

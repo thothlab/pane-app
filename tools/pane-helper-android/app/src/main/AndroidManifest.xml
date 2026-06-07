@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Pane Helper: a tiny APK whose only job is to keep the phone's
+    http_proxy setting in sync with Pane's actual liveness.
+
+    Why it exists: Pane sets `http_proxy 127.0.0.1:8888` on the device,
+    then adb-reverse-forwards 8888 to the laptop's MITM proxy. When the
+    user yanks the USB cable, adb-reverse breaks but http_proxy keeps
+    pointing at the dead 127.0.0.1:8888 — the phone loses internet
+    until the user manually clears the proxy in Wi-Fi settings.
+
+    What the helper does: a Foreground Service holds a TCP heartbeat
+    socket to 127.0.0.1:8890. When the heartbeat dies (USB unplug, Pane
+    quit), the service clears the http_proxy setting. When the heartbeat
+    comes back (USB re-plug + Pane running), it restores the setting.
+
+    Requires WRITE_SECURE_SETTINGS, which is a normal-protection-level
+    "development" permission — Pane grants it once via
+    `adb shell pm grant tech.thothlab.pane.helper
+        android.permission.WRITE_SECURE_SETTINGS`
+    at install time. The grant persists across reboots.
+
+    Launched explicitly by `adb shell am start-foreground-service` from
+    Pane; no launcher icon, the user never opens this app directly.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!--
+        WRITE_SECURE_SETTINGS is signature|privileged|development. Pane
+        flips the development bit via `pm grant` at install time so we
+        can write Settings.Global.HTTP_PROXY without root. tools:ignore
+        suppresses the AAPT "ProtectedPermissions" lint that would
+        otherwise fail the build.
+    -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+                     tools:ignore="ProtectedPermissions"/>
+
+    <application
+        android:label="Pane Helper"
+        android:allowBackup="false"
+        android:hasCode="true"
+        android:icon="@android:drawable/ic_lock_lock">
+
+        <!--
+            Launcher activity exists only to request the
+            POST_NOTIFICATIONS runtime permission on first run (Android
+            13+). Without that permission the FGS notification is
+            suppressed and the user can't see the service is running —
+            confusing for support. The activity finishes immediately
+            after the dialog so it's never visible in recents.
+        -->
+        <activity
+            android:name=".LauncherActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+            </intent-filter>
+        </activity>
+
+        <!--
+            exported="false" — the service is started by LauncherActivity
+            inside this APK. Nothing external should bind it. We launch
+            via the Activity, not `am startservice` directly, so this
+            tightening doesn't conflict with the adb-shell invocation.
+        -->
+        <service
+            android:name=".HeartbeatService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="pane-watchdog"/>
+        </service>
+    </application>
+</manifest>

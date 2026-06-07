@@ -72,6 +72,22 @@ pub fn run() {
             if let Err(e) = install_app_menu(app.handle()) {
                 tracing::warn!(error = %e, "failed to install app menu");
             }
+            // Hand the companion helper APK path to AndroidPlatform.
+            // Production: bundled into the .app by tauri.conf.json
+            // `bundle.resources`. Dev (`tauri dev` / `make tauri-dev`):
+            // resource_dir() returns Err on macOS, so we also probe the
+            // repo's `src-tauri/binaries/` relative to the current exe
+            // (target/debug/pane → up three → src-tauri/binaries).
+            // First non-empty hit wins.
+            use tauri::Manager;
+            let apk = resolve_helper_apk(app.handle());
+            if let Some(path) = apk {
+                let state: tauri::State<AppState> = app.state();
+                state.devices.set_android_helper_apk(path.clone());
+                tracing::info!(path = %path.display(), "pane-helper APK registered");
+            } else {
+                tracing::debug!("pane-helper APK not found in resources or dev paths");
+            }
             // Spawn device watchdog: polls adb for attached devices every 5s,
             // auto-applies the right thing when a paired phone reconnects.
             // Fixes the "unplugged USB → device stuck with dead proxy → no
@@ -255,6 +271,46 @@ fn init_logging() {
         .with(stdout_layer)
         .with(file_layer)
         .try_init();
+}
+
+/// Find the companion helper APK at runtime. Production builds bundle
+/// it via tauri.conf.json `bundle.resources` and we get it back from
+/// `resource_dir()`. Dev builds (`cargo tauri dev`, `make tauri-dev`)
+/// don't go through the bundler — fall back to probing the repo
+/// `src-tauri/binaries/pane-helper.apk` relative to `current_exe`.
+///
+/// Returns the path only if the file exists *and* is non-empty (the
+/// committed placeholder is 0 bytes before CI populates it — same
+/// shape as `apk_is_present` in pane-android, kept consistent here so
+/// dev runs without a real APK silently fall through to "watchdog
+/// disabled" instead of trying to install garbage).
+fn resolve_helper_apk(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let p = res_dir.join("binaries").join("pane-helper.apk");
+        if file_is_non_empty(&p) {
+            return Some(p);
+        }
+    }
+    // Dev probe: walk up from target/debug/pane (or target/release/pane)
+    // to find a sibling `src-tauri/binaries/pane-helper.apk`.
+    if let Ok(exe) = std::env::current_exe() {
+        // exe = .../target/{debug,release}/pane
+        // Want = .../src-tauri/binaries/pane-helper.apk
+        // Going up two levels from exe lands at `target/`; one more at
+        // the repo root. Then descend into src-tauri/binaries.
+        if let Some(repo_root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            let p = repo_root.join("src-tauri").join("binaries").join("pane-helper.apk");
+            if file_is_non_empty(&p) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+fn file_is_non_empty(p: &std::path::Path) -> bool {
+    std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false)
 }
 
 fn log_file_appender() -> Option<tracing_appender::non_blocking::NonBlocking> {

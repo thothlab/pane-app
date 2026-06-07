@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pane Helper</string>
+
+    <!--
+        Notification channel + content shown in the system shade while
+        the watchdog service is running. Notification is mandatory for
+        a foreground service; we make it terse and useful instead of
+        decorative — it doubles as the user's only signal that Pane is
+        actively interposed on the device's network.
+    -->
+    <string name="notif_channel_name">Pane connection</string>
+    <string name="notif_channel_desc">Shown while Pane is connected to this device via USB.</string>
+    <string name="notif_title_connected">Pane connected</string>
+    <string name="notif_title_disconnected">Pane disconnected</string>
+    <string name="notif_text_connected">All traffic is routed through Pane on the laptop.</string>
+    <string name="notif_text_disconnected">Proxy cleared. Device using normal internet.</string>
+</resources>

@@ -132,7 +132,7 @@ async fn end_to_end_https_mitm() {
     storage.session_record(proxy_addr).unwrap();
     let engine = MitmEngine::new(storage.clone());
     let _handle = engine
-        .start(EngineConfig { listen: proxy_addr, ca: ca.clone(), pac_listen: None })
+        .start(EngineConfig { listen: proxy_addr, ca: ca.clone(), pac_listen: None, heartbeat_listen: None })
         .await
         .unwrap();
 

@@ -22,6 +22,12 @@ pub struct EngineConfig {
     /// this URL — Android falls back to DIRECT when it's unreachable
     /// (USB unplugged, Pane stopped), so the phone keeps its internet.
     pub pac_listen: Option<SocketAddr>,
+    /// Optional address for the heartbeat server. The companion APK on
+    /// the device connects here (adb-reverse-forwarded) and pings every
+    /// 2 seconds. When the APK loses the connection — Pane stopped, USB
+    /// unplugged — it clears `http_proxy` on the device so the user
+    /// doesn't get stranded with no internet.
+    pub heartbeat_listen: Option<SocketAddr>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,8 +83,10 @@ impl EngineEvent {
 pub struct EngineHandle {
     pub listen: SocketAddr,
     pub pac_listen: Option<SocketAddr>,
+    pub heartbeat_listen: Option<SocketAddr>,
     pub shutdown_tx: tokio::sync::mpsc::Sender<()>,
     pub pac_shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
+    pub heartbeat_shutdown_tx: Option<tokio::sync::mpsc::Sender<()>>,
 }
 
 impl EngineHandle {
@@ -86,6 +94,9 @@ impl EngineHandle {
         let _ = self.shutdown_tx.send(()).await;
         if let Some(pac_tx) = &self.pac_shutdown_tx {
             let _ = pac_tx.send(()).await;
+        }
+        if let Some(hb_tx) = &self.heartbeat_shutdown_tx {
+            let _ = hb_tx.send(()).await;
         }
         Ok(())
     }

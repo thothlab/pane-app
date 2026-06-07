@@ -25,6 +25,15 @@ pub async fn start(
         .parse()
         .map_err(to_api("invalid_addr"))?;
 
+    // Heartbeat lives two ports up from the MITM port. The companion
+    // APK on each paired Android device connects to this (adb-reverse-
+    // forwarded) and pings every 2s. When it loses the connection
+    // (USB unplug, Pane quit) it clears the device's http_proxy so the
+    // user doesn't get stranded with no internet.
+    let heartbeat_listen: std::net::SocketAddr = format!("{host}:{}", port + 2)
+        .parse()
+        .map_err(to_api("invalid_addr"))?;
+
     let ca_material = state.ca.material();
     let engine: Arc<dyn ProxyEngine> = Arc::new(MitmEngine::new(state.storage.clone()));
     let handle = engine
@@ -32,6 +41,7 @@ pub async fn start(
             listen,
             ca: ca_material,
             pac_listen: Some(pac_listen),
+            heartbeat_listen: Some(heartbeat_listen),
         })
         .await
         .map_err(to_api("engine_start"))?;

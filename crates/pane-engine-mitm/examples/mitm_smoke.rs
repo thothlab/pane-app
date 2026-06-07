@@ -36,13 +36,15 @@ async fn main() -> anyhow::Result<()> {
             listen,
             ca: ca.material(),
             pac_listen: Some("127.0.0.1:8889".parse().unwrap()),
+            heartbeat_listen: Some("127.0.0.1:8890".parse().unwrap()),
         })
         .await?;
 
     eprintln!(
-        "[mitm-smoke] up listen={} pac={:?} data_dir={}",
+        "[mitm-smoke] up listen={} pac={:?} heartbeat={:?} data_dir={}",
         handle.listen,
         handle.pac_listen,
+        handle.heartbeat_listen,
         tmp.display()
     );
     tokio::signal::ctrl_c().await?;

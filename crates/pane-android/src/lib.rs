@@ -24,11 +24,37 @@ const ADB_NOT_FOUND_MSG: &str = "adb not found. Install Android platform-tools \
     (https://developer.android.com/tools/releases/platform-tools) and either add it to PATH, \
     set ANDROID_HOME, or install at the default Android SDK location.";
 
-pub struct AndroidPlatform;
+/// Android package identifiers for the Pane companion APK. The helper
+/// runs a tiny Foreground Service that holds a heartbeat socket to
+/// Pane on the laptop (via adb-reverse). When that socket dies — Pane
+/// closed, USB unplugged — the helper clears the device's http_proxy
+/// setting so the user doesn't end up stranded with no internet.
+const HELPER_PACKAGE: &str = "tech.thothlab.pane.helper";
+const HELPER_LAUNCHER: &str = "tech.thothlab.pane.helper/.LauncherActivity";
+
+pub struct AndroidPlatform {
+    /// Path to the bundled `pane-helper.apk`, set once at Tauri setup
+    /// time. `OnceLock` so the rest of the program can read it without
+    /// holding a lock and so we don't accidentally swap it under a
+    /// running pairing flow. When unset (dev runs before CI has built
+    /// a real APK, or third-party builds without it), the watchdog
+    /// just doesn't get installed — proxy still works, but the
+    /// unplug-no-internet protection won't kick in.
+    helper_apk: std::sync::OnceLock<PathBuf>,
+}
 
 impl AndroidPlatform {
     pub fn new() -> Self {
-        Self
+        Self {
+            helper_apk: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Publish the bundled-APK path. Called once during Tauri setup,
+    /// after the app handle is available and `resource_dir()` resolves.
+    /// Subsequent calls are silently ignored (OnceLock semantics).
+    pub fn set_helper_apk(&self, path: PathBuf) {
+        let _ = self.helper_apk.set(path);
     }
 
     pub async fn discover(&self) -> Result<Vec<DiscoveredDeviceDto>> {
@@ -120,9 +146,11 @@ impl AndroidPlatform {
             }
         }
 
-        // Proxy + PAC setup over USB. Two reverses needed:
+        // Proxy + PAC setup over USB. Three reverses needed:
         //   8888 → the MITM proxy itself (direct http_proxy target)
         //   8889 → the PAC server (returns "PROXY 127.0.0.1:8888")
+        //   8890 → the heartbeat server (companion APK pings it)
+        //
         // We set BOTH http_proxy and http_proxy_pac:
         //   - http_proxy = "127.0.0.1:8888" — drives OkHttp, Retrofit,
         //     and most native Android HTTP stacks via
@@ -138,12 +166,31 @@ impl AndroidPlatform {
         //     unavoidable trade-off — the alternative (PAC-only) means
         //     OkHttp never goes through Pane at all, which is the
         //     regression that landed in 0.1.21 and was missed until now.
+        //
+        // Ordering: reverses first → helper APK running → then
+        // http_proxy. If we set http_proxy before the helper's
+        // heartbeat socket can connect, the helper might race ahead
+        // and clear what we just wrote. (Watchdog only clears after
+        // a real established session breaks, so the actual race
+        // window is tiny — but ordering this way costs nothing.)
         if let Err(e) = run("adb", &["-s", serial, "reverse", "tcp:8888", "tcp:8888"]).await {
             tracing::error!(error = %e, serial, "adb reverse 8888 failed — device cannot reach proxy");
             last_error = Some(format!("adb reverse failed: {e}"));
         }
         if let Err(e) = run("adb", &["-s", serial, "reverse", "tcp:8889", "tcp:8889"]).await {
             tracing::warn!(error = %e, serial, "adb reverse 8889 (PAC) failed");
+        }
+        if let Err(e) = run("adb", &["-s", serial, "reverse", "tcp:8890", "tcp:8890"]).await {
+            tracing::warn!(error = %e, serial, "adb reverse 8890 (heartbeat) failed");
+        }
+
+        // Best-effort: install + start the companion APK so the
+        // watchdog can clear http_proxy on unplug. Errors here are
+        // logged but don't fail the pair flow — the proxy still works,
+        // the user just gets the old footgun back if they unplug
+        // without stopping Pane first.
+        if let Err(e) = ensure_helper_running(serial, self.helper_apk.get()).await {
+            tracing::warn!(error = %e, serial, "companion helper APK setup failed");
         }
 
         // Direct http_proxy — primary, what OkHttp reads.
@@ -218,10 +265,12 @@ impl AndroidPlatform {
     }
 
     pub async fn remove(&self, serial: &str) -> Result<()> {
-        let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8888"]).await;
-        let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8889"]).await;
-        // Clear all three proxy-related settings — both spellings of PAC
-        // plus the direct-proxy fallback that older Pane versions used.
+        // Clear proxy first so the device gets internet back before we
+        // tear down the heartbeat reverse. Order matters: if we tear
+        // down 8890 first, the helper APK sees its connection break
+        // and *also* tries to clear http_proxy — redundant but not
+        // wrong. Clearing here first means the helper sees an
+        // already-clean state and doesn't bother.
         let _ = run(
             "adb",
             &["-s", serial, "shell", "settings", "put", "global", "http_proxy", ":0"],
@@ -237,7 +286,101 @@ impl AndroidPlatform {
             &["-s", serial, "shell", "settings", "delete", "global", "global_proxy_pac_url"],
         )
         .await;
+
+        // Stop the helper service so it doesn't sit there in a
+        // reconnect loop forever (cheap on battery, but noisy in
+        // logcat). force-stop is idempotent. --user 0 to dodge Knox /
+        // Secure Folder secondary-user surprises.
+        let _ = run(
+            "adb",
+            &["-s", serial, "shell", "am", "force-stop", "--user", "0", HELPER_PACKAGE],
+        )
+        .await;
+
+        // Tear down reverses last.
+        let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8888"]).await;
+        let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8889"]).await;
+        let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8890"]).await;
         Ok(())
+    }
+}
+
+/// Make sure the companion APK is installed, granted
+/// WRITE_SECURE_SETTINGS, and the heartbeat service is running.
+///
+/// Each step is idempotent:
+///   - `pm install -r` no-ops on identical APK
+///   - `pm grant` no-ops if already granted
+///   - `am start` on an already-running activity is a quick re-show
+///
+/// All operations explicitly target `--user 0` (the primary user).
+/// Without this, Samsung devices with Secure Folder / Knox set up a
+/// secondary user (often `150`) as the foreground user, and `pm grant`
+/// defaults to that user — which adb shell can't access, so the grant
+/// fails with "Shell does not have permission to access user 150".
+/// Forcing `--user 0` on every command pins us to the primary user and
+/// works identically on non-Samsung Android (where 0 is the only user
+/// anyway). Discovered empirically on a Galaxy S25 with Secure Folder
+/// enabled.
+///
+/// `apk_path = None` means there's no bundled APK (dev build before CI
+/// produced one, or third-party builds). We bail early — proxy still
+/// works, watchdog just won't.
+async fn ensure_helper_running(serial: &str, apk_path: Option<&PathBuf>) -> Result<()> {
+    let apk = apk_path.ok_or_else(|| anyhow!("no helper APK bundled"))?;
+    if !apk_is_present(apk) {
+        return Err(anyhow!(
+            "helper APK at {} is missing or zero-byte placeholder",
+            apk.display()
+        ));
+    }
+
+    run(
+        "adb",
+        &["-s", serial, "install", "-r", "--user", "0", apk.to_str().unwrap()],
+    )
+    .await
+    .map_err(|e| anyhow!("pm install failed: {e}"))?;
+
+    // WRITE_SECURE_SETTINGS is signature|privileged|development. The
+    // `development` bit makes it grantable via `pm grant` over adb —
+    // which sticks across reboots, no root required. If this fails the
+    // service runs but can't actually clear http_proxy; we log so the
+    // failure is debuggable but don't abort, since the rest of the
+    // pair still works.
+    if let Err(e) = run(
+        "adb",
+        &[
+            "-s", serial, "shell", "pm", "grant", "--user", "0", HELPER_PACKAGE,
+            "android.permission.WRITE_SECURE_SETTINGS",
+        ],
+    )
+    .await
+    {
+        tracing::warn!(error = %e, serial, "pm grant WRITE_SECURE_SETTINGS failed — watchdog won't be able to clear http_proxy");
+    }
+
+    // Launch via the LauncherActivity (not the service directly) so
+    // POST_NOTIFICATIONS gets requested on first run. The activity
+    // calls startForegroundService and finishes immediately —
+    // no UI flash for the user.
+    run(
+        "adb",
+        &["-s", serial, "shell", "am", "start", "--user", "0", "-n", HELPER_LAUNCHER],
+    )
+    .await
+    .map_err(|e| anyhow!("am start failed: {e}"))?;
+
+    Ok(())
+}
+
+fn apk_is_present(path: &std::path::Path) -> bool {
+    match std::fs::metadata(path) {
+        // Treat 0-byte placeholder as "no APK available" — the helper
+        // CI hasn't produced one yet. Caller will bail before trying
+        // to install garbage.
+        Ok(m) => m.len() > 0,
+        Err(_) => false,
     }
 }
 
