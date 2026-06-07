@@ -283,7 +283,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn run(mut status: u16, mut headers: Vec<(String, String)>, mut body: Value, ops: Vec<PatchOp>) -> (u16, Vec<(String, String)>, Value) {
+    fn run(
+        mut status: u16,
+        mut headers: Vec<(String, String)>,
+        mut body: Value,
+        ops: Vec<PatchOp>,
+    ) -> (u16, Vec<(String, String)>, Value) {
         let mut tree = ResponseTree {
             status: &mut status,
             headers: &mut headers,
@@ -301,7 +306,10 @@ mod tests {
             200,
             vec![],
             json!({"user": {"fio": "old", "uid": 1}}),
-            vec![PatchOp::Set { path: "body.user.fio".into(), value: json!("new") }],
+            vec![PatchOp::Set {
+                path: "body.user.fio".into(),
+                value: json!("new"),
+            }],
         );
         assert_eq!(b["user"]["fio"], "new");
     }
@@ -312,7 +320,10 @@ mod tests {
             200,
             vec![],
             json!({}),
-            vec![PatchOp::Set { path: "status".into(), value: json!(404) }],
+            vec![PatchOp::Set {
+                path: "status".into(),
+                value: json!(404),
+            }],
         );
         assert_eq!(s, 404);
     }
@@ -323,7 +334,10 @@ mod tests {
             200,
             vec![("Content-Type".into(), "application/json".into())],
             json!({}),
-            vec![PatchOp::Set { path: "headers.content-type".into(), value: json!("text/plain") }],
+            vec![PatchOp::Set {
+                path: "headers.content-type".into(),
+                value: json!("text/plain"),
+            }],
         );
         assert_eq!(h, vec![("Content-Type".into(), "text/plain".into())]);
     }
@@ -334,7 +348,10 @@ mod tests {
             200,
             vec![],
             json!({"list": [1, 2]}),
-            vec![PatchOp::Append { path: "body.list".into(), value: json!(3) }],
+            vec![PatchOp::Append {
+                path: "body.list".into(),
+                value: json!(3),
+            }],
         );
         assert_eq!(b["list"], json!([1, 2, 3]));
     }
@@ -345,7 +362,9 @@ mod tests {
             200,
             vec![],
             json!({"a": 1, "b": 2}),
-            vec![PatchOp::Delete { path: "body.a".into() }],
+            vec![PatchOp::Delete {
+                path: "body.a".into(),
+            }],
         );
         assert!(b.get("a").is_none());
         assert_eq!(b["b"], 2);
@@ -357,7 +376,9 @@ mod tests {
             200,
             vec![],
             json!({"l": [10, 20, 30]}),
-            vec![PatchOp::Delete { path: "body.l[1]".into() }],
+            vec![PatchOp::Delete {
+                path: "body.l[1]".into(),
+            }],
         );
         assert_eq!(b["l"], json!([10, 30]));
     }
@@ -368,7 +389,10 @@ mod tests {
             200,
             vec![],
             json!({"user": {"fio": "old"}}),
-            vec![PatchOp::Set { path: "user.fio".into(), value: json!("new") }],
+            vec![PatchOp::Set {
+                path: "user.fio".into(),
+                value: json!("new"),
+            }],
         );
         assert_eq!(b["user"]["fio"], "new");
     }
@@ -379,7 +403,10 @@ mod tests {
             200,
             vec![],
             json!({}),
-            vec![PatchOp::Set { path: "body.user.profile.name".into(), value: json!("X") }],
+            vec![PatchOp::Set {
+                path: "body.user.profile.name".into(),
+                value: json!("X"),
+            }],
         );
         assert_eq!(b["user"]["profile"]["name"], "X");
     }

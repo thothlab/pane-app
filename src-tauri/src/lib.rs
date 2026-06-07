@@ -206,8 +206,7 @@ async fn device_watchdog(app: tauri::AppHandle) {
         }
 
         // Newly-connected serials = attached \ last_seen.
-        let newly_connected: Vec<String> =
-            attached.difference(&last_seen).cloned().collect();
+        let newly_connected: Vec<String> = attached.difference(&last_seen).cloned().collect();
         last_seen = attached;
 
         if newly_connected.is_empty() {
@@ -299,8 +298,15 @@ fn resolve_helper_apk(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
         // Want = .../src-tauri/binaries/pane-helper.apk
         // Going up two levels from exe lands at `target/`; one more at
         // the repo root. Then descend into src-tauri/binaries.
-        if let Some(repo_root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
-            let p = repo_root.join("src-tauri").join("binaries").join("pane-helper.apk");
+        if let Some(repo_root) = exe
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
+        {
+            let p = repo_root
+                .join("src-tauri")
+                .join("binaries")
+                .join("pane-helper.apk");
             if file_is_non_empty(&p) {
                 return Some(p);
             }

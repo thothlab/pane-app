@@ -17,10 +17,7 @@ pub async fn list_attached_usb(state: State<'_, AppState>) -> CmdResult<Vec<Disc
 }
 
 #[tauri::command]
-pub async fn add_ios_usb(
-    state: State<'_, AppState>,
-    args: AddDeviceArgs,
-) -> CmdResult<DeviceDto> {
+pub async fn add_ios_usb(state: State<'_, AppState>, args: AddDeviceArgs) -> CmdResult<DeviceDto> {
     state
         .devices
         .add_ios_usb(&args.serial, state.ca.material())

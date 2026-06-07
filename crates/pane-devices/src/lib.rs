@@ -217,7 +217,9 @@ impl DeviceManager {
         let ca_installed_at_unix = d
             .ca_installed_at
             .as_deref()
-            .and_then(|s| OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok())
+            .and_then(|s| {
+                OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
+            })
             .map(|t| t.unix_timestamp())
             .unwrap_or(now);
         // The pairing-row was already created by `transition(... pairing ...)`

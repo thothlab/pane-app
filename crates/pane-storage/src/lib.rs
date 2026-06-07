@@ -37,9 +37,17 @@ pub enum RuleMode {
 /// virtual response tree: `status`, `headers.<name>`, `body.<dot.path>`.
 #[derive(Debug, Clone)]
 pub enum PatchOp {
-    Set { path: String, value: serde_json::Value },
-    Delete { path: String },
-    Append { path: String, value: serde_json::Value },
+    Set {
+        path: String,
+        value: serde_json::Value,
+    },
+    Delete {
+        path: String,
+    },
+    Append {
+        path: String,
+        value: serde_json::Value,
+    },
 }
 
 /// Engine-side view of an active rule. Bodies materialized once at load time
@@ -103,7 +111,9 @@ impl Storage {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
-        migrations::runner().run(&mut conn).context("migrations failed")?;
+        migrations::runner()
+            .run(&mut conn)
+            .context("migrations failed")?;
 
         let bodies = Arc::new(BodyStore::new(data_dir.join("bodies"))?);
         Ok(Self {
@@ -165,8 +175,13 @@ impl Storage {
         let row = stmt
             .query_row([], |r| {
                 Ok(CaRecord {
-                    id: Uuid::parse_str(&r.get::<_, String>(0)?)
-                        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?,
+                    id: Uuid::parse_str(&r.get::<_, String>(0)?).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            0,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
                     pem: r.get(1)?,
                     sha256_fp: r.get(2)?,
                     subject: r.get(3)?,
@@ -195,7 +210,12 @@ impl Storage {
         conn.execute(
             "INSERT INTO session (id, started_at, listen, ca_id, status)
              VALUES (?1, ?2, ?3, ?4, 'running')",
-            params![id.to_string(), now.unix_timestamp(), listen.to_string(), ca_id],
+            params![
+                id.to_string(),
+                now.unix_timestamp(),
+                listen.to_string(),
+                ca_id
+            ],
         )?;
         Ok(SessionDto {
             id,
@@ -281,7 +301,11 @@ impl Storage {
         let mut req = Vec::new();
         let mut res = Vec::new();
         let rows = h_stmt.query_map(params![id.to_string()], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
         })?;
         for row in rows {
             let (name, value, dir) = row?;
@@ -307,7 +331,9 @@ impl Storage {
         Ok(CaptureDto {
             id: Uuid::parse_str(&id).unwrap(),
             session_id: Uuid::parse_str(&session_id).unwrap(),
-            started_at: OffsetDateTime::from_unix_timestamp(started_at).unwrap().to_string(),
+            started_at: OffsetDateTime::from_unix_timestamp(started_at)
+                .unwrap()
+                .to_string(),
             ended_at: ended_at.map(|t| OffsetDateTime::from_unix_timestamp(t).unwrap().to_string()),
             client_addr: r.get(4)?,
             server_host: r.get(5)?,
@@ -383,7 +409,10 @@ impl Storage {
                         s.push_str(&format!(" -H '{}: {}'", h.name, v));
                     }
                 }
-                Ok(ExportOneResult { text: s, mime: "text/plain".into() })
+                Ok(ExportOneResult {
+                    text: s,
+                    mime: "text/plain".into(),
+                })
             }
             "har_single" => {
                 let har = serde_json::json!({
@@ -410,7 +439,10 @@ impl Storage {
                         }]
                     }
                 });
-                Ok(ExportOneResult { text: serde_json::to_string_pretty(&har)?, mime: "application/json".into() })
+                Ok(ExportOneResult {
+                    text: serde_json::to_string_pretty(&har)?,
+                    mime: "application/json".into(),
+                })
             }
             other => Err(anyhow!("unsupported format: {other}")),
         }
@@ -494,7 +526,10 @@ impl Storage {
 
     pub fn delete_filter(&self, id: Uuid) -> Result<()> {
         let conn = self.conn.lock();
-        conn.execute("DELETE FROM saved_filter WHERE id=?1", params![id.to_string()])?;
+        conn.execute(
+            "DELETE FROM saved_filter WHERE id=?1",
+            params![id.to_string()],
+        )?;
         Ok(())
     }
 
@@ -621,7 +656,10 @@ impl Storage {
         };
         for dto in dtos.iter_mut() {
             if let Some(bid) = dto.res_body_id {
-                let (mime, bytes) = self.bodies.get_raw(bid, &self.conn).unwrap_or((None, vec![]));
+                let (mime, bytes) = self
+                    .bodies
+                    .get_raw(bid, &self.conn)
+                    .unwrap_or((None, vec![]));
                 dto.res_body_mime = mime;
                 dto.res_body_size = bytes.len() as u64;
             }
@@ -642,7 +680,10 @@ impl Storage {
         )?;
         drop(conn);
         if let Some(bid) = dto.res_body_id {
-            let (mime, bytes) = self.bodies.get_raw(bid, &self.conn).unwrap_or((None, vec![]));
+            let (mime, bytes) = self
+                .bodies
+                .get_raw(bid, &self.conn)
+                .unwrap_or((None, vec![]));
             dto.res_body_mime = mime;
             dto.res_body_size = bytes.len() as u64;
         }
@@ -657,9 +698,12 @@ impl Storage {
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(b64)
                     .map_err(|e| anyhow!("invalid res_body_base64: {e}"))?;
-                let id = self
-                    .bodies
-                    .put(&bytes, "identity", args.res_body_mime.as_deref(), &self.conn)?;
+                let id = self.bodies.put(
+                    &bytes,
+                    "identity",
+                    args.res_body_mime.as_deref(),
+                    &self.conn,
+                )?;
                 Some(id)
             }
             _ => None,
@@ -767,7 +811,10 @@ impl Storage {
         let mut out = Vec::with_capacity(dtos.len());
         for dto in dtos {
             let (mime, body) = match dto.res_body_id {
-                Some(bid) => self.bodies.get_raw(bid, &self.conn).unwrap_or((None, vec![])),
+                Some(bid) => self
+                    .bodies
+                    .get_raw(bid, &self.conn)
+                    .unwrap_or((None, vec![])),
                 None => (None, vec![]),
             };
             let mode = match dto.mode.as_str() {

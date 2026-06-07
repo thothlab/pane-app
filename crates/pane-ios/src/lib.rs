@@ -47,11 +47,7 @@ impl IosPlatform {
             .context("idevicepair: tap Trust on your iPhone and retry")?;
 
         // 2. Generate mobileconfig with our CA + proxy payload.
-        let _profile = pane_mobileconfig::build_full_profile(
-            &ca.cert_pem,
-            "127.0.0.1",
-            8888,
-        )?;
+        let _profile = pane_mobileconfig::build_full_profile(&ca.cert_pem, "127.0.0.1", 8888)?;
         // Profile installation via lockdownd `com.apple.misagent` is the path
         // most reliable on iOS 16; on iOS 17+ this often requires user-side
         // installation (fallback handled by QR setup server). We attempt the

@@ -58,7 +58,9 @@ pub async fn handle(
         };
 
         emit_started(&events, cap_id, &host, &method, "/");
-        insert_capture_opening(&storage, cap_id, session_id, peer, &host, port, "https", &method)?;
+        insert_capture_opening(
+            &storage, cap_id, session_id, peer, &host, port, "https", &method,
+        )?;
 
         // RFC 7231 says a client SHOULD NOT pipeline anything after CONNECT
         // until the 200 reply lands. If a client did anyway, those bytes
@@ -66,7 +68,13 @@ pub async fn handle(
         // to TlsAcceptor and we can't proxy them either. Treat as fatal.
         if !extra.is_empty() {
             mark_error(&storage, cap_id, "connect_pipelined", "")?;
-            emit_error(&events, cap_id, &host, "connect_pipelined", "bytes after CONNECT");
+            emit_error(
+                &events,
+                cap_id,
+                &host,
+                "connect_pipelined",
+                "bytes after CONNECT",
+            );
             return Ok(());
         }
         stream
@@ -82,22 +90,15 @@ pub async fn handle(
             }
         };
 
-        return handle_tls_inner(
-            tls_stream,
-            host,
-            port,
-            cap_id,
-            started_at,
-            storage,
-            events,
-        )
-        .await;
+        return handle_tls_inner(tls_stream, host, port, cap_id, started_at, storage, events).await;
     }
 
     // Plain HTTP: target is an absolute URL like http://host/path.
     let (host, port, path) = parse_http_target(&target);
     emit_started(&events, cap_id, &host, &method, &path);
-    insert_capture_opening(&storage, cap_id, session_id, peer, &host, port, "http", &method)?;
+    insert_capture_opening(
+        &storage, cap_id, session_id, peer, &host, port, "http", &method,
+    )?;
     update_url_path(&storage, cap_id, &path)?;
     persist_headers(&storage, cap_id, "request", &headers)?;
 
@@ -190,13 +191,8 @@ pub async fn handle(
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
     let raw_body = resp.bytes().await?.to_vec();
-    let body = apply_patches_if_any(
-        patch_rule.as_ref(),
-        &mut status,
-        &mut res_headers,
-        raw_body,
-    )
-    .await;
+    let body =
+        apply_patches_if_any(patch_rule.as_ref(), &mut status, &mut res_headers, raw_body).await;
 
     persist_headers(&storage, cap_id, "response", &res_headers)?;
 
@@ -205,7 +201,9 @@ pub async fn handle(
         .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
         .map(|(_, v)| v.as_str());
 
-    let body_id = storage.bodies.put(&body, "identity", mime, storage.conn())?;
+    let body_id = storage
+        .bodies
+        .put(&body, "identity", mime, storage.conn())?;
     set_res_body(&storage, cap_id, body_id)?;
 
     write_response(&mut write_half, status, &res_headers, &body).await?;
@@ -222,9 +220,22 @@ pub async fn handle(
             ended_at,
         )?;
     } else {
-        mark_completed(&storage, cap_id, status, body.len() as i64, duration_ms, ended_at)?;
+        mark_completed(
+            &storage,
+            cap_id,
+            status,
+            body.len() as i64,
+            duration_ms,
+            ended_at,
+        )?;
     }
-    emit_completed(&events, cap_id, status, duration_ms as u64, body.len() as u64);
+    emit_completed(
+        &events,
+        cap_id,
+        status,
+        duration_ms as u64,
+        body.len() as u64,
+    );
     Ok(())
 }
 
@@ -340,13 +351,8 @@ async fn handle_tls_inner(
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
     let raw_body = resp.bytes().await?.to_vec();
-    let body = apply_patches_if_any(
-        patch_rule.as_ref(),
-        &mut status,
-        &mut res_headers,
-        raw_body,
-    )
-    .await;
+    let body =
+        apply_patches_if_any(patch_rule.as_ref(), &mut status, &mut res_headers, raw_body).await;
 
     persist_headers(&storage, cap_id, "response", &res_headers)?;
 
@@ -354,7 +360,9 @@ async fn handle_tls_inner(
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
         .map(|(_, v)| v.as_str());
-    let body_id = storage.bodies.put(&body, "identity", mime, storage.conn())?;
+    let body_id = storage
+        .bodies
+        .put(&body, "identity", mime, storage.conn())?;
     set_res_body(&storage, cap_id, body_id)?;
 
     let mut tls_stream = reader.into_inner();
@@ -373,9 +381,22 @@ async fn handle_tls_inner(
             ended_at,
         )?;
     } else {
-        mark_completed(&storage, cap_id, status, body.len() as i64, duration_ms, ended_at)?;
+        mark_completed(
+            &storage,
+            cap_id,
+            status,
+            body.len() as i64,
+            duration_ms,
+            ended_at,
+        )?;
     }
-    emit_completed(&events, cap_id, status, duration_ms as u64, body.len() as u64);
+    emit_completed(
+        &events,
+        cap_id,
+        status,
+        duration_ms as u64,
+        body.len() as u64,
+    );
     Ok(())
 }
 
@@ -434,9 +455,7 @@ fn find_double_crlf(buf: &[u8]) -> Option<usize> {
 /// Same as `read_request_head` but for an already-buffered TLS stream where
 /// over-reading is harmless — we keep using BufReader there for read-line
 /// ergonomics. Kept separate so the CONNECT path can't accidentally use this.
-async fn read_tls_request_head<R>(
-    reader: &mut BufReader<R>,
-) -> anyhow::Result<Option<ParsedHead>>
+async fn read_tls_request_head<R>(reader: &mut BufReader<R>) -> anyhow::Result<Option<ParsedHead>>
 where
     R: AsyncReadExt + Unpin,
 {
@@ -632,7 +651,9 @@ fn persist_body(
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
         .map(|(_, v)| v.as_str());
-    let id = storage.bodies.put(bytes, "identity", mime, storage.conn())?;
+    let id = storage
+        .bodies
+        .put(bytes, "identity", mime, storage.conn())?;
     Ok(Some(id))
 }
 
@@ -801,9 +822,12 @@ where
         tokio::time::sleep(std::time::Duration::from_millis(rule.delay_ms)).await;
     }
     persist_headers(storage, cap_id, "response", &rule.headers)?;
-    let body_id = storage
-        .bodies
-        .put(&rule.body, "identity", rule.body_mime.as_deref(), storage.conn())?;
+    let body_id = storage.bodies.put(
+        &rule.body,
+        "identity",
+        rule.body_mime.as_deref(),
+        storage.conn(),
+    )?;
     set_res_body(storage, cap_id, body_id)?;
     write_response(stream, rule.status, &rule.headers, &rule.body).await?;
     let ended_at = OffsetDateTime::now_utc();
@@ -816,7 +840,13 @@ where
         duration_ms,
         ended_at,
     )?;
-    emit_completed(events, cap_id, rule.status, duration_ms as u64, rule.body.len() as u64);
+    emit_completed(
+        events,
+        cap_id,
+        rule.status,
+        duration_ms as u64,
+        rule.body.len() as u64,
+    );
     Ok(())
 }
 
@@ -824,7 +854,11 @@ fn mark_error(storage: &Storage, id: Uuid, kind: &str, _msg: &str) -> anyhow::Re
     let conn = storage.conn().lock();
     conn.execute(
         "UPDATE capture SET state='error', error_kind=?1, ended_at=?2 WHERE id=?3",
-        params![kind, OffsetDateTime::now_utc().unix_timestamp(), id.to_string()],
+        params![
+            kind,
+            OffsetDateTime::now_utc().unix_timestamp(),
+            id.to_string()
+        ],
     )?;
     Ok(())
 }

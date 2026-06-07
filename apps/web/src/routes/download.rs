@@ -11,10 +11,7 @@ use axum::{
 
 use crate::AppState;
 
-pub async fn redirect(
-    State(state): State<AppState>,
-    Path(target): Path<String>,
-) -> Response {
+pub async fn redirect(State(state): State<AppState>, Path(target): Path<String>) -> Response {
     let Some(asset) = asset_for_target(&target) else {
         return (
             StatusCode::BAD_REQUEST,

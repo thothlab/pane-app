@@ -4,10 +4,7 @@ use pane_ipc::{ReplayRecordDto, ReplaySendArgs};
 use tauri::State;
 
 #[tauri::command]
-pub async fn send(
-    state: State<'_, AppState>,
-    args: ReplaySendArgs,
-) -> CmdResult<ReplayRecordDto> {
+pub async fn send(state: State<'_, AppState>, args: ReplaySendArgs) -> CmdResult<ReplayRecordDto> {
     state
         .storage
         .replay_send(args)

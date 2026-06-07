@@ -32,7 +32,8 @@ mod routes;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("pane_web=info,tower_http=info")),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("pane_web=info,tower_http=info")),
         )
         .with_target(false)
         .init();
@@ -91,8 +92,9 @@ impl Config {
         let docs_dir = env::var("PANE_DOCS_DIR")
             .unwrap_or_else(|_| "/srv/pane-docs".to_string())
             .into();
-        let downloads_base = env::var("PANE_DOWNLOADS_BASE")
-            .unwrap_or_else(|_| "https://github.com/thothlab/pane-app/releases/latest/download".to_string());
+        let downloads_base = env::var("PANE_DOWNLOADS_BASE").unwrap_or_else(|_| {
+            "https://github.com/thothlab/pane-app/releases/latest/download".to_string()
+        });
         Ok(Self {
             bind,
             data_dir,

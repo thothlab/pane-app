@@ -65,7 +65,11 @@ pub async fn start(cfg: SetupConfig) -> Result<SetupSession> {
         }
     });
 
-    Ok(SetupSession { token, url, qr_svg: svg })
+    Ok(SetupSession {
+        token,
+        url,
+        qr_svg: svg,
+    })
 }
 
 struct ServerState {
@@ -111,7 +115,11 @@ async fn handle_conn(mut stream: tokio::net::TcpStream, state: Arc<ServerState>)
                 &state.proxy_host,
                 state.proxy_port,
             )?;
-            ("200 OK", "application/x-apple-aspen-config", xml.into_bytes())
+            (
+                "200 OK",
+                "application/x-apple-aspen-config",
+                xml.into_bytes(),
+            )
         }
         ("/setup/android/ca.pem", true) => (
             "200 OK",

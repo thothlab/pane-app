@@ -52,7 +52,10 @@ impl MitmEngine {
         // reqwest's rustls-tls beat us to it) — ignoring that is correct.
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let (tx, _rx) = broadcast::channel(4096);
-        Self { storage, events_tx: tx }
+        Self {
+            storage,
+            events_tx: tx,
+        }
     }
 }
 

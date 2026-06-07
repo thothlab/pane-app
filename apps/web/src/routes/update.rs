@@ -73,19 +73,11 @@ pub async fn manifest_for_target(
     let manifest = match load_manifest(&manifest_path).await {
         Ok(m) => m,
         Err(LoadError::NotFound) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "no manifest published yet",
-            )
-                .into_response();
+            return (StatusCode::SERVICE_UNAVAILABLE, "no manifest published yet").into_response();
         }
         Err(LoadError::Invalid(msg)) => {
             tracing::error!(error = %msg, "manifest.json failed to parse");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "manifest unavailable",
-            )
-                .into_response();
+            return (StatusCode::INTERNAL_SERVER_ERROR, "manifest unavailable").into_response();
         }
     };
 
@@ -154,9 +146,7 @@ fn manifest_filename(channel: Channel) -> &'static str {
 async fn load_manifest(path: &StdPath) -> Result<ManifestFile, LoadError> {
     let bytes = match tokio::fs::read(path).await {
         Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Err(LoadError::NotFound)
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(LoadError::NotFound),
         Err(e) => return Err(LoadError::Invalid(e.to_string())),
     };
     serde_json::from_slice(&bytes).map_err(|e| LoadError::Invalid(e.to_string()))

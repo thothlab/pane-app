@@ -98,12 +98,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-        let ct = res
-            .headers()
-            .get("content-type")
-            .unwrap()
-            .to_str()
-            .unwrap();
+        let ct = res.headers().get("content-type").unwrap().to_str().unwrap();
         assert!(ct.starts_with("text/html"));
         let body = axum::body::to_bytes(res.into_body(), 64 * 1024)
             .await
@@ -149,12 +144,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-        let ct = res
-            .headers()
-            .get("content-type")
-            .unwrap()
-            .to_str()
-            .unwrap();
+        let ct = res.headers().get("content-type").unwrap().to_str().unwrap();
         assert!(ct.contains("shellscript"));
         let body = axum::body::to_bytes(res.into_body(), 64 * 1024)
             .await
@@ -169,7 +159,12 @@ mod tests {
         let h = test_harness::make().await;
         let res = h
             .router
-            .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);

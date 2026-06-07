@@ -126,11 +126,7 @@ impl BodyStore {
     /// Fetch the full body bytes plus its mime, for internal consumers (e.g.
     /// rule matching). Unlike `get`, returns raw bytes — no base64, no
     /// truncation — and bypasses the DTO assembly.
-    pub fn get_raw(
-        &self,
-        id: Uuid,
-        conn: &Mutex<Connection>,
-    ) -> Result<(Option<String>, Vec<u8>)> {
+    pub fn get_raw(&self, id: Uuid, conn: &Mutex<Connection>) -> Result<(Option<String>, Vec<u8>)> {
         let conn = conn.lock();
         let row = conn.query_row(
             "SELECT mime, storage, inline_blob, file_path

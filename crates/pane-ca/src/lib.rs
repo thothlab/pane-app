@@ -47,9 +47,7 @@ impl CaStore {
             // Ed25519 SPKI OID in the DER, transparently rotate to ECDSA
             // so the user doesn't have to know about this gotcha.
             if is_ed25519_pem(&existing.pem) {
-                tracing::info!(
-                    "rotating legacy Ed25519 CA to ECDSA P-256 (Android compatibility)"
-                );
+                tracing::info!("rotating legacy Ed25519 CA to ECDSA P-256 (Android compatibility)");
                 let store = Self::rotate_existing(storage.clone(), existing.id)?;
                 return Ok(store);
             }
@@ -202,8 +200,10 @@ impl CaStore {
                 })
             }
             "qr" => {
-                let url = format!("data:application/x-pem-file;base64,{}",
-                    base64::engine::general_purpose::STANDARD.encode(&pem));
+                let url = format!(
+                    "data:application/x-pem-file;base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(&pem)
+                );
                 let qr = qrcode::QrCode::new(url.as_bytes())?;
                 let svg = qr.render::<qrcode::render::svg::Color>().build();
                 Ok(CaExportResult {
@@ -295,8 +295,7 @@ fn is_ed25519_pem(pem: &str) -> bool {
         Ok(d) => d,
         Err(_) => return false,
     };
-    der.windows(5)
-        .any(|w| w == [0x06, 0x03, 0x2B, 0x65, 0x70])
+    der.windows(5).any(|w| w == [0x06, 0x03, 0x2B, 0x65, 0x70])
 }
 
 fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
@@ -377,7 +376,6 @@ fn write_file(id: &Uuid, key_pem: &str) -> Result<()> {
 }
 
 fn fallback_path(id: &Uuid) -> std::path::PathBuf {
-    let dirs = directories::ProjectDirs::from("tech", "thothlab", "pane")
-        .expect("project dirs");
+    let dirs = directories::ProjectDirs::from("tech", "thothlab", "pane").expect("project dirs");
     dirs.data_dir().join("ca-keys").join(format!("{id}.pem"))
 }

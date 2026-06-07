@@ -11,7 +11,9 @@ use pane_ca::CaMaterial;
 use pane_engine::{EngineConfig, ProxyEngine};
 use pane_engine_mitm::MitmEngine;
 use pane_storage::Storage;
-use rcgen::{BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, PKCS_ED25519};
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, PKCS_ED25519,
+};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use time::OffsetDateTime;
@@ -119,7 +121,14 @@ async fn plain_http_post_body_round_trip() {
     let sha = format!("{:x}", Sha256::digest(ca.cert_pem.as_bytes()));
     let nb = OffsetDateTime::now_utc();
     storage
-        .insert_ca(ca.id, &ca.cert_pem, &sha, "pane-test-ca", nb, nb + time::Duration::days(365))
+        .insert_ca(
+            ca.id,
+            &ca.cert_pem,
+            &sha,
+            "pane-test-ca",
+            nb,
+            nb + time::Duration::days(365),
+        )
         .unwrap();
 
     // Mock HTTP upstream.
@@ -132,7 +141,12 @@ async fn plain_http_post_body_round_trip() {
     storage.session_record(proxy_addr).unwrap();
     let engine = MitmEngine::new(storage.clone());
     let _handle = engine
-        .start(EngineConfig { listen: proxy_addr, ca: ca.clone(), pac_listen: None, heartbeat_listen: None })
+        .start(EngineConfig {
+            listen: proxy_addr,
+            ca: ca.clone(),
+            pac_listen: None,
+            heartbeat_listen: None,
+        })
         .await
         .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -185,6 +199,13 @@ async fn plain_http_post_body_round_trip() {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .unwrap();
-    assert_eq!(status, Some(200), "capture.status should be persisted as 200");
-    assert!(req_body_id.is_some(), "capture.req_body_id should be set after body forward");
+    assert_eq!(
+        status,
+        Some(200),
+        "capture.status should be persisted as 200"
+    );
+    assert!(
+        req_body_id.is_some(),
+        "capture.req_body_id should be set after body forward"
+    );
 }

@@ -18,10 +18,7 @@ pub async fn rule_get(state: State<'_, AppState>, id: Uuid) -> CmdResult<RuleDto
 }
 
 #[tauri::command]
-pub async fn rule_upsert(
-    state: State<'_, AppState>,
-    args: RuleUpsertArgs,
-) -> CmdResult<RuleDto> {
+pub async fn rule_upsert(state: State<'_, AppState>, args: RuleUpsertArgs) -> CmdResult<RuleDto> {
     state.storage.upsert_rule(args).map_err(to_api("db"))
 }
 

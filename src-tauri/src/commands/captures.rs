@@ -24,10 +24,7 @@ pub async fn captures_get(state: State<'_, AppState>, id: Uuid) -> CmdResult<Cap
 }
 
 #[tauri::command]
-pub async fn get_body(
-    state: State<'_, AppState>,
-    args: GetBodyArgs,
-) -> CmdResult<CaptureBodyDto> {
+pub async fn get_body(state: State<'_, AppState>, args: GetBodyArgs) -> CmdResult<CaptureBodyDto> {
     state
         .storage
         .get_body(args.body_id, args.max_bytes)

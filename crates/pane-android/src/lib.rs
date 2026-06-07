@@ -197,8 +197,14 @@ impl AndroidPlatform {
         if let Err(e) = run(
             "adb",
             &[
-                "-s", serial, "shell", "settings", "put", "global",
-                "http_proxy", "127.0.0.1:8888",
+                "-s",
+                serial,
+                "shell",
+                "settings",
+                "put",
+                "global",
+                "http_proxy",
+                "127.0.0.1:8888",
             ],
         )
         .await
@@ -210,7 +216,12 @@ impl AndroidPlatform {
         let _ = run(
             "adb",
             &[
-                "-s", serial, "shell", "settings", "put", "global",
+                "-s",
+                serial,
+                "shell",
+                "settings",
+                "put",
+                "global",
                 "http_proxy_pac",
                 "http://127.0.0.1:8889/proxy.pac",
             ],
@@ -219,7 +230,12 @@ impl AndroidPlatform {
         let _ = run(
             "adb",
             &[
-                "-s", serial, "shell", "settings", "put", "global",
+                "-s",
+                serial,
+                "shell",
+                "settings",
+                "put",
+                "global",
                 "global_proxy_pac_url",
                 "http://127.0.0.1:8889/proxy.pac",
             ],
@@ -273,17 +289,42 @@ impl AndroidPlatform {
         // already-clean state and doesn't bother.
         let _ = run(
             "adb",
-            &["-s", serial, "shell", "settings", "put", "global", "http_proxy", ":0"],
+            &[
+                "-s",
+                serial,
+                "shell",
+                "settings",
+                "put",
+                "global",
+                "http_proxy",
+                ":0",
+            ],
         )
         .await;
         let _ = run(
             "adb",
-            &["-s", serial, "shell", "settings", "delete", "global", "http_proxy_pac"],
+            &[
+                "-s",
+                serial,
+                "shell",
+                "settings",
+                "delete",
+                "global",
+                "http_proxy_pac",
+            ],
         )
         .await;
         let _ = run(
             "adb",
-            &["-s", serial, "shell", "settings", "delete", "global", "global_proxy_pac_url"],
+            &[
+                "-s",
+                serial,
+                "shell",
+                "settings",
+                "delete",
+                "global",
+                "global_proxy_pac_url",
+            ],
         )
         .await;
 
@@ -293,7 +334,16 @@ impl AndroidPlatform {
         // Secure Folder secondary-user surprises.
         let _ = run(
             "adb",
-            &["-s", serial, "shell", "am", "force-stop", "--user", "0", HELPER_PACKAGE],
+            &[
+                "-s",
+                serial,
+                "shell",
+                "am",
+                "force-stop",
+                "--user",
+                "0",
+                HELPER_PACKAGE,
+            ],
         )
         .await;
 
@@ -337,7 +387,15 @@ async fn ensure_helper_running(serial: &str, apk_path: Option<&PathBuf>) -> Resu
 
     run(
         "adb",
-        &["-s", serial, "install", "-r", "--user", "0", apk.to_str().unwrap()],
+        &[
+            "-s",
+            serial,
+            "install",
+            "-r",
+            "--user",
+            "0",
+            apk.to_str().unwrap(),
+        ],
     )
     .await
     .map_err(|e| anyhow!("pm install failed: {e}"))?;
@@ -351,7 +409,14 @@ async fn ensure_helper_running(serial: &str, apk_path: Option<&PathBuf>) -> Resu
     if let Err(e) = run(
         "adb",
         &[
-            "-s", serial, "shell", "pm", "grant", "--user", "0", HELPER_PACKAGE,
+            "-s",
+            serial,
+            "shell",
+            "pm",
+            "grant",
+            "--user",
+            "0",
+            HELPER_PACKAGE,
             "android.permission.WRITE_SECURE_SETTINGS",
         ],
     )
@@ -366,7 +431,17 @@ async fn ensure_helper_running(serial: &str, apk_path: Option<&PathBuf>) -> Resu
     // no UI flash for the user.
     run(
         "adb",
-        &["-s", serial, "shell", "am", "start", "--user", "0", "-n", HELPER_LAUNCHER],
+        &[
+            "-s",
+            serial,
+            "shell",
+            "am",
+            "start",
+            "--user",
+            "0",
+            "-n",
+            HELPER_LAUNCHER,
+        ],
     )
     .await
     .map_err(|e| anyhow!("am start failed: {e}"))?;
@@ -432,7 +507,11 @@ async fn push_ca_file(serial: &str, pem: &str) -> Result<()> {
     let _ = run(
         "adb",
         &[
-            "-s", serial, "shell", "sh", "-c",
+            "-s",
+            serial,
+            "shell",
+            "sh",
+            "-c",
             "rm -f /sdcard/Pane/pane-ca.* /sdcard/Documents/pane-ca.*",
         ],
     )
@@ -449,9 +528,12 @@ async fn push_ca_file(serial: &str, pem: &str) -> Result<()> {
     // builds (Samsung Knox), leaving the user with a phantom file.
     // Cheap sanity check: read the first line back and confirm it's
     // the PEM header.
-    let head = run("adb", &["-s", serial, "shell", "head", "-1", DEVICE_CA_PATH])
-        .await
-        .unwrap_or_default();
+    let head = run(
+        "adb",
+        &["-s", serial, "shell", "head", "-1", DEVICE_CA_PATH],
+    )
+    .await
+    .unwrap_or_default();
     if !head.contains("BEGIN CERTIFICATE") {
         return Err(anyhow!(
             "push appeared to succeed but {DEVICE_CA_PATH} doesn't look like a PEM (got: {})",
@@ -467,9 +549,15 @@ async fn push_ca_file(serial: &str, pem: &str) -> Result<()> {
     let _ = run(
         "adb",
         &[
-            "-s", serial, "shell", "am", "broadcast",
-            "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-            "-d", &format!("file://{DEVICE_CA_PATH}"),
+            "-s",
+            serial,
+            "shell",
+            "am",
+            "broadcast",
+            "-a",
+            "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+            "-d",
+            &format!("file://{DEVICE_CA_PATH}"),
         ],
     )
     .await;
@@ -487,11 +575,22 @@ async fn install_system_ca(serial: &str, pem: &str) -> Result<()> {
     run("adb", &["-s", serial, "root"]).await?;
     run("adb", &["-s", serial, "wait-for-device"]).await?;
     run("adb", &["-s", serial, "remount"]).await?;
-    run("adb", &["-s", serial, "push", tmp.to_str().unwrap(), &target]).await?;
+    run(
+        "adb",
+        &["-s", serial, "push", tmp.to_str().unwrap(), &target],
+    )
+    .await?;
     run("adb", &["-s", serial, "shell", "chmod", "644", &target]).await?;
     let _ = run(
         "adb",
-        &["-s", serial, "shell", "chcon", "u:object_r:system_file:s0", &target],
+        &[
+            "-s",
+            serial,
+            "shell",
+            "chcon",
+            "u:object_r:system_file:s0",
+            &target,
+        ],
     )
     .await;
     Ok(())

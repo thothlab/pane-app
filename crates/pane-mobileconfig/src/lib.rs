@@ -90,10 +90,7 @@ fn profile_xml(payloads: &[String]) -> String {
 }
 
 fn pem_to_der_b64(pem: &str) -> String {
-    let body: String = pem
-        .lines()
-        .filter(|l| !l.starts_with("-----"))
-        .collect();
+    let body: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
     // Indent for readability inside the <data> block.
     body.as_bytes()
         .chunks(60)

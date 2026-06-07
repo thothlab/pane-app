@@ -64,7 +64,11 @@ pub async fn send(storage: &Storage, args: ReplaySendArgs) -> Result<ReplayRecor
     let req_body_id = if body_bytes.is_empty() {
         None
     } else {
-        Some(storage.bodies.put(&body_bytes, "identity", None, &storage.conn)?)
+        Some(
+            storage
+                .bodies
+                .put(&body_bytes, "identity", None, &storage.conn)?,
+        )
     };
     let mime = res_headers
         .iter()
@@ -73,7 +77,11 @@ pub async fn send(storage: &Storage, args: ReplaySendArgs) -> Result<ReplayRecor
     let res_body_id = if resp_bytes.is_empty() {
         None
     } else {
-        Some(storage.bodies.put(&resp_bytes, "identity", mime, &storage.conn)?)
+        Some(
+            storage
+                .bodies
+                .put(&resp_bytes, "identity", mime, &storage.conn)?,
+        )
     };
 
     {
@@ -149,7 +157,10 @@ fn url_parse(s: &str) -> Result<ParsedUrl> {
         None => (rest, "/".into()),
     };
     let (host, port) = match authority.rsplit_once(':') {
-        Some((h, p)) => (h.to_string(), p.parse().unwrap_or_else(|_| default_port(scheme))),
+        Some((h, p)) => (
+            h.to_string(),
+            p.parse().unwrap_or_else(|_| default_port(scheme)),
+        ),
         None => (authority.to_string(), default_port(scheme)),
     };
     Ok(ParsedUrl {

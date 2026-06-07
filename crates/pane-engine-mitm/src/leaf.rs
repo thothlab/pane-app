@@ -33,7 +33,10 @@ impl std::fmt::Debug for LeafCache {
 
 impl LeafCache {
     pub fn new(ca: Arc<CaMaterial>) -> Self {
-        Self { ca, cache: Mutex::new(HashMap::new()) }
+        Self {
+            ca,
+            cache: Mutex::new(HashMap::new()),
+        }
     }
 
     pub fn resolve_sni(&self, sni: &str) -> anyhow::Result<Arc<CertifiedKey>> {
@@ -49,7 +52,9 @@ impl LeafCache {
         let mut dn = DistinguishedName::new();
         dn.push(DnType::CommonName, sni);
         params.distinguished_name = dn;
-        params.subject_alt_names.push(SanType::DnsName(sni.try_into()?));
+        params
+            .subject_alt_names
+            .push(SanType::DnsName(sni.try_into()?));
         let now = time::OffsetDateTime::now_utc();
         params.not_before = now - time::Duration::days(1);
         params.not_after = now + time::Duration::days(90);

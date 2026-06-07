@@ -5,7 +5,10 @@ use tauri::State;
 use uuid::Uuid;
 
 #[tauri::command]
-pub async fn filters_save(state: State<'_, AppState>, args: SaveFilterArgs) -> CmdResult<FilterDto> {
+pub async fn filters_save(
+    state: State<'_, AppState>,
+    args: SaveFilterArgs,
+) -> CmdResult<FilterDto> {
     state.storage.save_filter(args).map_err(to_api("db"))
 }
 

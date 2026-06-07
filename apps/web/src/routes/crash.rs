@@ -77,8 +77,7 @@ pub async fn submit(
     let report: CrashReport = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => {
-            return (StatusCode::BAD_REQUEST, format!("invalid JSON: {e}"))
-                .into_response();
+            return (StatusCode::BAD_REQUEST, format!("invalid JSON: {e}")).into_response();
         }
     };
     if report.schema != "pane.crash.v1" {
@@ -104,8 +103,7 @@ pub async fn submit(
     let day_dir = state.data_dir.join("crashes").join(&day);
     if let Err(e) = tokio::fs::create_dir_all(&day_dir).await {
         tracing::error!(error = %e, "create_dir_all crashes/<day> failed");
-        return (StatusCode::INTERNAL_SERVER_ERROR, "storage unavailable")
-            .into_response();
+        return (StatusCode::INTERNAL_SERVER_ERROR, "storage unavailable").into_response();
     }
 
     let report_path = day_dir.join(format!("{hash}.json"));
@@ -116,8 +114,7 @@ pub async fn submit(
     if !already_existed {
         if let Err(e) = tokio::fs::write(&report_path, &body).await {
             tracing::error!(error = %e, "write crash report failed");
-            return (StatusCode::INTERNAL_SERVER_ERROR, "storage unavailable")
-                .into_response();
+            return (StatusCode::INTERNAL_SERVER_ERROR, "storage unavailable").into_response();
         }
     }
     // Increment the count (atomic-ish for a single-process service; we
@@ -239,8 +236,7 @@ mod tests {
     #[tokio::test]
     async fn bad_schema_is_rejected() {
         let h = test_harness::make().await;
-        let mut body: serde_json::Value =
-            serde_json::from_slice(&sample_body("boom")).unwrap();
+        let mut body: serde_json::Value = serde_json::from_slice(&sample_body("boom")).unwrap();
         body["schema"] = serde_json::json!("not-a-known-schema");
         let res = post(&h, serde_json::to_vec(&body).unwrap()).await;
         assert_eq!(res.status(), StatusCode::BAD_REQUEST);

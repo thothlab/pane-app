@@ -2,7 +2,7 @@ use super::{to_api, CmdResult};
 use crate::state::AppState;
 use pane_engine::{EngineConfig, ProxyEngine};
 use pane_engine_mitm::MitmEngine;
-use pane_ipc::{ProxyStartArgs, SessionDto, ProxyStatusDto};
+use pane_ipc::{ProxyStartArgs, ProxyStatusDto, SessionDto};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
