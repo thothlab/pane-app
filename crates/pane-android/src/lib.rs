@@ -121,14 +121,23 @@ impl AndroidPlatform {
         }
 
         // Proxy + PAC setup over USB. Two reverses needed:
-        //   8888 → the MITM proxy itself
+        //   8888 → the MITM proxy itself (direct http_proxy target)
         //   8889 → the PAC server (returns "PROXY 127.0.0.1:8888")
-        // We point the device at the PAC URL (not the direct proxy).
-        // When the USB cable is yanked, the PAC URL becomes
-        // unreachable and Android falls back to DIRECT — the device
-        // keeps its internet. A direct `http_proxy` setting strands
-        // the device on ERR_PROXY_CONNECTION_FAILED in the same
-        // scenario, which is the bug we're fixing.
+        // We set BOTH http_proxy and http_proxy_pac:
+        //   - http_proxy = "127.0.0.1:8888" — drives OkHttp, Retrofit,
+        //     and most native Android HTTP stacks via
+        //     ProxySelector.getDefault(). This is what Charles uses and
+        //     what Pane used pre-0.1.21. *Required* for MITM to work
+        //     with banking apps and most production OkHttp clients —
+        //     they read http_proxy but ignore http_proxy_pac.
+        //   - http_proxy_pac points at our PAC server. Chrome / WebView
+        //     respect it as the "preferred" setting. When USB unplugs,
+        //     PAC becomes unreachable → Chrome falls back to DIRECT.
+        //     OkHttp doesn't get that benefit (stuck on dead http_proxy
+        //     until Pane is restarted or stop() runs), but that's the
+        //     unavoidable trade-off — the alternative (PAC-only) means
+        //     OkHttp never goes through Pane at all, which is the
+        //     regression that landed in 0.1.21 and was missed until now.
         if let Err(e) = run("adb", &["-s", serial, "reverse", "tcp:8888", "tcp:8888"]).await {
             tracing::error!(error = %e, serial, "adb reverse 8888 failed — device cannot reach proxy");
             last_error = Some(format!("adb reverse failed: {e}"));
@@ -137,30 +146,21 @@ impl AndroidPlatform {
             tracing::warn!(error = %e, serial, "adb reverse 8889 (PAC) failed");
         }
 
-        // Clear any stale direct-proxy setting from older Pane versions —
-        // it would otherwise override our PAC config and bring the
-        // strand-on-unplug bug right back.
-        let _ = run(
-            "adb",
-            &["-s", serial, "shell", "settings", "put", "global", "http_proxy", ":0"],
-        )
-        .await;
+        // Direct http_proxy — primary, what OkHttp reads.
         if let Err(e) = run(
             "adb",
             &[
                 "-s", serial, "shell", "settings", "put", "global",
-                "global_proxy_pac_url",
-                "http://127.0.0.1:8889/proxy.pac",
+                "http_proxy", "127.0.0.1:8888",
             ],
         )
         .await
         {
-            tracing::warn!(error = %e, serial, "setting PAC URL failed");
+            tracing::warn!(error = %e, serial, "setting http_proxy failed");
         }
-        // http_proxy_pac is the alias Android uses on most builds;
-        // global_proxy_pac_url is the internal name. Set both to be
-        // resilient against OEM variants.
-        if let Err(e) = run(
+        // PAC URL — bonus for Chrome/WebView, which fall back to DIRECT
+        // on unplug. Most native apps ignore it; harmless if set.
+        let _ = run(
             "adb",
             &[
                 "-s", serial, "shell", "settings", "put", "global",
@@ -168,10 +168,16 @@ impl AndroidPlatform {
                 "http://127.0.0.1:8889/proxy.pac",
             ],
         )
-        .await
-        {
-            tracing::debug!(error = %e, "http_proxy_pac not accepted (older Android)");
-        }
+        .await;
+        let _ = run(
+            "adb",
+            &[
+                "-s", serial, "shell", "settings", "put", "global",
+                "global_proxy_pac_url",
+                "http://127.0.0.1:8889/proxy.pac",
+            ],
+        )
+        .await;
 
         Ok(DeviceDto {
             id: Uuid::new_v4(),
