@@ -199,13 +199,9 @@ fn apply_body(body: &mut Value, op: &PatchOp, tail: &[Step<'_>]) -> bool {
             _ => false,
         },
         (PatchOp::Delete { .. }, Step::Index(i)) => match parent {
-            Value::Array(arr) => {
-                if i < arr.len() {
-                    arr.remove(i);
-                    true
-                } else {
-                    false
-                }
+            Value::Array(arr) if i < arr.len() => {
+                arr.remove(i);
+                true
             }
             _ => false,
         },
@@ -256,13 +252,9 @@ fn set_key(parent: &mut Value, k: &str, value: Value) -> bool {
 
 fn set_index(parent: &mut Value, i: usize, value: Value) -> bool {
     match parent {
-        Value::Array(arr) => {
-            if i < arr.len() {
-                arr[i] = value;
-                true
-            } else {
-                false
-            }
+        Value::Array(arr) if i < arr.len() => {
+            arr[i] = value;
+            true
         }
         _ => false,
     }
