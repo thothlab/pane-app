@@ -418,6 +418,38 @@ async fn ensure_helper_running(serial: &str, apk_path: Option<&PathBuf>) -> Resu
         tracing::warn!(error = %e, serial, "pm grant WRITE_SECURE_SETTINGS failed — watchdog won't be able to clear http_proxy");
     }
 
+    // POST_NOTIFICATIONS is a runtime permission (Android 13+). Without
+    // it, the helper's LauncherActivity gets stuck on the system
+    // `GrantPermissionsActivity` dialog waiting for the user to tap
+    // Allow — and if they don't (easy to miss, since pairing is a
+    // background flow), `startForegroundService` never runs and the
+    // HeartbeatService stays dead. Same `pm grant` trick as
+    // WRITE_SECURE_SETTINGS dodges the dialog entirely on Android 13+
+    // (no-op on 12 and below — permission doesn't exist there).
+    if let Err(e) = run(
+        "adb",
+        &[
+            "-s",
+            serial,
+            "shell",
+            "pm",
+            "grant",
+            "--user",
+            "0",
+            HELPER_PACKAGE,
+            "android.permission.POST_NOTIFICATIONS",
+        ],
+    )
+    .await
+    {
+        // Pre-Android-13 devices return "Unknown permission" — that's
+        // expected, not a failure. Only log if it looks like something
+        // else (e.g. install in wrong user).
+        if !e.to_string().contains("Unknown permission") {
+            tracing::warn!(error = %e, serial, "pm grant POST_NOTIFICATIONS failed — FGS notification will be hidden but service still runs");
+        }
+    }
+
     // Launch via the LauncherActivity (not the service directly) so
     // POST_NOTIFICATIONS gets requested on first run. The activity
     // calls startForegroundService and finishes immediately —
