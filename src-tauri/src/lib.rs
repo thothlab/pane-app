@@ -97,7 +97,14 @@ pub fn run() {
             //   - Pane proxy stopped → clear the proxy setting (device gets
             //     its internet back, ready for normal use).
             let app_handle = app.handle().clone();
-            tokio::spawn(async move {
+            // tauri::async_runtime::spawn, NOT tokio::spawn — Tauri 2's
+            // setup() does NOT run inside a current_thread tokio runtime
+            // context, so `tokio::spawn(...)` panics with "no reactor
+            // running" the moment it tries to register the task. Tauri
+            // ships its own multi-thread runtime; spawn through that.
+            // Caused 0.1.37 + 0.1.38 to abort during
+            // applicationDidFinishLaunching on every macOS launch.
+            tauri::async_runtime::spawn(async move {
                 device_watchdog(app_handle).await;
             });
             Ok(())
