@@ -647,7 +647,7 @@ impl Storage {
                  FROM rule
                  ORDER BY priority ASC, created_at ASC",
             )?;
-            let rows = stmt.query_map([], |r| Self::map_rule_row(r))?;
+            let rows = stmt.query_map([], Self::map_rule_row)?;
             let mut v = Vec::new();
             for r in rows {
                 v.push(r?);
@@ -676,7 +676,7 @@ impl Storage {
                     created_at, updated_at, collection_id, mode, patches
              FROM rule WHERE id=?1",
             params![id.to_string()],
-            |r| Self::map_rule_row(r),
+            Self::map_rule_row,
         )?;
         drop(conn);
         if let Some(bid) = dto.res_body_id {
@@ -801,7 +801,7 @@ impl Storage {
                           r.priority ASC,
                           r.created_at ASC",
             )?;
-            let rows = stmt.query_map([], |r| Self::map_rule_row(r))?;
+            let rows = stmt.query_map([], Self::map_rule_row)?;
             let mut v = Vec::new();
             for r in rows {
                 v.push(r?);

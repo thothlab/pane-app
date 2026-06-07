@@ -112,9 +112,9 @@ fn parse_query(q: &str) -> Vec<(String, String)> {
         return Vec::new();
     }
     q.split('&')
-        .filter_map(|kv| {
+        .map(|kv| {
             let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
-            Some((percent_decode(k), percent_decode(v)))
+            (percent_decode(k), percent_decode(v))
         })
         .collect()
 }

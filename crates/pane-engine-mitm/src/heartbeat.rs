@@ -74,7 +74,7 @@ async fn serve(sock: tokio::net::TcpStream) -> anyhow::Result<()> {
         if n == 0 {
             return Ok(()); // EOF — peer closed cleanly
         }
-        let trimmed = line.trim_end_matches(|c| c == '\n' || c == '\r');
+        let trimmed = line.trim_end_matches(['\n', '\r']);
         if trimmed != "PING" {
             // Unknown frame — close. Don't try to recover; the APK only
             // ever sends PING, so anything else is either a bug or a

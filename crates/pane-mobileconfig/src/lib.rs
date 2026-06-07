@@ -11,7 +11,6 @@
 //! generation pure so a signing step can wrap it.
 
 use anyhow::Result;
-use base64::Engine as _;
 use uuid::Uuid;
 
 pub fn build_ca_profile(ca_pem: &str) -> Result<String> {

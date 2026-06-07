@@ -17,6 +17,12 @@ use uuid::Uuid;
 
 pub struct IosPlatform;
 
+impl Default for IosPlatform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IosPlatform {
     pub fn new() -> Self {
         Self

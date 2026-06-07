@@ -550,6 +550,7 @@ fn parse_http_target(target: &str) -> (String, u16, String) {
     (String::from("unknown"), 80, target.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_capture_opening(
     storage: &Storage,
     id: Uuid,

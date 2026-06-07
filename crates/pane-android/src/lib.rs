@@ -43,6 +43,12 @@ pub struct AndroidPlatform {
     helper_apk: std::sync::OnceLock<PathBuf>,
 }
 
+impl Default for AndroidPlatform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AndroidPlatform {
     pub fn new() -> Self {
         Self {
