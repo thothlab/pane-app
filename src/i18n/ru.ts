@@ -77,6 +77,13 @@ const ru: Dict = {
     copy_path_title: "Скопировать путь",
   },
   captures: {
+    column_idx: "#",
+    column_method: "Метод",
+    column_status: "Статус",
+    column_host: "Хост",
+    column_path: "Путь",
+    column_ms: "мс",
+    column_bytes: "байт",
     filter_placeholder: "google · host:api.example.com · status:5.. · !error:tls_handshake",
     filter_help:
       "Слово без префикса: совпадает с host ИЛИ path. Например 'google'.\nkey:value — host, path, method, status, mime, size, duration, error.\nМаски: * внутри значения (например host:*google*).\nОтрицание через ! (например !error:tls_handshake, !host:cdn.*).\nДиапазоны: status:500..599 — size:0..1024 — duration:..200.\nНесколько токенов объединяются по AND (например host:rc3.test.dev-og.com method:post).",

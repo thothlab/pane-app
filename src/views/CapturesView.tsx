@@ -45,16 +45,18 @@ function loadListPaneWidth(): number {
   return LIST_PANE_DEFAULT;
 }
 
-// Columns: header label + default width. Widths are mutable px values
-// (no `fr`) so the resize math stays predictable. Persisted to localStorage.
+// Columns: i18n key + default width. Widths are mutable px values
+// (no `fr`) so the resize math stays predictable. Persisted to
+// localStorage. Header cells truncate with ellipsis when the column
+// is narrower than the label — full text shows on hover via title.
 const COLUMNS = [
-  { key: "idx", label: "#", width: 40 },
-  { key: "method", label: "M", width: 64 },
-  { key: "status", label: "St", width: 56 },
-  { key: "host", label: "Host", width: 220 },
-  { key: "path", label: "Path", width: 320 },
-  { key: "ms", label: "ms", width: 64 },
-  { key: "bytes", label: "bytes", width: 72 },
+  { key: "idx", labelKey: "captures.column_idx", width: 40 },
+  { key: "method", labelKey: "captures.column_method", width: 80 },
+  { key: "status", labelKey: "captures.column_status", width: 72 },
+  { key: "host", labelKey: "captures.column_host", width: 220 },
+  { key: "path", labelKey: "captures.column_path", width: 320 },
+  { key: "ms", labelKey: "captures.column_ms", width: 64 },
+  { key: "bytes", labelKey: "captures.column_bytes", width: 72 },
 ] as const;
 const MIN_COL_WIDTH = 28;
 const WIDTHS_STORAGE_KEY = "pane:captures-col-widths";
@@ -464,8 +466,8 @@ const CapturesView: Component = () => {
           >
             <For each={COLUMNS}>
               {(col, i) => (
-                <div class="relative px-2 py-1 overflow-hidden">
-                  <span class="truncate block">{col.label}</span>
+                <div class="relative px-2 py-1 overflow-hidden" title={t()(col.labelKey)}>
+                  <span class="truncate block">{t()(col.labelKey)}</span>
                   <Show when={i() < COLUMNS.length - 1}>
                     {/*
                       6px-wide hit area for the cursor; the 1px visible line
