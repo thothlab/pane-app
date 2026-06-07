@@ -50,3 +50,4 @@ tools/pane-helper-android/build/
 tools/pane-helper-android/app/build/
 tools/pane-helper-android/local.properties
 tools/pane-helper-android/.idea/
+.claude/
