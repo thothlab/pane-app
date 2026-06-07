@@ -120,6 +120,7 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
 
           <Show when={tab() === "request"}>
             <HeadersBodySplit
+              kind="request"
               headers={full()!.req_headers ?? []}
               body={body()}
               onLoadFull={loadFullBody}
@@ -128,6 +129,7 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
 
           <Show when={tab() === "response"}>
             <HeadersBodySplit
+              kind="response"
               headers={full()!.res_headers ?? []}
               body={body()}
               onLoadFull={loadFullBody}
@@ -225,14 +227,48 @@ const HeaderRow: Component<{ header: { name: string; value: string } }> = (p) =>
   );
 };
 
+/// Keyed localStorage prefix for per-pane Headers/Body split height.
+/// One entry per pane kind ("request" / "response") so the user's
+/// chosen split sticks per pane across captures and app restarts.
+const HEADERS_HEIGHT_KEY_PREFIX = "pane.detail.headers-height";
+const DEFAULT_HEADERS_HEIGHT_PX = 220;
+
 const HeadersBodySplit: Component<{
+  kind: "request" | "response";
   headers: { name: string; value: string }[];
   body: CaptureBodyDto | null;
   onLoadFull: () => void;
 }> = (p) => {
   const [headersCollapsed, setHeadersCollapsed] = createSignal(false);
-  // Headers area height in px. Default to ~40% of the surrounding pane.
-  const [headersHeight, setHeadersHeight] = createSignal(220);
+  // Headers area height in px, persisted per `kind`. Single localStorage
+  // read on mount; subsequent updates write through on every change so
+  // a drag-resize survives reload + restart.
+  const storageKey = `${HEADERS_HEIGHT_KEY_PREFIX}.${p.kind}`;
+  const readStoredHeight = (): number => {
+    const raw = (() => {
+      try {
+        return localStorage.getItem(storageKey);
+      } catch {
+        return null; // safari private mode / SSR / etc.
+      }
+    })();
+    const n = raw === null ? NaN : parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_HEADERS_HEIGHT_PX;
+  };
+  const writeStoredHeight = (v: number) => {
+    try {
+      localStorage.setItem(storageKey, String(v));
+    } catch {
+      // swallow — storage unavailable, just lose persistence
+    }
+  };
+  const [headersHeight, setHeadersHeightRaw] = createSignal(readStoredHeight());
+  const setHeadersHeight = (next: number | ((prev: number) => number)) => {
+    const v = typeof next === "function" ? next(headersHeight()) : next;
+    writeStoredHeight(v);
+    setHeadersHeightRaw(v);
+  };
+
   const COLLAPSED_PX = 28;
   const MIN_HEADERS_PX = 60;
   const MIN_BODY_PX = 100;
@@ -277,7 +313,10 @@ const HeadersBodySplit: Component<{
         when={!headersCollapsed()}
         fallback={<div />}
       >
-        <HorizontalResizer onResize={resize} onReset={() => setHeadersHeight(220)} />
+        <HorizontalResizer
+          onResize={resize}
+          onReset={() => setHeadersHeight(DEFAULT_HEADERS_HEIGHT_PX)}
+        />
       </Show>
 
       <div class="min-h-0 overflow-auto px-3 py-2">
