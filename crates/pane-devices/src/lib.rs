@@ -109,6 +109,24 @@ impl DeviceManager {
     /// Re-sync on each row by hand. Returns the serials we successfully
     /// re-applied. Errors per device are swallowed — adb may not be
     /// connected, the user may have unplugged, etc.
+    /// Single-device version of reapply_all_android_proxies. Used by
+    /// the watchdog on reconnect events.
+    pub async fn reapply_one_android_proxy(
+        &self,
+        serial: &str,
+        ca: CaMaterial,
+    ) -> anyhow::Result<()> {
+        self.android.add_usb(serial, &ca).await?;
+        Ok(())
+    }
+
+    /// Single-device cleanup. Used by the watchdog when a paired phone
+    /// reconnects while Pane proxy is stopped — restores the phone's
+    /// internet by stripping the stale http_proxy setting.
+    pub async fn clear_one_android_proxy(&self, serial: &str) -> anyhow::Result<()> {
+        self.android.remove(serial).await
+    }
+
     pub async fn reapply_all_android_proxies(&self, ca: CaMaterial) -> Vec<String> {
         let serials: Vec<String> = self
             .list()

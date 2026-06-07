@@ -72,6 +72,18 @@ pub fn run() {
             if let Err(e) = install_app_menu(app.handle()) {
                 tracing::warn!(error = %e, "failed to install app menu");
             }
+            // Spawn device watchdog: polls adb for attached devices every 5s,
+            // auto-applies the right thing when a paired phone reconnects.
+            // Fixes the "unplugged USB → device stuck with dead proxy → no
+            // internet" footgun. When the phone comes back:
+            //   - Pane proxy running → re-apply http_proxy + reverse (MITM
+            //     resumes seamlessly, no manual Re-sync needed).
+            //   - Pane proxy stopped → clear the proxy setting (device gets
+            //     its internet back, ready for normal use).
+            let app_handle = app.handle().clone();
+            tokio::spawn(async move {
+                device_watchdog(app_handle).await;
+            });
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -129,6 +141,92 @@ fn install_app_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
 
     app.set_menu(menu)?;
     Ok(())
+}
+
+/// Background watchdog that reconciles paired Android devices with their
+/// actual connection state. Runs every 5 seconds.
+///
+/// Why: when the user yanks the USB cable without first stopping the
+/// proxy in Pane, the phone's `http_proxy` setting keeps pointing at
+/// 127.0.0.1:8888 — but adb reverse is gone, so connections to that
+/// port refuse, and the device loses internet. The user can't easily
+/// undo this from the phone itself (Samsung settings hide global
+/// proxy clear). Watchdog fixes both directions:
+///
+///   - Phone reconnects + Pane proxy is running → re-apply http_proxy
+///     and adb reverse. MITM resumes without the user clicking Re-sync.
+///   - Phone reconnects + Pane proxy is NOT running → strip the proxy
+///     settings off the device, restoring its internet.
+///
+/// We only act on devices that are **paired** (have a `device` row),
+/// so plugging in a random unrelated phone doesn't touch its settings.
+/// Tracking last-seen serials skips the redundant work when nothing
+/// changed.
+async fn device_watchdog(app: tauri::AppHandle) {
+    use std::collections::HashSet;
+    use std::time::Duration;
+    use tauri::Manager;
+
+    let mut last_seen: HashSet<String> = HashSet::new();
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    // First tick fires immediately; skip it so we don't race app boot.
+    interval.tick().await;
+
+    loop {
+        interval.tick().await;
+        let state: tauri::State<AppState> = app.state();
+
+        // Snapshot what's plugged in right now.
+        let attached: HashSet<String> = match state.devices.discover_attached().await {
+            Ok(list) => list
+                .into_iter()
+                .filter(|d| d.platform == "android")
+                .map(|d| d.serial)
+                .collect(),
+            Err(_) => continue, // adb not on PATH or daemon hiccup — skip tick
+        };
+        if attached == last_seen {
+            continue;
+        }
+
+        // Newly-connected serials = attached \ last_seen.
+        let newly_connected: Vec<String> =
+            attached.difference(&last_seen).cloned().collect();
+        last_seen = attached;
+
+        if newly_connected.is_empty() {
+            continue;
+        }
+
+        // Cross-reference with paired devices.
+        let paired_serials: HashSet<String> = state
+            .devices
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| d.platform == "android" && d.connection == "usb")
+            .map(|d| d.serial)
+            .collect();
+
+        let proxy_running = state.proxy_handle.lock().is_some();
+        let ca = state.ca.material();
+
+        for serial in newly_connected {
+            if !paired_serials.contains(&serial) {
+                continue; // not one of ours, leave alone
+            }
+            if proxy_running {
+                let _ = state
+                    .devices
+                    .reapply_one_android_proxy(&serial, ca.clone())
+                    .await;
+                tracing::info!(serial, "watchdog: re-applied proxy on reconnect");
+            } else {
+                let _ = state.devices.clear_one_android_proxy(&serial).await;
+                tracing::info!(serial, "watchdog: cleared stale proxy on reconnect");
+            }
+        }
+    }
 }
 
 fn init_logging() {
