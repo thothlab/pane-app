@@ -65,13 +65,18 @@ show a warning — click **More info → Run anyway**.
    - **Android (rooted)** — drops the CA into the system trust store
      at `/system/etc/security/cacerts/`. **Fully automatic.**
    - **Android (no root)** — pushes the CA file to
-     `/sdcard/Pane/pane-ca.pem` and the device row shows a step-by-step
-     guide for the manual install (see below);
-   - wires up `adb reverse tcp:8888 tcp:8888` plus `tcp:8889 tcp:8889`
-     for the PAC server — traffic flows over USB, **no Wi-Fi setup
-     needed**;
-   - points the device at the PAC URL so DIRECT fallback kicks in on
-     unplug (see PAC section below).
+     `/sdcard/Download/pane-ca.pem` and the device row shows a
+     step-by-step guide for the manual install (see below);
+   - wires up `adb reverse tcp:8888 tcp:8888`, `tcp:8889 tcp:8889`
+     (PAC), and `tcp:8890 tcp:8890` (helper heartbeat) — traffic flows
+     over USB, **no Wi-Fi setup needed**;
+   - sets `http_proxy=127.0.0.1:8888` (primary, what OkHttp/Retrofit
+     and native HTTP stacks use) and `http_proxy_pac` pointing at the
+     local PAC server (bonus, for Chromium-based browsers);
+   - installs the companion APK `tech.thothlab.pane.helper` and grants
+     it `WRITE_SECURE_SETTINGS` + `POST_NOTIFICATIONS` via adb — a
+     watchdog that clears the proxy when you unplug USB (see "Helper
+     APK" below).
 5. On Android without root — follow the manual-install guide in the
    Devices row (collapsible "How to install the CA certificate" block).
 6. On iOS — confirm the profile in Settings → Profile Downloaded.
@@ -90,21 +95,58 @@ user-initiated on recent builds. No programmatic workaround exists
 without root.
 
 Pane does everything it can to make the manual step painless:
-- pushes `pane-ca.pem` into its own `/sdcard/Pane/` folder so Samsung
-  Smart Manager doesn't sweep it (Downloads gets cleaned);
+- pushes `pane-ca.pem` into `/sdcard/Download/` — the only folder the
+  system CertInstaller picker opens by default. Custom folders like
+  `/sdcard/Pane/` are invisible to the SAF picker on most Android
+  builds;
+- pre-cleans stale `pane-ca*` files from `/sdcard/Pane/` and
+  `/sdcard/Documents/` (legacy locations from earlier Pane versions)
+  so the picker can't pull up the wrong file;
 - the device row in Devices shows a collapsible guide with the exact
   click path for your Settings layout, a copy-to-clipboard for the
   file path, and the lock-screen PIN prerequisite reminder.
 
-### PAC-based proxy
+### Proxy configuration on the device
 
-Pane sets `http_proxy_pac` on the device, not a direct `http_proxy`.
-When USB is connected, the PAC server is reachable via `adb reverse`
-and traffic flows through Pane. When USB is unplugged (or Pane
-closes), the PAC URL becomes unreachable and Android transparently
-falls back to DIRECT — **the device keeps its internet**. The old
-direct-proxy approach used to strand the device on
-ERR_PROXY_CONNECTION_FAILED in that scenario.
+Pane sets **two** global settings keys on the device:
+
+- `http_proxy=127.0.0.1:8888` — the primary one. OkHttp, Retrofit,
+  native stacks (libcurl), HttpURLConnection — everything that reads
+  `ProxySelector.getDefault()` honors it. This is **mandatory**:
+  without it, 90% of Android apps don't route through Pane (Chrome
+  and WebView do, but those aren't usually the app you're debugging).
+- `http_proxy_pac=http://127.0.0.1:8889/proxy.pac` — bonus for
+  Chromium-based stacks (Chrome, WebView, Samsung Internet) which
+  prefer PAC.
+
+A PAC-only setup broke OkHttp apps (banking, MTS, most business
+apps), so Pane always sets both.
+
+### Helper APK — why the device keeps internet on unplug
+
+Earlier versions left `http_proxy` set after Stop proxy or USB
+unplug, so the device kept dialling a dead `127.0.0.1:8888` — no
+internet until you ran Remove device. Pane now installs a companion
+APK `tech.thothlab.pane.helper` (~4 MB) that holds a heartbeat
+socket back to Pane via adb-reverse'd `127.0.0.1:8890`.
+
+When the heartbeat dies (USB unplug, Pane closed or crashed), the
+on-device foreground service sets `http_proxy=:0` via
+`WRITE_SECURE_SETTINGS` (no root, no Magisk — Pane grants this
+permission via `adb shell pm grant` during first pair). Internet
+comes back within ~6 seconds of disconnect.
+
+Safety check: the helper only touches `http_proxy` if its current
+value matches what Pane wrote. If you manually set your own proxy,
+the helper leaves it alone.
+
+A "Pane connected" / "Pane disconnected" notification stays in the
+shade — your only visual signal that Pane is interacting with the
+device.
+
+If you don't want the helper (corporate VPN, MDM policies, etc.),
+uninstall via Settings → Apps → Pane Helper. You lose the unplug
+auto-cleanup but everything else keeps working.
 
 ### When something goes sideways
 
@@ -114,10 +156,13 @@ ERR_PROXY_CONNECTION_FAILED in that scenario.
   `platform-tools` from the Android SDK or Android Studio.
 - **`adb reverse failed`** — usually after USB reseating or an adb-
   server restart. Hit **Re-sync** on the paired device row.
-- **Device has "no internet" after Stop proxy** — Pane v0.1.12+
-  auto-clears the proxy setting on every paired Android when the
-  proxy stops. On older builds: `adb shell settings put global
-  http_proxy :0` to recover, or **Remove device**.
+- **Device has "no internet" after Stop proxy / USB unplug** — from
+  v0.1.41 the companion APK handles this autonomously even without
+  the laptop attached, clearing the proxy within ~6 sec. If the phone
+  never got the helper (first pair on this machine failed, or you
+  uninstalled the helper), recover directly on the phone: **Settings
+  → Wi-Fi → tap the active network → Proxy → None**. Or via adb if
+  the cable is plugged: `adb shell settings put global http_proxy :0`.
 - **HTTPS in my app isn't decrypted** — the app has to trust user
   CAs. In a debug build, add `network_security_config.xml` with
   `<debug-overrides>` → `<trust-anchors><certificates src="user"/>

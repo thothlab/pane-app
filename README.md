@@ -30,7 +30,7 @@ pnpm install
 pnpm tauri:dev
 ```
 
-Нажми **Start proxy** в нижнем левом углу. Дальше **Devices → Add device** — Pane через USB поставит root CA (полный авто на iOS и рутованном Android; на non-root Android — пушит файл и показывает inline-инструкцию для one-time manual install), пробросит порт через `adb reverse` и выставит PAC-прокси (которое корректно fallback'ает на DIRECT при unplug, не оставляя устройство без интернета). После этого трафик начнёт попадать в **Captures**.
+Нажми **Start proxy** в нижнем левом углу. Дальше **Devices → Add device** — Pane через USB поставит root CA (полный авто на iOS и рутованном Android; на non-root Android — пушит файл и показывает inline-инструкцию для one-time manual install), пробросит порты через `adb reverse` и выставит на Android **оба** `http_proxy` (для OkHttp/нативных стеков) и `http_proxy_pac` (для Chromium). На Android также автоматически ставится companion APK (~4 MB) — heartbeat-watchdog, который автоматически снимает прокси с устройства при выдёргивании USB, чтобы интернет не пропадал. После этого трафик начнёт попадать в **Captures**.
 
 ## Чем отличается от других
 

@@ -30,7 +30,7 @@ pnpm install
 pnpm tauri:dev
 ```
 
-Click **Start proxy** in the lower-left. Then **Devices → Add device** — Pane installs the root CA over USB (fully auto on iOS and rooted Android; on non-root Android it pushes the file and shows an inline manual-install walkthrough), wires up `adb reverse`, and sets a PAC-based proxy (which gracefully falls back to DIRECT on unplug so the phone keeps its internet). Traffic starts populating the **Captures** view.
+Click **Start proxy** in the lower-left. Then **Devices → Add device** — Pane installs the root CA over USB (fully auto on iOS and rooted Android; on non-root Android it pushes the file and shows an inline manual-install walkthrough), wires up `adb reverse`, and sets both `http_proxy` (primary, for OkHttp/native stacks) and `http_proxy_pac` (bonus for Chromium) on Android. On Android, Pane also installs a tiny companion APK (~4 MB) — a heartbeat watchdog that automatically clears the proxy when you unplug USB so the device keeps its internet. Traffic starts populating the **Captures** view.
 
 ## How it compares
 
