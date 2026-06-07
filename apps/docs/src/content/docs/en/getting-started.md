@@ -219,6 +219,14 @@ google                              # bareword: substring of host or path
 ```
 
 Save the current filter with the ☆ icon to pin it to the sidebar.
+Typing the name of an existing saved filter in the Save dialog
+turns the button into **Update** — overwrites query/color/pin
+in place, no duplicate row.
+
+The horizontal split between **Headers** and **Body** on the
+Request/Response tabs is draggable. Position is remembered per pane
+(stored in localStorage) and persists across restart. Double-click
+the splitter to reset.
 
 Right pane shows **Overview / Request / Response / Timing / TLS**. The
 body viewer auto-detects JSON / XML / text:
