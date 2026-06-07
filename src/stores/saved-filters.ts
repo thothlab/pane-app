@@ -23,6 +23,8 @@ export async function refreshFilters(): Promise<void> {
 }
 
 export async function saveFilter(args: {
+  /** When set, updates the existing row instead of creating a new one. */
+  id?: string;
   name: string;
   query: string;
   color: string;

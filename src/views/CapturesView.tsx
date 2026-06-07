@@ -15,7 +15,7 @@ import {
   paused,
   setPaused,
 } from "@/stores/captures";
-import { refreshFilters, saveFilter } from "@/stores/saved-filters";
+import { filters, refreshFilters, saveFilter } from "@/stores/saved-filters";
 import HelpButton from "@/components/HelpButton";
 import { t, tr } from "@/i18n";
 
@@ -221,13 +221,31 @@ const CapturesView: Component = () => {
     queueMicrotask(() => savePopover?.querySelector("input")?.focus());
   }
 
+  // When the typed name matches an existing saved filter (case-insensitive
+  // exact, trimmed), submit becomes an update instead of an insert.
+  // Lets the user overwrite an existing saved filter by name without
+  // first finding-and-deleting it. UI text + button label switch to
+  // "Update" / "Updating…" + show a "will overwrite «X»" hint.
+  const existingMatch = () => {
+    const n = saveName().trim().toLowerCase();
+    if (!n) return undefined;
+    return filters().find((f) => f.name.trim().toLowerCase() === n);
+  };
+
   async function doSave(e: Event) {
     e.preventDefault();
     const name = saveName().trim();
     if (!name || saveBusy()) return;
     setSaveBusy(true);
     try {
-      await saveFilter({ name, query: filter(), color: saveColor(), pinned: savePinned() });
+      const match = existingMatch();
+      await saveFilter({
+        id: match?.id,
+        name,
+        query: filter(),
+        color: saveColor(),
+        pinned: savePinned(),
+      });
       setSaveOpen(false);
     } catch (err) {
       console.error("save filter failed", err);
@@ -360,7 +378,7 @@ const CapturesView: Component = () => {
             >
               <form onSubmit={doSave} class="space-y-2">
                 <div class="font-semibold text-fg-subtle uppercase tracking-wide">
-                  {t()("captures.save_filter")}
+                  {existingMatch() ? t()("captures.update_filter") : t()("captures.save_filter")}
                 </div>
                 <div class="font-mono text-fg-muted bg-bg-muted rounded px-2 py-1 truncate">
                   {filter()}
@@ -373,6 +391,11 @@ const CapturesView: Component = () => {
                   onInput={(e) => setSaveName(e.currentTarget.value)}
                   maxlength={64}
                 />
+                <Show when={existingMatch()}>
+                  <div class="text-fg-muted text-[11px]">
+                    {tr("captures.update_filter_hint", { name: existingMatch()!.name })}
+                  </div>
+                </Show>
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-1">
                     <For each={FILTER_PALETTE}>
@@ -412,7 +435,13 @@ const CapturesView: Component = () => {
                     class="px-3 py-1 rounded bg-accent text-white hover:opacity-90 disabled:opacity-50"
                     disabled={!saveName().trim() || saveBusy()}
                   >
-                    {saveBusy() ? t()("captures.saving") : t()("captures.save")}
+                    {saveBusy()
+                      ? existingMatch()
+                        ? t()("captures.updating")
+                        : t()("captures.saving")
+                      : existingMatch()
+                        ? t()("captures.update")
+                        : t()("captures.save")}
                   </button>
                 </div>
               </form>
