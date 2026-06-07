@@ -391,20 +391,7 @@ async fn ensure_helper_running(serial: &str, apk_path: Option<&PathBuf>) -> Resu
         ));
     }
 
-    run(
-        "adb",
-        &[
-            "-s",
-            serial,
-            "install",
-            "-r",
-            "--user",
-            "0",
-            apk.to_str().unwrap(),
-        ],
-    )
-    .await
-    .map_err(|e| anyhow!("pm install failed: {e}"))?;
+    install_helper_apk(serial, apk).await?;
 
     // WRITE_SECURE_SETTINGS is signature|privileged|development. The
     // `development` bit makes it grantable via `pm grant` over adb —
@@ -453,6 +440,71 @@ async fn ensure_helper_running(serial: &str, apk_path: Option<&PathBuf>) -> Resu
     .map_err(|e| anyhow!("am start failed: {e}"))?;
 
     Ok(())
+}
+
+/// `adb install -r` the helper APK, with one critical refinement: if
+/// the device refuses with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`
+/// (signature mismatch with an existing install), uninstall the stale
+/// one and retry. This happens routinely because the helper is signed
+/// with a debug.keystore — different keystores across the user's CI,
+/// my local builds, and the user's own machines all produce
+/// incompatible signatures, and Android refuses updates between them.
+///
+/// Without the retry the install error short-circuits the whole
+/// pairing flow (no `pm grant`, no `am start`), leaving the stale
+/// helper installed but its service dead — so the unplug-watchdog
+/// silently doesn't fire. Caused every paired-on-machine-B then
+/// re-paired-on-machine-A flow to break.
+async fn install_helper_apk(serial: &str, apk: &std::path::Path) -> Result<()> {
+    let install = || async {
+        run(
+            "adb",
+            &[
+                "-s",
+                serial,
+                "install",
+                "-r",
+                "--user",
+                "0",
+                apk.to_str().unwrap(),
+            ],
+        )
+        .await
+    };
+    match install().await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE")
+                || msg.contains("signatures do not match")
+            {
+                tracing::info!(
+                    serial,
+                    "helper APK signature differs from installed copy — uninstalling stale and retrying"
+                );
+                let _ = run(
+                    "adb",
+                    &[
+                        "-s",
+                        serial,
+                        "shell",
+                        "pm",
+                        "uninstall",
+                        "--user",
+                        "0",
+                        HELPER_PACKAGE,
+                    ],
+                )
+                .await;
+                install()
+                    .await
+                    .map_err(|e2| anyhow!("pm install failed after sig-mismatch uninstall: {e2}"))?;
+                Ok(())
+            } else {
+                Err(anyhow!("pm install failed: {e}"))
+            }
+        }
+    }
 }
 
 fn apk_is_present(path: &std::path::Path) -> bool {
