@@ -205,11 +205,15 @@ Pane сам проверяет новые релизы:
 Строка поиска поддерживает маленький filter DSL:
 
 ```text
-host:api.example.com          # только запросы к этому хосту
-status:5..                    # любой 5xx
-!error:tls_handshake          # исключить pinning + handshake failures
-status:200..299 host:*.dev    # ranges + globs
-google                        # bareword: substring of host or path
+host:api.example.com               # только запросы к этому хосту
+host:api.foo.com,api.bar.com       # OR — список альтернатив через запятую
+method:POST,PUT,DELETE             # OR по методам
+status:200,500..599                # mix: точный 200 OR диапазон 5xx
+status:5..                         # любой 5xx
+!error:tls_handshake               # исключить pinning + handshake failures
+!host:cdn.*,fonts.*                # «ни cdn.*, ни fonts.*»
+status:200..299 host:*.dev         # ranges + globs (между токенами AND)
+google                             # bareword: substring of host or path
 ```
 
 Сохранить текущий фильтр — иконка ☆, он появится в sidebar.

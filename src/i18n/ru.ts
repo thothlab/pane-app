@@ -84,9 +84,9 @@ const ru: Dict = {
     column_path: "Путь",
     column_ms: "мс",
     column_bytes: "байт",
-    filter_placeholder: "google · host:api.example.com · status:5.. · !error:tls_handshake",
+    filter_placeholder: "google · host:api.foo.com,api.bar.com · status:200,500..599 · !error:tls_handshake",
     filter_help:
-      "Слово без префикса: совпадает с host ИЛИ path. Например 'google'.\nkey:value — host, path, method, status, mime, size, duration, error.\nМаски: * внутри значения (например host:*google*).\nОтрицание через ! (например !error:tls_handshake, !host:cdn.*).\nДиапазоны: status:500..599 — size:0..1024 — duration:..200.\nНесколько токенов объединяются по AND (например host:rc3.test.dev-og.com method:post).",
+      "Слово без префикса: совпадает с host ИЛИ path. Например 'google'.\nkey:value — host, path, method, status, mime, size, duration, error.\nМаски: * внутри значения (например host:*google*).\nЗапятая в значении даёт OR-альтернативы (например host:a.com,b.com, method:POST,PUT, status:200,500..599).\nОтрицание через ! (например !error:tls_handshake, !host:cdn.*). Отрицание списка значит «ни одно из»: !host:a,b → ни a, ни b.\nДиапазоны: status:500..599 — size:0..1024 — duration:..200.\nНесколько токенов объединяются по AND (например host:rc3.test.dev-og.com method:post).",
     filter_help_title:
       "Синтаксис фильтра: host, method, status, path, маски, диапазоны, отрицание",
     save_filter: "Сохранить фильтр",

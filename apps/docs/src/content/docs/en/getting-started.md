@@ -207,11 +207,15 @@ minisign-signed bundle and relaunches. Force a check via
 The capture list supports a small filter DSL on the search bar:
 
 ```text
-host:api.example.com          # only requests to this host
-status:5..                    # any 5xx
-!error:tls_handshake          # exclude pinning + handshake failures
-status:200..299 host:*.dev    # ranges + globs
-google                        # bareword: substring of host or path
+host:api.example.com                # only requests to this host
+host:api.foo.com,api.bar.com        # OR — comma-separated alternatives
+method:POST,PUT,DELETE              # OR across methods
+status:200,500..599                 # mix: exact 200 OR any 5xx
+status:5..                          # any 5xx
+!error:tls_handshake                # exclude pinning + handshake failures
+!host:cdn.*,fonts.*                 # "neither cdn.* nor fonts.*"
+status:200..299 host:*.dev          # ranges + globs (tokens AND'd)
+google                              # bareword: substring of host or path
 ```
 
 Save the current filter with the ☆ icon to pin it to the sidebar.
