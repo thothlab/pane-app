@@ -307,46 +307,53 @@ impl AndroidPlatform {
             .collect())
     }
 
-    /// List **currently running** user-installed apps on the device.
-    /// Preferred over `list_third_party_packages` for the Follow-app
-    /// dropdown — picking an app that isn't running gives no filter
-    /// (pidof returns None), so the user just sees a stale UI. This
-    /// list only contains apps with a live PID, sorted alphabetically.
+    /// List **currently running** third-party apps on the device.
+    /// Used by the Logcat window's Follow-app dropdown. Returns a
+    /// short, focused list (usually ≤10 items) — only apps the user
+    /// actually sideloaded/installed from a store and that have a
+    /// live process right now.
     ///
-    /// Implementation: `ps -A -o USER,NAME` lists every process. Lines
-    /// where USER matches `u0_a<digits>` are user-installed app
-    /// processes (system processes run under `system`, `root`,
-    /// `u0_system`, etc. — those don't have an APK and can't be
-    /// "followed" by package name). Apps with multiple processes
-    /// (`com.example:worker`) are deduped to the base package by
-    /// stripping the colon suffix.
+    /// Implementation: two adb calls in parallel:
+    ///   - `pm list packages -3 --user 0` → set of third-party APK
+    ///     package names (excludes system apps, Google framework,
+    ///     OEM bloat, etc.).
+    ///   - `ps -A -o USER,NAME` → all live processes. We don't try to
+    ///     match against UIDs here; `u<N>_a<N>` is too lenient on
+    ///     Samsung (many OEM background services run as user-app UIDs).
+    ///
+    /// The intersection is what we want: a package that's both
+    /// third-party AND running. `:subprocess` suffixes on the process
+    /// name are stripped before matching. Result is sorted+deduped.
     pub async fn list_running_user_packages(&self, serial: &str) -> Result<Vec<String>> {
-        let out = run(
-            "adb",
-            &["-s", serial, "shell", "ps", "-A", "-o", "USER,NAME"],
-        )
-        .await?;
-        let mut packages: Vec<String> = out
+        let pm_args = ["-s", serial, "shell", "pm", "list", "packages", "--user", "0", "-3"];
+        let ps_args = ["-s", serial, "shell", "ps", "-A", "-o", "NAME"];
+        let (third_party_out, ps_out) =
+            tokio::join!(run("adb", &pm_args), run("adb", &ps_args));
+        let third_party_out = third_party_out?;
+        let ps_out = ps_out?;
+
+        let third_party: std::collections::HashSet<&str> = third_party_out
+            .lines()
+            .filter_map(|line| line.strip_prefix("package:"))
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let mut running: Vec<String> = ps_out
             .lines()
             .skip(1) // header
             .filter_map(|line| {
-                let mut parts = line.split_whitespace();
-                let user = parts.next()?;
-                let name = parts.next()?;
-                if !is_user_app_uid(user) {
-                    return None;
-                }
-                // Strip ":subprocess" suffix to get base package.
+                let name = line.trim();
                 let base = name.split(':').next()?;
-                if base.is_empty() || !base.contains('.') {
+                if !third_party.contains(base) {
                     return None;
                 }
                 Some(base.to_string())
             })
             .collect();
-        packages.sort();
-        packages.dedup();
-        Ok(packages)
+        running.sort();
+        running.dedup();
+        Ok(running)
     }
 
     /// Resolve a running PID for a package, or `None` if the app
@@ -617,32 +624,6 @@ async fn install_helper_apk(serial: &str, apk: &std::path::Path) -> Result<()> {
             }
         }
     }
-}
-
-/// Returns true for Android shell user names of the form `u0_a<N>`
-/// (and multi-user variants like `u10_a123`). These belong to
-/// user-installed apps. System processes use unprefixed names like
-/// `system`, `root`, `radio`, `media`, etc., and built-in Android
-/// services use `u0_system`, `u0_radio`, etc. — both excluded.
-fn is_user_app_uid(s: &str) -> bool {
-    // Accept "u<digits>_a<digits>", reject "u<digits>_<word>".
-    let after_u = match s.strip_prefix('u') {
-        Some(rest) => rest,
-        None => return false,
-    };
-    let underscore = match after_u.find('_') {
-        Some(i) => i,
-        None => return false,
-    };
-    let (user_idx, rest) = after_u.split_at(underscore);
-    if !user_idx.chars().all(|c| c.is_ascii_digit()) {
-        return false;
-    }
-    let tail = &rest[1..]; // skip the '_'
-    if !tail.starts_with('a') {
-        return false;
-    }
-    tail[1..].chars().all(|c| c.is_ascii_digit()) && tail.len() > 1
 }
 
 fn apk_is_present(path: &std::path::Path) -> bool {

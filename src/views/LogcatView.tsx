@@ -103,6 +103,20 @@ const LogcatView: Component = () => {
     return all.filter((e) => e.pid === pid && m(e));
   });
 
+  // Union of `packages()` (running, third-party — refreshed every
+  // 10s) with the currently-followed app, so the `<select>` always
+  // has an option whose `value` matches the bound value. Without
+  // this, every refresh tick can transiently drop the selected
+  // option and reset the select to "(off)" — visible to the user
+  // as the dropdown text flipping even though `followApp` signal
+  // is unchanged.
+  const dropdownPackages = createMemo(() => {
+    const list = [...packages()];
+    const cur = followApp();
+    if (cur && !list.includes(cur)) list.unshift(cur);
+    return list;
+  });
+
   // Re-fetch the running-app list every 10s so newly-launched apps
   // appear in the dropdown without the user having to reopen the
   // window. ps -A roundtrip is ~50ms over USB — barely noticeable.
@@ -344,15 +358,15 @@ const LogcatView: Component = () => {
           {t()("logcat.auto_scroll")}
         </button>
 
-        {/* Follow-app dropdown. value="" = no follow. Selecting a
-            package triggers the createEffect above, which starts a
-            5s pidof poll. PID transitions are silent — the visible()
-            filter recomputes and the user just sees the entry set
-            update. If the followed app dies (drops out of the
-            running-packages list on the next 10s refresh), we keep
-            it as an option so the user's selection isn't silently
-            lost — the "(not running)" indicator beside the dropdown
-            says what happened. */}
+        {/* Follow-app dropdown. The options list is the union of
+            currently-running third-party packages PLUS whatever the
+            user has selected. Putting `followApp()` in the list
+            unconditionally (when set) prevents the browser from
+            silently resetting the `<select>` to the first option
+            on the 10s `setPackages` refresh — without this, every
+            refresh tick momentarily breaks the value-binding when
+            the prior option set is replaced. The "(not running)"
+            indicator beside the dropdown surfaces a stale pick. */}
         <select
           class={`text-xs px-2 py-1 rounded outline-none max-w-[200px] ${
             followApp() ? "bg-accent/15 text-accent" : "bg-bg-muted text-fg-muted"
@@ -365,12 +379,9 @@ const LogcatView: Component = () => {
           title={t()("logcat.follow_app_title")}
         >
           <option value="">{t()("logcat.follow_app_none")}</option>
-          <Show when={followApp() && !packages().includes(followApp()!)}>
-            <option value={followApp()!}>{followApp()} (not running)</option>
-          </Show>
-          {packages().map((pkg) => (
-            <option value={pkg}>{pkg}</option>
-          ))}
+          <For each={dropdownPackages()}>
+            {(pkg) => <option value={pkg}>{pkg}</option>}
+          </For>
         </select>
         <Show when={followApp()}>
           <span class="inline-flex items-center gap-1 text-fg-muted whitespace-nowrap">
