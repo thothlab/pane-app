@@ -277,6 +277,11 @@ const en = {
     counter: "{{shown}} / {{total}}",
     empty_waiting: "Waiting for log entries…",
     empty_filtered: "No entries match the current filter.",
+    col_time: "Time",
+    col_pid: "PID",
+    col_level: "L",
+    col_tag: "Tag",
+    col_message: "Message",
   },
   replay: {
     title: "Replay",

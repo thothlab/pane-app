@@ -276,6 +276,11 @@ const ru: Dict = {
     counter: "{{shown}} / {{total}}",
     empty_waiting: "Жду записи логов…",
     empty_filtered: "Под фильтр ничего не попадает.",
+    col_time: "Время",
+    col_pid: "PID",
+    col_level: "У",
+    col_tag: "Тег",
+    col_message: "Сообщение",
   },
   replay: {
     title: "Повтор",

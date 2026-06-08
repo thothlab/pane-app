@@ -422,6 +422,20 @@ const LogcatView: Component = () => {
         </div>
       )}
 
+      {/* Column header row. Lives outside the scroll container so it
+          stays put when the user scrolls the firehose. Grid template
+          matches the row template below — keep them in sync. */}
+      <div
+        class="grid font-mono text-fg-muted uppercase tracking-wide text-[10px] gap-2 px-3 py-1 border-b border-border bg-bg-subtle/60"
+        style={{ "grid-template-columns": "90px 60px 14px 180px 1fr" }}
+      >
+        <span>{t()("logcat.col_time")}</span>
+        <span>{t()("logcat.col_pid")}</span>
+        <span>{t()("logcat.col_level")}</span>
+        <span>{t()("logcat.col_tag")}</span>
+        <span>{t()("logcat.col_message")}</span>
+      </div>
+
       {/* Virtualized table. <For> over the reactive virtual-items
           accessor keeps row identity stable across the firehose;
           .map would rebuild DOM nodes each batch. */}
