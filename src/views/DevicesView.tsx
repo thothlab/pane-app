@@ -185,7 +185,6 @@ const DevicesView: Component = () => {
                   busy={busy() === d.serial}
                   onResync={() => resync(d)}
                   onRemove={() => remove(d.id)}
-                  onLogcat={() => openLogcat(d.serial, d.display_name)}
                 />
               )}
             </For>
@@ -208,7 +207,6 @@ const DeviceRow: Component<{
   busy: boolean;
   onResync: () => void;
   onRemove: () => void;
-  onLogcat: () => void;
 }> = (p) => {
   const state = () => caState(p.device);
   const isFullyReady = () => p.device.state === "ready" && state() === "auto_succeeded";
@@ -243,15 +241,6 @@ const DeviceRow: Component<{
           </div>
         </div>
         <div class="flex items-center gap-1">
-          <Show when={p.device.platform === "android"}>
-            <button
-              class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1"
-              onClick={p.onLogcat}
-              title={t()("logcat.open_title")}
-            >
-              <Terminal size={12} /> {t()("logcat.open")}
-            </button>
-          </Show>
           <button
             class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-50"
             onClick={p.onResync}
