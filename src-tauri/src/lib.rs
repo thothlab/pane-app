@@ -40,6 +40,7 @@ pub fn run() {
             commands::logcat::logcat_open,
             commands::logcat::android_list_packages,
             commands::logcat::android_pidof,
+            commands::logcat::logcat_write_export,
             // ca
             commands::ca::current,
             commands::ca::rotate,

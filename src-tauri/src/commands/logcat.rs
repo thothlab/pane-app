@@ -143,6 +143,24 @@ pub async fn logcat_open(
     Ok(serde_json::json!({ "label": label, "reused": false }))
 }
 
+/// Write `content` as-is to `path`. Used by the Logcat window's
+/// Export button — the frontend already serialised the visible
+/// entries to threadtime-formatted text, we just need to drop it
+/// to disk. Path comes from a save-dialog the user just confirmed,
+/// so it's trusted; we don't gate on capability scope (the same
+/// way `api.ca.save_to_file` works).
+///
+/// Why a backend command instead of `@tauri-apps/plugin-fs`:
+/// plugin-fs requires `fs:allow-write-text-file` + scope rules
+/// per capability, which gets ugly fast for "write anywhere the
+/// user picked." A thin Rust command sidesteps the whole thing.
+#[tauri::command]
+pub async fn logcat_write_export(path: String, content: String) -> CmdResult<usize> {
+    let bytes = content.len();
+    std::fs::write(&path, content).map_err(to_api("io"))?;
+    Ok(bytes)
+}
+
 /// List **running** user-installed apps on a connected Android device,
 /// sorted alphabetically. Used by the Logcat window's "Follow app"
 /// dropdown. Restricting to running apps removes the surprise where

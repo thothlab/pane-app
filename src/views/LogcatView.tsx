@@ -11,7 +11,6 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import { Pause, Play, Trash2, ArrowDown, Search as SearchIcon, Target, Download } from "lucide-solid";
 import { t, tr } from "@/i18n";
@@ -55,6 +54,27 @@ const LEVEL_CHAR: Record<LogLevel, string> = {
   silent: "S",
 };
 
+/// Column header with a thin draggable right-edge handle. The handle
+/// is a 1-px vertical line at the cell's right edge — it works as
+/// both the visual column divider and the resize affordance.
+/// Picks up the accent colour on hover/active. Double-click resets
+/// that column to its default width.
+const HeaderCell: Component<{
+  label: string;
+  onResize: (e: MouseEvent) => void;
+  onReset?: () => void;
+}> = (p) => (
+  <span class="relative px-2">
+    <span class="truncate">{p.label}</span>
+    <span
+      class="absolute top-0 right-0 h-full w-px bg-border cursor-col-resize hover:w-1 hover:bg-accent active:bg-accent"
+      onMouseDown={p.onResize}
+      onDblClick={() => p.onReset?.()}
+      title="Drag to resize · double-click to reset"
+    />
+  </span>
+);
+
 const LogcatView: Component = () => {
   // ?serial=... + ?app_label=... come from the WebviewWindow URL set
   // by the Rust `logcat_open` command. serial is mandatory; we trust
@@ -76,6 +96,70 @@ const LogcatView: Component = () => {
   const [packages, setPackages] = createSignal<string[]>([]);
   const [followApp, setFollowApp] = createSignal<string | null>(null);
   const [followedPid, setFollowedPid] = createSignal<number | null>(null);
+
+  // Resizable column widths. Persisted in localStorage so a user's
+  // preferred layout survives close/reopen of the logcat window.
+  // `level` is fixed-1-char; `message` takes whatever space is left
+  // (`1fr`). Drag handles live only on Time/PID/Tag.
+  type ColKey = "time" | "pid" | "tag";
+  const COL_DEFAULTS: Record<ColKey, number> = { time: 90, pid: 60, tag: 180 };
+  const COL_MIN = 40;
+  const COL_STORAGE_KEY = "pane.logcat.col-widths";
+
+  const loadColWidths = (): Record<ColKey, number> => {
+    try {
+      const raw = localStorage.getItem(COL_STORAGE_KEY);
+      if (!raw) return { ...COL_DEFAULTS };
+      const parsed = JSON.parse(raw) as Partial<Record<ColKey, number>>;
+      return {
+        time: clampWidth(parsed.time ?? COL_DEFAULTS.time),
+        pid: clampWidth(parsed.pid ?? COL_DEFAULTS.pid),
+        tag: clampWidth(parsed.tag ?? COL_DEFAULTS.tag),
+      };
+    } catch {
+      return { ...COL_DEFAULTS };
+    }
+  };
+  function clampWidth(n: number): number {
+    return Math.max(COL_MIN, Math.round(n));
+  }
+  const [colWidths, setColWidthsRaw] = createSignal(loadColWidths());
+  const setColWidths = (next: Record<ColKey, number>) => {
+    setColWidthsRaw(next);
+    try {
+      localStorage.setItem(COL_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* storage unavailable */
+    }
+  };
+  const gridTemplate = () => {
+    const w = colWidths();
+    return `${w.time}px ${w.pid}px 14px ${w.tag}px 1fr`;
+  };
+
+  // Initiate a drag-resize for one of the resizable columns. Single
+  // window listeners during the drag; cursor + selection-block
+  // applied on body so the user gets visual feedback and doesn't
+  // accidentally select log text mid-drag.
+  const startColResize = (col: ColKey, e: MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = colWidths()[col];
+    const onMove = (ev: MouseEvent) => {
+      const next = clampWidth(startW + (ev.clientX - startX));
+      setColWidths({ ...colWidths(), [col]: next });
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
 
   // Track whether the user is currently scrolled to the bottom. We
   // only auto-stick if they are — if they've scrolled up to read
@@ -254,7 +338,11 @@ const LogcatView: Component = () => {
     });
     if (!path) return;
     try {
-      await writeTextFile(path, lines.join("\n") + "\n");
+      // Backend command (Rust std::fs::write) instead of plugin-fs —
+      // plugin-fs's write_text_file requires a per-capability scope
+      // rule whitelisting the path, which doesn't make sense for a
+      // user-chosen save dialog target. Same pattern as ca.save_to_file.
+      await invoke("logcat_write_export", { path, content: lines.join("\n") + "\n" });
     } catch (e: unknown) {
       setErrorMsg(
         tr("logcat.export_failed", {
@@ -300,6 +388,23 @@ const LogcatView: Component = () => {
   });
 
   let filterInputRef: HTMLInputElement | undefined;
+  let filterOverlayRef: HTMLDivElement | undefined;
+
+  // Keep the highlight overlay scrolled in step with the input —
+  // when the typed text overflows, the input scrolls horizontally
+  // and we mirror that scroll on the overlay so the colours stay
+  // glued to the right characters.
+  const syncFilterScroll = () => {
+    if (filterInputRef && filterOverlayRef) {
+      filterOverlayRef.scrollLeft = filterInputRef.scrollLeft;
+    }
+  };
+
+  // Compute the highlighted HTML for the current filter text. Memo
+  // so the assignment to `innerHTML` only fires when the text
+  // actually changes. The HTML is a sequence of `<span class="...">`
+  // chunks — token colours match CapturesView's filter pattern.
+  const highlightedFilterHtml = createMemo(() => buildLogcatFilterHtml(filter()));
 
   // Stable virtualizer instance — `count` is a reactive getter so the
   // internal store recomputes virtual items as entries flow in, but
@@ -392,19 +497,43 @@ const LogcatView: Component = () => {
           </span>
         </Show>
 
-        <div class="flex-1 relative">
-          <SearchIcon
-            size={12}
-            class="absolute left-2 top-1/2 -translate-y-1/2 text-fg-muted pointer-events-none"
+        {/* Token-highlight overlay over a transparent input. The
+            previous Solid-<For>-based overlay rendered only the
+            first character of typed text — unclear why, since the
+            same markup works in CapturesView. This version
+            sidesteps Solid reactivity entirely: a memoized HTML
+            string is rendered via `innerHTML`, so the DOM update
+            is a single deterministic assignment. */}
+        <SearchIcon size={14} class="text-fg-muted shrink-0" />
+        <div class="flex-1 relative flex items-center bg-bg-muted rounded focus-within:ring-1 focus-within:ring-accent">
+          <div
+            ref={(el) => (filterOverlayRef = el)}
+            aria-hidden="true"
+            class="absolute inset-0 pointer-events-none text-xs font-mono whitespace-pre overflow-hidden px-2 py-1 flex items-center"
+            innerHTML={highlightedFilterHtml()}
           />
           <input
             ref={(el) => (filterInputRef = el)}
             type="text"
-            class="w-full pl-7 pr-2 py-1 rounded bg-bg-muted outline-none focus:ring-1 focus:ring-accent font-mono"
+            class="relative w-full bg-transparent rounded px-2 py-1 outline-none text-xs font-mono text-transparent caret-fg placeholder:text-fg-muted"
             placeholder={t()("logcat.filter_placeholder")}
             value={filter()}
-            onInput={(e) => setFilter(e.currentTarget.value)}
+            onInput={(e) => {
+              setFilter(e.currentTarget.value);
+              syncFilterScroll();
+            }}
+            onScroll={syncFilterScroll}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && filter()) {
+                e.preventDefault();
+                setFilter("");
+              }
+            }}
             title={t()("logcat.filter_help")}
+            autocapitalize="off"
+            autocomplete="off"
+            autocorrect="off"
+            spellcheck={false}
           />
         </div>
         <span class="text-fg-muted whitespace-nowrap">
@@ -423,17 +552,34 @@ const LogcatView: Component = () => {
       )}
 
       {/* Column header row. Lives outside the scroll container so it
-          stays put when the user scrolls the firehose. Grid template
-          matches the row template below — keep them in sync. */}
+          stays put when the user scrolls the firehose. The grid
+          template comes from gridTemplate() and is shared with the
+          row template below. Time/PID/Tag have drag handles on
+          their right edge; Level is fixed (1 char) and Message
+          takes the remainder (1fr). Vertical hairlines via
+          per-cell border-r — no grid gap so the borders are
+          column-edge aligned. */}
       <div
-        class="grid font-mono text-fg-muted uppercase tracking-wide text-[10px] gap-2 px-3 py-1 border-b border-border bg-bg-subtle/60"
-        style={{ "grid-template-columns": "90px 60px 14px 180px 1fr" }}
+        class="grid font-mono text-fg-muted uppercase tracking-wide text-[10px] px-3 py-1 border-b border-border bg-bg-subtle/60"
+        style={{ "grid-template-columns": gridTemplate() }}
       >
-        <span>{t()("logcat.col_time")}</span>
-        <span>{t()("logcat.col_pid")}</span>
-        <span>{t()("logcat.col_level")}</span>
-        <span>{t()("logcat.col_tag")}</span>
-        <span>{t()("logcat.col_message")}</span>
+        <HeaderCell
+          label={t()("logcat.col_time")}
+          onResize={(e) => startColResize("time", e)}
+          onReset={() => setColWidths({ ...colWidths(), time: COL_DEFAULTS.time })}
+        />
+        <HeaderCell
+          label={t()("logcat.col_pid")}
+          onResize={(e) => startColResize("pid", e)}
+          onReset={() => setColWidths({ ...colWidths(), pid: COL_DEFAULTS.pid })}
+        />
+        <span class="px-1 border-r border-border/40">{t()("logcat.col_level")}</span>
+        <HeaderCell
+          label={t()("logcat.col_tag")}
+          onResize={(e) => startColResize("tag", e)}
+          onReset={() => setColWidths({ ...colWidths(), tag: COL_DEFAULTS.tag })}
+        />
+        <span class="px-2">{t()("logcat.col_message")}</span>
       </div>
 
       {/* Virtualized table. <For> over the reactive virtual-items
@@ -461,24 +607,36 @@ const LogcatView: Component = () => {
               width: "100%",
             }}
           >
+            {/* <For> over virtualizer.getVirtualItems(). Earlier
+                tried <Index> for less DOM churn during firehose,
+                but it broke rendering — virtualizer + Index combo
+                ended up with an empty body even when getTotalSize
+                / count was non-zero. <For> works reliably; the
+                flicker it causes on heavy update is the lesser
+                evil and we'll revisit if it becomes a problem. */}
             <For each={virtualizer.getVirtualItems()}>
               {(vi) => {
-                const e = visible()[vi.index]!;
+                const e = visible()[vi.index];
+                if (!e) return null;
                 return (
                   <div
-                    class="absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline gap-2 px-3 py-px"
+                    class="absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px"
                     style={{
                       transform: `translateY(${vi.start}px)`,
-                      "grid-template-columns": "90px 60px 14px 180px 1fr",
+                      "grid-template-columns": gridTemplate(),
                     }}
                   >
-                    <span class="text-fg-muted truncate">{e.timestamp}</span>
-                    <span class="text-fg-muted truncate">
+                    <span class="text-fg-muted truncate px-2 border-r border-border/30">
+                      {e.timestamp}
+                    </span>
+                    <span class="text-fg-muted truncate px-2 border-r border-border/30">
                       {e.pid > 0 ? e.pid : ""}
                     </span>
-                    <span class={LEVEL_COLOR[e.level]}>{LEVEL_CHAR[e.level]}</span>
-                    <span class="truncate">{e.tag}</span>
-                    <span class="truncate">{e.message}</span>
+                    <span class={`px-1 border-r border-border/30 ${LEVEL_COLOR[e.level]}`}>
+                      {LEVEL_CHAR[e.level]}
+                    </span>
+                    <span class="truncate px-2 border-r border-border/30">{e.tag}</span>
+                    <span class="truncate px-2">{e.message}</span>
                   </div>
                 );
               }}
@@ -489,5 +647,60 @@ const LogcatView: Component = () => {
     </div>
   );
 };
+
+// ---- Filter syntax highlighting --------------------------------------------
+//
+// Builds an HTML string for the overlay <div innerHTML={...}> behind
+// the transparent filter input. Solid <For> over a per-input parts
+// array failed to update reliably here (worked in CapturesView, but
+// inside the logcat toolbar's flex layout it stuck on the first
+// char). innerHTML is a single deterministic DOM update — no
+// reactive-list quirks possible.
+
+const LOGCAT_VALID_KEYS = new Set(["tag", "msg", "message", "level", "pid"]);
+
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function buildLogcatFilterHtml(text: string): string {
+  if (!text) return "";
+  const out: string[] = [];
+  const tokens = text.match(/\s+|\S+/g) ?? [];
+  for (const tok of tokens) {
+    if (/^\s+$/.test(tok)) {
+      out.push(escapeHtml(tok));
+      continue;
+    }
+    let body = tok;
+    if (body.startsWith("!")) {
+      out.push('<span class="text-danger">!</span>');
+      body = body.slice(1);
+    }
+    if (body.startsWith("~")) {
+      out.push('<span class="text-warn">~</span>');
+      out.push(`<span class="text-fg">${escapeHtml(body.slice(1))}</span>`);
+      continue;
+    }
+    const m = body.match(/^([a-zA-Z_]+)(:)(.*)$/);
+    if (m) {
+      const [, key, colon, value] = m;
+      const known = LOGCAT_VALID_KEYS.has(key!.toLowerCase());
+      const cls = known
+        ? "text-accent"
+        : "text-danger underline decoration-dotted";
+      out.push(`<span class="${cls}">${escapeHtml(key!)}</span>`);
+      out.push(`<span class="text-fg-muted">${escapeHtml(colon!)}</span>`);
+      if (value) out.push(`<span class="text-fg">${escapeHtml(value)}</span>`);
+    } else {
+      out.push(`<span class="text-fg">${escapeHtml(body)}</span>`);
+    }
+  }
+  return out.join("");
+}
 
 export default LogcatView;
