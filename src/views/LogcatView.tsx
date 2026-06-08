@@ -5,11 +5,14 @@ import {
   createSignal,
   onCleanup,
   onMount,
+  Show,
 } from "solid-js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { createVirtualizer } from "@tanstack/solid-virtual";
-import { Pause, Play, Trash2, ArrowDown, Search as SearchIcon } from "lucide-solid";
+import { Pause, Play, Trash2, ArrowDown, Search as SearchIcon, Target, Download } from "lucide-solid";
 import { t, tr } from "@/i18n";
 import { compileLogcatFilter } from "@/lib/logcat-filter";
 
@@ -64,6 +67,14 @@ const LogcatView: Component = () => {
   const [autoScroll, setAutoScroll] = createSignal(true);
   const [filter, setFilter] = createSignal("");
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
+  // Follow-app state. When `followApp` is set, we periodically resolve
+  // the package's current PID via `android_pidof` and additionally
+  // filter visible entries to that pid only. Resolves transparently
+  // when the app restarts (PID changes) — that's the whole point of
+  // "follow", as opposed to a stale `pid:1234` literal in the filter.
+  const [packages, setPackages] = createSignal<string[]>([]);
+  const [followApp, setFollowApp] = createSignal<string | null>(null);
+  const [followedPid, setFollowedPid] = createSignal<number | null>(null);
 
   // Track whether the user is currently scrolled to the bottom. We
   // only auto-stick if they are — if they've scrolled up to read
@@ -85,7 +96,46 @@ const LogcatView: Component = () => {
 
   const visible = createMemo(() => {
     const m = matcher();
-    return entries().filter(m);
+    const pid = followedPid();
+    const all = entries();
+    if (pid === null) return all.filter(m);
+    return all.filter((e) => e.pid === pid && m(e));
+  });
+
+  // Load the package list once on mount. Refresh on-demand is the
+  // user's job via the "↻" affordance on the dropdown — installed
+  // package set changes rarely during a debugging session.
+  onMount(() => {
+    invoke<string[]>("android_list_packages", { serial })
+      .then((list) => setPackages(list))
+      .catch(() => setPackages([]));
+  });
+
+  // While Follow-app is on, resolve the PID periodically. Polling is
+  // crude vs. an event-based hook (PROCESS_STATE_BROADCAST etc. would
+  // be cleaner), but adb shell pidof is a 10ms round-trip and the
+  // user can't tell the difference at 5s granularity.
+  createEffect(() => {
+    const pkg = followApp();
+    if (!pkg) {
+      setFollowedPid(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const pid = await invoke<number | null>("android_pidof", { serial, package: pkg });
+        if (!cancelled) setFollowedPid(pid);
+      } catch {
+        if (!cancelled) setFollowedPid(null);
+      }
+    };
+    tick();
+    const handle = setInterval(tick, 5000);
+    onCleanup(() => {
+      cancelled = true;
+      clearInterval(handle);
+    });
   });
 
   // Subscribe to the per-window batched stream. Backend emits
@@ -150,6 +200,39 @@ const LogcatView: Component = () => {
 
   const togglePause = () => setPaused(!paused());
   const clearAll = () => setEntries([]);
+
+  /// Serialize the currently-visible entries (after filter + follow-app
+  /// constraints) into a plain-text `.log` file. Format mirrors what
+  /// `adb logcat -v threadtime` emits so the result drops into any
+  /// log viewer (Android Studio, logbook, grep) unmodified.
+  const exportLog = async () => {
+    const lines = visible().map((e) => {
+      // "MM-DD HH:MM:SS.mmm  PID  TID L Tag: Message"
+      const ts = e.timestamp || "";
+      const pid = String(e.pid).padStart(5);
+      const tid = String(e.tid).padStart(5);
+      const lvl = LEVEL_CHAR[e.level];
+      return `${ts} ${pid} ${tid} ${lvl} ${e.tag}: ${e.message}`;
+    });
+    const defaultName = appLabel
+      ? `${appLabel}-${Date.now()}.log`
+      : `logcat-${serial}-${Date.now()}.log`;
+    const path = await save({
+      defaultPath: defaultName,
+      filters: [{ name: "Log", extensions: ["log"] }],
+    });
+    if (!path) return;
+    try {
+      await writeTextFile(path, lines.join("\n") + "\n");
+    } catch (e: unknown) {
+      setErrorMsg(
+        tr("logcat.export_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+      );
+    }
+  };
+
   const toggleAutoScroll = () => {
     const next = !autoScroll();
     setAutoScroll(next);
@@ -217,6 +300,15 @@ const LogcatView: Component = () => {
           {t()("logcat.clear")}
         </button>
         <button
+          class="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-muted"
+          onClick={exportLog}
+          title={t()("logcat.export_title")}
+          disabled={visible().length === 0}
+        >
+          <Download size={12} />
+          {t()("logcat.export")}
+        </button>
+        <button
           class={`inline-flex items-center gap-1 px-2 py-1 rounded ${
             autoScroll() ? "bg-accent/15 text-accent" : "hover:bg-bg-muted text-fg-muted"
           }`}
@@ -226,6 +318,37 @@ const LogcatView: Component = () => {
           <ArrowDown size={12} />
           {t()("logcat.auto_scroll")}
         </button>
+
+        {/* Follow-app dropdown. value="" = no follow. Selecting a
+            package triggers the createEffect above, which starts a
+            5s pidof poll. PID transitions are silent — the visible()
+            filter recomputes and the user just sees the entry set
+            update. */}
+        <select
+          class={`text-xs px-2 py-1 rounded outline-none max-w-[200px] ${
+            followApp() ? "bg-accent/15 text-accent" : "bg-bg-muted text-fg-muted"
+          }`}
+          value={followApp() ?? ""}
+          onChange={(e) => {
+            const v = e.currentTarget.value;
+            setFollowApp(v === "" ? null : v);
+          }}
+          title={t()("logcat.follow_app_title")}
+        >
+          <option value="">{t()("logcat.follow_app_none")}</option>
+          {packages().map((pkg) => (
+            <option value={pkg}>{pkg}</option>
+          ))}
+        </select>
+        <Show when={followApp()}>
+          <span class="inline-flex items-center gap-1 text-fg-muted whitespace-nowrap">
+            <Target size={12} />
+            <Show when={followedPid()} fallback={<i>{t()("logcat.follow_app_no_pid")}</i>}>
+              pid {followedPid()}
+            </Show>
+          </span>
+        </Show>
+
         <div class="flex-1 relative">
           <SearchIcon
             size={12}

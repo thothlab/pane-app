@@ -235,6 +235,53 @@ body viewer auto-detects JSON / XML / text:
 - **Pretty** — formatted, syntax-highlighted text.
 - **Raw** — bytes as they came off the wire.
 
+## Logcat window
+
+A **Logcat** button shows up next to **+ Add** on Android devices in
+the Devices view. It opens a **separate non-modal window** streaming
+`adb logcat` from that device, so you can keep captures running in
+the main window while reading filtered logs alongside. Independent
+windows, one per device — clicking Logcat again on the same device
+focuses the existing window rather than spawning a duplicate.
+
+What's inside:
+
+- **Virtualized 10k-entry buffer**: Time · PID · Level (coloured
+  V/D/I/W/E/F) · Tag · Message.
+- **Pause** (Space) — freezes the buffer, the upstream stream keeps
+  running on the backend. **Clear** (⌘K) — wipes the buffer.
+  **Follow** — auto-scroll to newest entry; turns off automatically
+  if you scroll up.
+- **Follow app** — dropdown of installed third-party packages.
+  Pick one → backend resolves PID via `adb shell pidof` every 5s,
+  the view filters down to that PID. App restart → PID changes → the
+  filter transparently picks up the new process. No stale `pid:1234`
+  literals to update.
+- **Filter DSL** — in-memory (the buffer is already in renderer
+  memory, no need to go through SQL):
+  ```text
+  OkHttp                       # bare word: substring in tag or message
+  tag:OkHttp,Retrofit          # OR (comma) inside the value
+  level:E                      # error only
+  level:W..F                   # range: warn and above
+  pid:1234                     # exact PID
+  ~^(?!.*Connection)           # regex via ~, matches tag or message
+  tag:OkHttp !msg:keep-alive   # AND between tokens, ! to negate
+  ```
+- **Export** — save the currently-visible filtered view to a `.log`
+  file in `threadtime` format (drop-in for Android Studio / any
+  grep pipeline).
+- **⌘F** — focuses the filter input.
+
+Safety bits:
+- Closing the window kills the `adb logcat` subprocess (via
+  `WindowEvent::Destroyed` + `kill_on_drop`).
+- EOF / stream break (USB reseat, adb-server restart) → automatic
+  reconnect with backoff 0.5s → 10s, capped at 5 attempts.
+- Entries are emitted in **batches** (50 lines or 100ms, whichever
+  comes first) so a 1000+ lines/sec firehose doesn't lock the
+  Solid reactor.
+
 ## Next
 
 - [Response stubs](/docs/en/rules/) — replace or patch responses for testing.

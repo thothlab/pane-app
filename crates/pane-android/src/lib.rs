@@ -288,6 +288,42 @@ impl AndroidPlatform {
         }
     }
 
+    /// List third-party installed packages on the device. Used by the
+    /// Logcat window's "Follow app" dropdown — system packages would
+    /// dwarf the user's apps and aren't usually what people want to
+    /// trace. `pm list packages -3` returns one `package:com.foo`
+    /// line per app, sorted lexicographically by Android already.
+    pub async fn list_third_party_packages(&self, serial: &str) -> Result<Vec<String>> {
+        let out = run(
+            "adb",
+            &["-s", serial, "shell", "pm", "list", "packages", "--user", "0", "-3"],
+        )
+        .await?;
+        Ok(out
+            .lines()
+            .filter_map(|line| line.strip_prefix("package:"))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect())
+    }
+
+    /// Resolve a running PID for a package, or `None` if the app
+    /// isn't currently running. `pidof` exits with empty stdout when
+    /// the process isn't found — we treat that as `None` rather than
+    /// an error. A package may map to multiple PIDs (process names);
+    /// we return the first one, which is the main app process in the
+    /// usual case (per-package Android processes are siblings of the
+    /// main one, not children).
+    pub async fn pidof(&self, serial: &str, package: &str) -> Result<Option<u32>> {
+        let out = run("adb", &["-s", serial, "shell", "pidof", package])
+            .await
+            .unwrap_or_default();
+        Ok(out
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<u32>().ok()))
+    }
+
     pub async fn remove(&self, serial: &str) -> Result<()> {
         // Clear proxy first so the device gets internet back before we
         // tear down the heartbeat reverse. Order matters: if we tear

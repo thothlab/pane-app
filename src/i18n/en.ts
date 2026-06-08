@@ -264,6 +264,13 @@ const en = {
     clear_hotkey: "⌘K",
     auto_scroll: "Follow",
     auto_scroll_title: "Auto-scroll to newest entry",
+    follow_app_none: "Follow app: (off)",
+    follow_app_title:
+      "Filter the view to a specific app's PID; auto-tracks restart",
+    follow_app_no_pid: "(not running)",
+    export: "Export",
+    export_title: "Export the currently-visible entries to a .log file",
+    export_failed: "Export failed: {{message}}",
     filter_placeholder: "tag:OkHttp · level:E · pid:1234 · ~regex · plain text",
     filter_help:
       "Bare word — substring in tag or message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid.\n~pattern — regex (matches tag or message).\nlevel:W..F — range, all warnings and above.\nComma in value ORs alternatives. Negate with !.\nMultiple tokens are ANDed.\n⌘K clears the buffer. ⌘F focuses this input. Space toggles pause.",

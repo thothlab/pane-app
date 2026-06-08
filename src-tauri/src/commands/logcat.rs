@@ -26,6 +26,7 @@
 use std::collections::HashMap;
 
 use pane_android::logcat::{spawn as spawn_logcat, LogcatConfig, LogcatEvent};
+use pane_android::AndroidPlatform;
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tokio::sync::mpsc;
@@ -140,6 +141,34 @@ pub async fn logcat_open(
     });
 
     Ok(serde_json::json!({ "label": label, "reused": false }))
+}
+
+/// List installed third-party packages on a connected Android device.
+/// Used by the Logcat window's "Follow app" dropdown to populate the
+/// list of candidate apps. Returns an empty list (not an error) when
+/// the device is missing — the UI shows "no apps available" then.
+#[tauri::command]
+pub async fn android_list_packages(serial: String) -> CmdResult<Vec<String>> {
+    let android = AndroidPlatform::new();
+    android
+        .list_third_party_packages(&serial)
+        .await
+        .map_err(to_api("adb"))
+}
+
+/// Resolve a package's current PID, or `None` if it isn't running.
+/// The Logcat window polls this every few seconds while "Follow app"
+/// is on so a process restart picks up the new PID transparently.
+#[tauri::command]
+pub async fn android_pidof(
+    serial: String,
+    package: String,
+) -> CmdResult<Option<u32>> {
+    let android = AndroidPlatform::new();
+    android
+        .pidof(&serial, &package)
+        .await
+        .map_err(to_api("adb"))
 }
 
 /// URL-encode a string for use inside a query parameter value. We avoid

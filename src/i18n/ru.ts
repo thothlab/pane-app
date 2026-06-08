@@ -263,6 +263,13 @@ const ru: Dict = {
     clear_hotkey: "⌘K",
     auto_scroll: "Следить",
     auto_scroll_title: "Прокрутка к новым записям",
+    follow_app_none: "Приложение: (нет)",
+    follow_app_title:
+      "Фильтр по PID конкретного приложения; авто-обновляется при рестарте",
+    follow_app_no_pid: "(не запущено)",
+    export: "Экспорт",
+    export_title: "Сохранить отфильтрованные записи в .log",
+    export_failed: "Экспорт не удался: {{message}}",
     filter_placeholder: "tag:OkHttp · level:E · pid:1234 · ~regex · plain text",
     filter_help:
       "Слово без префикса — substring по tag или message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid.\n~pattern — regex (по tag или message).\nlevel:W..F — диапазон, все warning и выше.\nЗапятая в значении — OR альтернатив. Отрицание через !.\nНесколько токенов соединяются по AND.\n⌘K — очистить буфер. ⌘F — фокус в это поле. Пробел — пауза.",
