@@ -103,13 +103,29 @@ const LogcatView: Component = () => {
     return all.filter((e) => e.pid === pid && m(e));
   });
 
-  // Load the package list once on mount. Refresh on-demand is the
-  // user's job via the "↻" affordance on the dropdown — installed
-  // package set changes rarely during a debugging session.
+  // Re-fetch the running-app list every 10s so newly-launched apps
+  // appear in the dropdown without the user having to reopen the
+  // window. ps -A roundtrip is ~50ms over USB — barely noticeable.
+  // The active selection is preserved across refreshes; if the user
+  // had picked an app that's since exited, the "(not running)"
+  // indicator next to the dropdown surfaces that, the dropdown
+  // option itself stays as-typed.
   onMount(() => {
-    invoke<string[]>("android_list_packages", { serial })
-      .then((list) => setPackages(list))
-      .catch(() => setPackages([]));
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const list = await invoke<string[]>("android_list_packages", { serial });
+        if (!cancelled) setPackages(list);
+      } catch {
+        if (!cancelled) setPackages([]);
+      }
+    };
+    tick();
+    const handle = setInterval(tick, 10000);
+    onCleanup(() => {
+      cancelled = true;
+      clearInterval(handle);
+    });
   });
 
   // While Follow-app is on, resolve the PID periodically. Polling is
@@ -332,7 +348,11 @@ const LogcatView: Component = () => {
             package triggers the createEffect above, which starts a
             5s pidof poll. PID transitions are silent — the visible()
             filter recomputes and the user just sees the entry set
-            update. */}
+            update. If the followed app dies (drops out of the
+            running-packages list on the next 10s refresh), we keep
+            it as an option so the user's selection isn't silently
+            lost — the "(not running)" indicator beside the dropdown
+            says what happened. */}
         <select
           class={`text-xs px-2 py-1 rounded outline-none max-w-[200px] ${
             followApp() ? "bg-accent/15 text-accent" : "bg-bg-muted text-fg-muted"
@@ -345,6 +365,9 @@ const LogcatView: Component = () => {
           title={t()("logcat.follow_app_title")}
         >
           <option value="">{t()("logcat.follow_app_none")}</option>
+          <Show when={followApp() && !packages().includes(followApp()!)}>
+            <option value={followApp()!}>{followApp()} (not running)</option>
+          </Show>
           {packages().map((pkg) => (
             <option value={pkg}>{pkg}</option>
           ))}

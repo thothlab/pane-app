@@ -143,15 +143,17 @@ pub async fn logcat_open(
     Ok(serde_json::json!({ "label": label, "reused": false }))
 }
 
-/// List installed third-party packages on a connected Android device.
-/// Used by the Logcat window's "Follow app" dropdown to populate the
-/// list of candidate apps. Returns an empty list (not an error) when
-/// the device is missing — the UI shows "no apps available" then.
+/// List **running** user-installed apps on a connected Android device,
+/// sorted alphabetically. Used by the Logcat window's "Follow app"
+/// dropdown. Restricting to running apps removes the surprise where
+/// users pick an installed-but-not-running app and the filter just
+/// shows "(not running)" with no entries — the dropdown should only
+/// surface apps with an actual PID to follow.
 #[tauri::command]
 pub async fn android_list_packages(serial: String) -> CmdResult<Vec<String>> {
     let android = AndroidPlatform::new();
     android
-        .list_third_party_packages(&serial)
+        .list_running_user_packages(&serial)
         .await
         .map_err(to_api("adb"))
 }
