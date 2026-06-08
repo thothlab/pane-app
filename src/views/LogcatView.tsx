@@ -3,6 +3,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  For,
   onCleanup,
   onMount,
   Show,
@@ -270,14 +271,22 @@ const LogcatView: Component = () => {
 
   let filterInputRef: HTMLInputElement | undefined;
 
-  const virtualizer = createMemo(() =>
-    createVirtualizer({
-      count: visible().length,
-      getScrollElement: () => scrollEl ?? null,
-      estimateSize: () => 22,
-      overscan: 30,
-    }),
-  );
+  // Stable virtualizer instance — `count` is a reactive getter so the
+  // internal store recomputes virtual items as entries flow in, but
+  // the Virtualizer object itself never gets reconstructed. Wrapping
+  // this in `createMemo(() => createVirtualizer(...))` reconstructed
+  // it on every batch (10×/sec during a firehose), which (a) wiped
+  // scroll state, (b) saturated the main thread enough that toolbar
+  // events stopped firing. `mergeProps` inside the lib makes the
+  // option getters reactive without rebuilding the instance.
+  const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+    get count() {
+      return visible().length;
+    },
+    getScrollElement: () => scrollEl ?? null,
+    estimateSize: () => 22,
+    overscan: 30,
+  });
 
   return (
     <div class="flex flex-col h-screen bg-bg text-fg text-xs">
@@ -379,47 +388,55 @@ const LogcatView: Component = () => {
         </div>
       )}
 
-      {/* Virtualized table */}
+      {/* Virtualized table. <For> over the reactive virtual-items
+          accessor keeps row identity stable across the firehose;
+          .map would rebuild DOM nodes each batch. */}
       <div
         ref={(el) => (scrollEl = el)}
         class="flex-1 overflow-auto"
         onScroll={onScroll}
       >
-        <div
-          style={{
-            height: `${virtualizer().getTotalSize()}px`,
-            position: "relative",
-            width: "100%",
-          }}
+        <Show
+          when={visible().length > 0}
+          fallback={
+            <div class="flex items-center justify-center h-full text-fg-muted italic">
+              {entries().length === 0
+                ? t()("logcat.empty_waiting")
+                : t()("logcat.empty_filtered")}
+            </div>
+          }
         >
-          {virtualizer()
-            .getVirtualItems()
-            .map((vi) => {
-              const e = visible()[vi.index]!;
-              return (
-                <div
-                  class="absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline gap-2 px-3 py-px"
-                  style={{
-                    transform: `translateY(${vi.start}px)`,
-                    "grid-template-columns": "90px 60px 14px 180px 1fr",
-                  }}
-                >
-                  <span class="text-fg-muted truncate">{e.timestamp}</span>
-                  <span class="text-fg-muted truncate">{e.pid > 0 ? e.pid : ""}</span>
-                  <span class={LEVEL_COLOR[e.level]}>{LEVEL_CHAR[e.level]}</span>
-                  <span class="truncate">{e.tag}</span>
-                  <span class="truncate">{e.message}</span>
-                </div>
-              );
-            })}
-        </div>
-        {visible().length === 0 && (
-          <div class="flex items-center justify-center h-full text-fg-muted italic">
-            {entries().length === 0
-              ? t()("logcat.empty_waiting")
-              : t()("logcat.empty_filtered")}
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              position: "relative",
+              width: "100%",
+            }}
+          >
+            <For each={virtualizer.getVirtualItems()}>
+              {(vi) => {
+                const e = visible()[vi.index]!;
+                return (
+                  <div
+                    class="absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline gap-2 px-3 py-px"
+                    style={{
+                      transform: `translateY(${vi.start}px)`,
+                      "grid-template-columns": "90px 60px 14px 180px 1fr",
+                    }}
+                  >
+                    <span class="text-fg-muted truncate">{e.timestamp}</span>
+                    <span class="text-fg-muted truncate">
+                      {e.pid > 0 ? e.pid : ""}
+                    </span>
+                    <span class={LEVEL_COLOR[e.level]}>{LEVEL_CHAR[e.level]}</span>
+                    <span class="truncate">{e.tag}</span>
+                    <span class="truncate">{e.message}</span>
+                  </div>
+                );
+              }}
+            </For>
           </div>
-        )}
+        </Show>
       </div>
     </div>
   );
