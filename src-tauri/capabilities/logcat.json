@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "logcat",
+  "description": "Permission set for the Logcat windows. They receive the logcat://batch event stream and need core IPC.",
+  "windows": ["logcat-*"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "fs:default"
+  ]
+}

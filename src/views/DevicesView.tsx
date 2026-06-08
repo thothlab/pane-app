@@ -1,5 +1,6 @@
 import { type Component, createSignal, createResource, For, Show } from "solid-js";
-import { Smartphone, Plus, RefreshCw, RotateCw, Trash2, AlertCircle, CheckCircle, Copy, Check, ChevronDown, ChevronRight } from "lucide-solid";
+import { Smartphone, Plus, RefreshCw, RotateCw, Trash2, AlertCircle, CheckCircle, Copy, Check, ChevronDown, ChevronRight, Terminal } from "lucide-solid";
+import { invoke } from "@tauri-apps/api/core";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import { t, tr } from "@/i18n";
@@ -49,6 +50,19 @@ const DevicesView: Component = () => {
     if (!confirm(tr("devices.remove_confirm"))) return;
     await api.devices.remove(id);
     await refetch();
+  };
+
+  // Open (or focus, if already open) the Logcat window for an Android
+  // device. Backend `logcat_open` is idempotent — second click on the
+  // same serial just focuses the existing window, never double-spawns
+  // the `adb logcat` subprocess.
+  const openLogcat = async (serial: string, appLabel?: string) => {
+    try {
+      await invoke("logcat_open", { serial, appLabel: appLabel ?? null });
+    } catch (e: unknown) {
+      const msg = (e as { message?: string })?.message ?? String(e);
+      alert(msg);
+    }
   };
 
   // Re-runs the pairing flow on an already-paired device. Useful when the
@@ -128,14 +142,26 @@ const DevicesView: Component = () => {
                       <div class="text-xs text-fg-muted font-mono">{d.platform} · {d.serial}</div>
                     </div>
                   </div>
-                  <button
-                    class="text-xs px-3 py-1.5 rounded bg-accent text-white inline-flex items-center gap-1 disabled:opacity-50"
-                    disabled={busy() === d.serial}
-                    onClick={() => add(d)}
-                  >
-                    <Plus size={12} />{" "}
-                    {busy() === d.serial ? t()("devices.adding") : t()("devices.add")}
-                  </button>
+                  <div class="flex items-center gap-1">
+                    <Show when={d.platform === "android"}>
+                      <button
+                        class="text-xs px-2 py-1.5 rounded hover:bg-bg-muted inline-flex items-center gap-1"
+                        onClick={() => openLogcat(d.serial, d.name)}
+                        title={t()("logcat.open_title")}
+                      >
+                        <Terminal size={12} />
+                        {t()("logcat.open")}
+                      </button>
+                    </Show>
+                    <button
+                      class="text-xs px-3 py-1.5 rounded bg-accent text-white inline-flex items-center gap-1 disabled:opacity-50"
+                      disabled={busy() === d.serial}
+                      onClick={() => add(d)}
+                    >
+                      <Plus size={12} />{" "}
+                      {busy() === d.serial ? t()("devices.adding") : t()("devices.add")}
+                    </button>
+                  </div>
                 </li>
               )}
             </For>
@@ -159,6 +185,7 @@ const DevicesView: Component = () => {
                   busy={busy() === d.serial}
                   onResync={() => resync(d)}
                   onRemove={() => remove(d.id)}
+                  onLogcat={() => openLogcat(d.serial, d.display_name)}
                 />
               )}
             </For>
@@ -181,6 +208,7 @@ const DeviceRow: Component<{
   busy: boolean;
   onResync: () => void;
   onRemove: () => void;
+  onLogcat: () => void;
 }> = (p) => {
   const state = () => caState(p.device);
   const isFullyReady = () => p.device.state === "ready" && state() === "auto_succeeded";
@@ -215,6 +243,15 @@ const DeviceRow: Component<{
           </div>
         </div>
         <div class="flex items-center gap-1">
+          <Show when={p.device.platform === "android"}>
+            <button
+              class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1"
+              onClick={p.onLogcat}
+              title={t()("logcat.open_title")}
+            >
+              <Terminal size={12} /> {t()("logcat.open")}
+            </button>
+          </Show>
           <button
             class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-50"
             onClick={p.onResync}

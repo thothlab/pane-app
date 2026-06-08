@@ -20,7 +20,9 @@ use uuid::Uuid;
 
 /// Single source of truth for the "where to look for adb" failure message.
 /// Surfaced in the UI verbatim, so phrase it as an instruction, not a log line.
-const ADB_NOT_FOUND_MSG: &str = "adb not found. Install Android platform-tools \
+pub mod logcat;
+
+pub(crate) const ADB_NOT_FOUND_MSG: &str = "adb not found. Install Android platform-tools \
     (https://developer.android.com/tools/releases/platform-tools) and either add it to PATH, \
     set ANDROID_HOME, or install at the default Android SDK location.";
 
@@ -752,7 +754,7 @@ async fn run(bin: &str, args: &[&str]) -> Result<String> {
 ///   5. Walk `$PATH` ourselves — covers the case where PATH *is* populated
 ///      (e.g. dev runs from terminal) without relying on the OS PATH lookup
 ///      which behaves differently across `Command::new` impls.
-fn resolve_adb() -> Option<PathBuf> {
+pub(crate) fn resolve_adb() -> Option<PathBuf> {
     let exe_name = adb_exe_name();
 
     if let Ok(exe) = std::env::current_exe() {

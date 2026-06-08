@@ -26,11 +26,18 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
+        // LogcatSessions tracks one shutdown-sender per open logcat
+        // window so a second click on the Logcat button can detect
+        // and focus the existing window instead of double-spawning
+        // the adb subprocess.
+        .manage(commands::logcat::LogcatSessions::new())
         .invoke_handler(tauri::generate_handler![
             // proxy
             commands::proxy::start,
             commands::proxy::stop,
             commands::proxy::status,
+            // logcat
+            commands::logcat::logcat_open,
             // ca
             commands::ca::current,
             commands::ca::rotate,

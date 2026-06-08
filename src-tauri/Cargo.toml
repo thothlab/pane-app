@@ -41,6 +41,7 @@ pane-engine-mitm.workspace = true
 pane-ca.workspace = true
 pane-storage.workspace = true
 pane-devices.workspace = true
+pane-android.workspace = true
 pane-setup-server.workspace = true
 pane-pinning.workspace = true
 

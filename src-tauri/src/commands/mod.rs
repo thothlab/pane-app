@@ -2,6 +2,7 @@ pub mod ca;
 pub mod captures;
 pub mod devices;
 pub mod filters;
+pub mod logcat;
 pub mod proxy;
 pub mod replay;
 pub mod rules;
