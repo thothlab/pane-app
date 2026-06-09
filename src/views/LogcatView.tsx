@@ -317,8 +317,15 @@ const LogcatView: Component = () => {
 
   // Auto-scroll to bottom when new entries arrive and the user hasn't
   // scrolled up.
+  //
+  // Depend on the full `visible()` reference, not just its length.
+  // Once the ring buffer hits MAX_ENTRIES, length is pinned at the
+  // cap and FIFO turnover only changes the array reference — depending
+  // on length alone would freeze auto-scroll at saturation, which was
+  // the "logcat stopped updating" bug users hit on long-running
+  // sessions.
   createEffect(() => {
-    void visible().length;
+    void visible();
     if (!autoScroll() || !scrollEl) return;
     queueMicrotask(() => {
       if (!scrollEl) return;
@@ -907,28 +914,37 @@ const LogcatView: Component = () => {
                 evil and we'll revisit if it becomes a problem. */}
             <For each={virtualizer.getVirtualItems()}>
               {(vi) => {
-                const e = visible()[vi.index];
-                if (!e) return null;
+                // Wrap the row entry in a memo so it tracks visible()
+                // changes — at MAX_ENTRIES the virtualizer keeps
+                // returning the same vi objects (count is pinned),
+                // so the <For> callback never re-runs. Without this
+                // memo, e was captured once and the row content
+                // froze even though entries() kept turning over.
+                const e = createMemo(() => visible()[vi.index]);
                 return (
-                  <div
-                    class="absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px"
-                    style={{
-                      transform: `translateY(${vi.start}px)`,
-                      "grid-template-columns": gridTemplate(),
-                    }}
-                  >
-                    <span class="text-fg-muted truncate px-2 border-r border-border/30">
-                      {e.timestamp}
-                    </span>
-                    <span class="text-fg-muted truncate px-2 border-r border-border/30">
-                      {e.pid > 0 ? e.pid : ""}
-                    </span>
-                    <span class={`px-1 border-r border-border/30 ${LEVEL_COLOR[e.level]}`}>
-                      {LEVEL_CHAR[e.level]}
-                    </span>
-                    <span class="truncate px-2 border-r border-border/30">{e.tag}</span>
-                    <span class="truncate px-2">{e.message}</span>
-                  </div>
+                  <Show when={e()}>
+                    {(entry) => (
+                      <div
+                        class="absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px"
+                        style={{
+                          transform: `translateY(${vi.start}px)`,
+                          "grid-template-columns": gridTemplate(),
+                        }}
+                      >
+                        <span class="text-fg-muted truncate px-2 border-r border-border/30">
+                          {entry().timestamp}
+                        </span>
+                        <span class="text-fg-muted truncate px-2 border-r border-border/30">
+                          {entry().pid > 0 ? entry().pid : ""}
+                        </span>
+                        <span class={`px-1 border-r border-border/30 ${LEVEL_COLOR[entry().level]}`}>
+                          {LEVEL_CHAR[entry().level]}
+                        </span>
+                        <span class="truncate px-2 border-r border-border/30">{entry().tag}</span>
+                        <span class="truncate px-2">{entry().message}</span>
+                      </div>
+                    )}
+                  </Show>
                 );
               }}
             </For>

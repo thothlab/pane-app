@@ -325,12 +325,20 @@ impl AndroidPlatform {
     /// third-party AND running. `:subprocess` suffixes on the process
     /// name are stripped before matching. Result is sorted+deduped.
     pub async fn list_running_user_packages(&self, serial: &str) -> Result<Vec<String>> {
+        // `ps -A` includes every cached process Android keeps warm in
+        // RAM for fast relaunch (Samsung in particular holds dozens).
+        // The user expects "apps I'm actually using", so we parse
+        // `dumpsys activity oom` instead and stop at the "Cached
+        // processes:" section header — everything above it is at
+        // PERSISTENT / TOP / FGS / IMPORTANT / SERVICE / etc., none
+        // of which are cached. Then intersect with the third-party
+        // package list so system apps don't pollute the dropdown.
         let pm_args = ["-s", serial, "shell", "pm", "list", "packages", "--user", "0", "-3"];
-        let ps_args = ["-s", serial, "shell", "ps", "-A", "-o", "NAME"];
-        let (third_party_out, ps_out) =
-            tokio::join!(run("adb", &pm_args), run("adb", &ps_args));
+        let oom_args = ["-s", serial, "shell", "dumpsys", "activity", "oom"];
+        let (third_party_out, oom_out) =
+            tokio::join!(run("adb", &pm_args), run("adb", &oom_args));
         let third_party_out = third_party_out?;
-        let ps_out = ps_out?;
+        let oom_out = oom_out?;
 
         let third_party: std::collections::HashSet<&str> = third_party_out
             .lines()
@@ -339,18 +347,52 @@ impl AndroidPlatform {
             .filter(|s| !s.is_empty())
             .collect();
 
-        let mut running: Vec<String> = ps_out
-            .lines()
-            .skip(1) // header
-            .filter_map(|line| {
-                let name = line.trim();
-                let base = name.split(':').next()?;
-                if !third_party.contains(base) {
-                    return None;
+        // Each process is one line of the form:
+        //   `    Proc # 0: top      T/A/TOP  trm: 0 16733:ru.foo/u0a345 (top-activity)`
+        //   `    PERS #44: sys      F/ /PER  trm: 0 1213:system/1000     (fixed)`
+        //   `    Proc # 5: cch      B/ /CAC  trm: 0 22006:net.openvpn/u0a173 (cch-act)`
+        // The trailing `(...)` is the importance reason — anything
+        // starting with `cch-` is a cached process that the user
+        // doesn't think of as "running". We skip those and keep the
+        // rest, extracting `process.name` from the `PID:process/UID`
+        // triple and intersecting with the third-party package set.
+        let mut running: Vec<String> = Vec::new();
+        for raw in oom_out.lines() {
+            let line = raw.trim_start();
+            if !line.starts_with("Proc #") && !line.starts_with("PERS #") {
+                continue;
+            }
+            // Trailing `(...)` — if missing, fall back to keeping the
+            // entry (better to over-include than to drop a real app
+            // because of an OEM format quirk).
+            if let (Some(open), Some(close)) = (line.rfind('('), line.rfind(')')) {
+                if open < close {
+                    let reason = &line[open + 1..close];
+                    if reason.starts_with("cch") {
+                        continue;
+                    }
                 }
-                Some(base.to_string())
-            })
-            .collect();
+            }
+            // First whitespace-separated token containing both ':'
+            // and '/' is the `pid:process/uid` triple — robust against
+            // varying column widths across Android versions / OEMs.
+            let triple = line
+                .split_whitespace()
+                .find(|t| t.contains(':') && t.contains('/'));
+            let Some(triple) = triple else { continue };
+            let after_colon = match triple.split_once(':') {
+                Some((_, rest)) => rest,
+                None => continue,
+            };
+            let proc_name = match after_colon.split_once('/') {
+                Some((name, _)) => name,
+                None => continue,
+            };
+            let base = proc_name.split(':').next().unwrap_or(proc_name);
+            if third_party.contains(base) {
+                running.push(base.to_string());
+            }
+        }
         running.sort();
         running.dedup();
         Ok(running)
