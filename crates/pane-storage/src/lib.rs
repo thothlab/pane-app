@@ -486,16 +486,17 @@ impl Storage {
         let id = args.id.unwrap_or_else(Uuid::new_v4);
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO saved_filter (id, name, query, color, pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO saved_filter (id, name, query, color, pinned, kind)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET name=excluded.name, query=excluded.query,
-                color=excluded.color, pinned=excluded.pinned",
+                color=excluded.color, pinned=excluded.pinned, kind=excluded.kind",
             params![
                 id.to_string(),
                 &args.name,
                 &args.query,
                 &args.color,
-                args.pinned as i64
+                args.pinned as i64,
+                &args.kind,
             ],
         )?;
         Ok(FilterDto {
@@ -504,24 +505,47 @@ impl Storage {
             query: args.query,
             color: args.color,
             pinned: args.pinned,
+            kind: args.kind,
         })
     }
 
-    pub fn list_filters(&self) -> Result<Vec<FilterDto>> {
+    /// Lists saved filters, optionally restricted to a single `kind`
+    /// ("captures" / "logcat"). Pass `None` to list every kind — only
+    /// useful for tooling/debug; production callers always pass the
+    /// view's own kind so the two scopes don't bleed into each other.
+    pub fn list_filters(&self, kind: Option<&str>) -> Result<Vec<FilterDto>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT id, name, query, color, pinned FROM saved_filter ORDER BY pinned DESC, name",
-        )?;
-        let rows = stmt.query_map([], |r| {
+        let (sql, with_kind) = match kind {
+            Some(_) => (
+                "SELECT id, name, query, color, pinned, kind FROM saved_filter
+                 WHERE kind = ?1 ORDER BY pinned DESC, name",
+                true,
+            ),
+            None => (
+                "SELECT id, name, query, color, pinned, kind FROM saved_filter
+                 ORDER BY pinned DESC, name",
+                false,
+            ),
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let map_row = |r: &rusqlite::Row| {
             Ok(FilterDto {
                 id: Uuid::parse_str(&r.get::<_, String>(0)?).unwrap(),
                 name: r.get(1)?,
                 query: r.get(2)?,
                 color: r.get(3)?,
                 pinned: r.get::<_, i64>(4)? != 0,
+                kind: r.get(5)?,
             })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        };
+        let rows: Vec<FilterDto> = if with_kind {
+            stmt.query_map(params![kind.unwrap()], map_row)?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            stmt.query_map([], map_row)?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        Ok(rows)
     }
 
     pub fn delete_filter(&self, id: Uuid) -> Result<()> {

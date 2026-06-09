@@ -233,6 +233,15 @@ pub struct SaveFilterArgs {
     pub query: String,
     pub color: String,
     pub pinned: bool,
+    /// Scope of the filter. "captures" (default) or "logcat".
+    /// Migration V005 added this column; older clients omitting the
+    /// field land in the "captures" bucket via serde default.
+    #[serde(default = "default_filter_kind")]
+    pub kind: String,
+}
+
+fn default_filter_kind() -> String {
+    "captures".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,6 +251,7 @@ pub struct FilterDto {
     pub query: String,
     pub color: String,
     pub pinned: bool,
+    pub kind: String,
 }
 
 // ------------------- Rules (response stubbing) -------------------

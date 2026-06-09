@@ -12,9 +12,36 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { createVirtualizer } from "@tanstack/solid-virtual";
-import { Pause, Play, Trash2, ArrowDown, Search as SearchIcon, Target, Download } from "lucide-solid";
+import {
+  ArrowDown,
+  ChevronDown,
+  Download,
+  Filter as FilterIcon,
+  Pause,
+  Pin,
+  Play,
+  Search as SearchIcon,
+  Star,
+  Target,
+  Trash2,
+  X,
+} from "lucide-solid";
 import { t, tr } from "@/i18n";
 import { compileLogcatFilter } from "@/lib/logcat-filter";
+import { savedFiltersFor } from "@/stores/saved-filters";
+
+// Same palette as CapturesView's save popover so the colour dots in the
+// two scopes look identical. Kept local rather than shared because there's
+// no other consumer and inter-view coupling for six hex strings isn't
+// worth a new module.
+const FILTER_PALETTE = [
+  "#60a5fa", // blue
+  "#f87171", // red
+  "#facc15", // yellow
+  "#34d399", // green
+  "#a78bfa", // purple
+  "#fb923c", // orange
+];
 
 // Mirror of crates/pane-android/src/logcat.rs::LogEntry. Serde-renamed
 // lowercase enum on the wire — keep this in sync.
@@ -390,6 +417,87 @@ const LogcatView: Component = () => {
   let filterInputRef: HTMLInputElement | undefined;
   let filterOverlayRef: HTMLDivElement | undefined;
 
+  // Saved-filters scope. The logcat window has its own filter list,
+  // kept separate from captures by the `kind` column added in V005 —
+  // captures and logcat use different DSLs, so the two scopes must
+  // not bleed into each other (a captures query is almost always
+  // invalid as a logcat query and vice versa).
+  const savedStore = savedFiltersFor("logcat");
+  const savedFilters = savedStore.filters;
+
+  // Save-popover state. Mirrors CapturesView: name + colour + pin,
+  // plus an "update vs save" decision based on a case-insensitive
+  // exact name match against the existing list.
+  const [saveOpen, setSaveOpen] = createSignal(false);
+  const [saveName, setSaveName] = createSignal("");
+  const [saveColor, setSaveColor] = createSignal(FILTER_PALETTE[0]!);
+  const [savePinned, setSavePinned] = createSignal(false);
+  const [saveBusy, setSaveBusy] = createSignal(false);
+  const [savedListOpen, setSavedListOpen] = createSignal(false);
+  let savePopoverRef: HTMLDivElement | undefined;
+  let savedListRef: HTMLDivElement | undefined;
+
+  const existingMatch = () => {
+    const n = saveName().trim().toLowerCase();
+    if (!n) return undefined;
+    return savedFilters().find((f) => f.name.trim().toLowerCase() === n);
+  };
+
+  const openSave = () => {
+    if (!filter().trim()) return;
+    setSavedListOpen(false);
+    setSaveName("");
+    setSaveColor(FILTER_PALETTE[0]!);
+    setSavePinned(false);
+    setSaveOpen(true);
+    queueMicrotask(() => savePopoverRef?.querySelector("input")?.focus());
+  };
+
+  const doSave = async (e: Event) => {
+    e.preventDefault();
+    const name = saveName().trim();
+    if (!name || saveBusy()) return;
+    setSaveBusy(true);
+    try {
+      const match = existingMatch();
+      await savedStore.save({
+        id: match?.id,
+        name,
+        query: filter(),
+        color: saveColor(),
+        pinned: savePinned(),
+      });
+      setSaveOpen(false);
+    } catch (err) {
+      console.error("save logcat filter failed", err);
+      alert(
+        tr("logcat.save_failed", {
+          message: (err as { message?: string })?.message ?? String(err),
+        }),
+      );
+    } finally {
+      setSaveBusy(false);
+    }
+  };
+
+  // Outside-click closes both popovers. Initial fetch populates the
+  // dropdown so the chevron shows up on first paint if the user
+  // already has saved filters from a previous session.
+  onMount(() => {
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (saveOpen() && savePopoverRef && !savePopoverRef.contains(target)) {
+        setSaveOpen(false);
+      }
+      if (savedListOpen() && savedListRef && !savedListRef.contains(target)) {
+        setSavedListOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    onCleanup(() => document.removeEventListener("mousedown", onDoc));
+    void savedStore.refresh();
+  });
+
   // Keep the highlight overlay scrolled in step with the input —
   // when the typed text overflows, the input scrolls horizontally
   // and we mirror that scroll on the overlay so the colours stay
@@ -509,13 +617,13 @@ const LogcatView: Component = () => {
           <div
             ref={(el) => (filterOverlayRef = el)}
             aria-hidden="true"
-            class="absolute inset-0 pointer-events-none text-xs font-mono whitespace-pre overflow-hidden px-2 py-1 flex items-center"
+            class="absolute inset-0 pointer-events-none text-xs font-mono whitespace-pre overflow-hidden px-2 py-1 pr-14 flex items-center"
             innerHTML={highlightedFilterHtml()}
           />
           <input
             ref={(el) => (filterInputRef = el)}
             type="text"
-            class="relative w-full bg-transparent rounded px-2 py-1 outline-none text-xs font-mono text-transparent caret-fg placeholder:text-fg-muted"
+            class="relative w-full bg-transparent rounded px-2 py-1 pr-14 outline-none text-xs font-mono text-transparent caret-fg placeholder:text-fg-muted"
             placeholder={t()("logcat.filter_placeholder")}
             value={filter()}
             onInput={(e) => {
@@ -535,6 +643,189 @@ const LogcatView: Component = () => {
             autocorrect="off"
             spellcheck={false}
           />
+          {/* Right-aligned action cluster: chevron (saved-filter
+              dropdown — only when something to show), star (save
+              current — only when filter is non-empty). Sits on top
+              of the input via z-10. Stacked icons are spaced by
+              gap-0.5; mr-1 keeps them off the rounded corner. */}
+          <div class="absolute right-1 inset-y-0 flex items-center gap-0.5 z-10">
+            <Show when={savedFilters().length > 0}>
+              <button
+                type="button"
+                class={`p-1 rounded hover:bg-bg-subtle ${
+                  savedListOpen() ? "text-accent" : "text-fg-muted"
+                }`}
+                title={t()("logcat.saved_filters_title")}
+                aria-label={t()("logcat.saved_filters_title")}
+                // stopPropagation on mousedown so the document-level
+                // outside-click handler doesn't fire BEFORE the click
+                // toggle below, which would close-then-reopen the
+                // popover and visually do nothing.
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSaveOpen(false);
+                  setSavedListOpen((v) => !v);
+                }}
+              >
+                <ChevronDown size={14} />
+              </button>
+            </Show>
+            <Show when={filter().trim()}>
+              <button
+                type="button"
+                class="p-1 rounded text-fg-muted hover:text-warn hover:bg-bg-subtle"
+                title={t()("logcat.save_filter_title")}
+                aria-label={t()("logcat.save_filter")}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openSave();
+                }}
+              >
+                <Star size={14} />
+              </button>
+            </Show>
+          </div>
+
+          {/* Save / Update popover. Anchored to wrapper's right edge,
+              opens downward. Mirrors CapturesView popover so users
+              who already know the captures flow recognise it. */}
+          <Show when={saveOpen()}>
+            <div
+              ref={(el) => (savePopoverRef = el)}
+              class="absolute right-0 top-full mt-1 w-72 z-30 bg-bg-subtle border border-border rounded shadow-lg p-3 text-xs"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <form onSubmit={doSave} class="space-y-2">
+                <div class="font-semibold text-fg-subtle uppercase tracking-wide">
+                  {existingMatch()
+                    ? t()("logcat.update_filter")
+                    : t()("logcat.save_filter")}
+                </div>
+                <div class="font-mono text-fg-muted bg-bg-muted rounded px-2 py-1 truncate">
+                  {filter()}
+                </div>
+                <input
+                  type="text"
+                  class="w-full px-2 py-1.5 rounded bg-bg-muted outline-none focus:ring-1 focus:ring-accent"
+                  placeholder={t()("logcat.save_filter_name_placeholder")}
+                  value={saveName()}
+                  onInput={(e) => setSaveName(e.currentTarget.value)}
+                  maxlength={64}
+                />
+                <Show when={existingMatch()}>
+                  <div class="text-fg-muted text-[11px]">
+                    {tr("logcat.update_filter_hint", {
+                      name: existingMatch()!.name,
+                    })}
+                  </div>
+                </Show>
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-1">
+                    <For each={FILTER_PALETTE}>
+                      {(c) => (
+                        <button
+                          type="button"
+                          class={`w-5 h-5 rounded-full border ${
+                            saveColor() === c ? "border-fg" : "border-transparent"
+                          }`}
+                          style={{ "background-color": c }}
+                          onClick={() => setSaveColor(c)}
+                          aria-label={tr("logcat.color_label", { color: c })}
+                        />
+                      )}
+                    </For>
+                  </div>
+                  <label class="inline-flex items-center gap-1 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      class="accent-accent"
+                      checked={savePinned()}
+                      onChange={(e) => setSavePinned(e.currentTarget.checked)}
+                    />
+                    <Pin size={11} /> {t()("logcat.pin")}
+                  </label>
+                </div>
+                <div class="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    class="px-2 py-1 rounded hover:bg-bg-muted text-fg-muted"
+                    onClick={() => setSaveOpen(false)}
+                  >
+                    {t()("logcat.cancel")}
+                  </button>
+                  <button
+                    type="submit"
+                    class="px-3 py-1 rounded bg-accent text-white hover:opacity-90 disabled:opacity-50"
+                    disabled={!saveName().trim() || saveBusy()}
+                  >
+                    {saveBusy()
+                      ? existingMatch()
+                        ? t()("logcat.updating")
+                        : t()("logcat.saving")
+                      : existingMatch()
+                        ? t()("logcat.update")
+                        : t()("logcat.save")}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </Show>
+
+          {/* Saved-filters dropdown. Lists logcat-scoped entries with
+              colour dot + name. Click applies (writes to `filter`),
+              hover reveals delete. Pinned first, then alphabetical —
+              ordering comes from the backend. */}
+          <Show when={savedListOpen()}>
+            <div
+              ref={(el) => (savedListRef = el)}
+              class="absolute right-0 top-full mt-1 w-64 z-30 bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs max-h-80 overflow-auto"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <Show
+                when={savedFilters().length > 0}
+                fallback={
+                  <div class="px-3 py-2 text-fg-muted italic">
+                    {t()("logcat.saved_filters_empty")}
+                  </div>
+                }
+              >
+                <For each={savedFilters()}>
+                  {(f) => (
+                    <div
+                      class="group px-3 py-1.5 hover:bg-bg-muted cursor-pointer flex items-center gap-2"
+                      title={tr("logcat.apply_filter", { query: f.query })}
+                      onClick={() => {
+                        setFilter(f.query);
+                        setSavedListOpen(false);
+                      }}
+                    >
+                      <FilterIcon size={12} style={{ color: f.color }} />
+                      <span class="truncate flex-1">{f.name}</span>
+                      <button
+                        type="button"
+                        class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0 p-0.5"
+                        title={t()("logcat.delete_filter")}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (
+                            confirm(
+                              tr("logcat.delete_filter_confirm", { name: f.name }),
+                            )
+                          ) {
+                            void savedStore.remove(f.id);
+                          }
+                        }}
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </div>
+          </Show>
         </div>
         <span class="text-fg-muted whitespace-nowrap">
           {tr("logcat.counter", {

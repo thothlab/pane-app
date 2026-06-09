@@ -103,12 +103,15 @@ export interface CaptureBodyDto {
   total_size: number;
 }
 
+export type FilterKind = "captures" | "logcat";
+
 export interface FilterDto {
   id: string;
   name: string;
   query: string;
   color: string;
   pinned: boolean;
+  kind: FilterKind;
 }
 
 export interface RequestSpec {

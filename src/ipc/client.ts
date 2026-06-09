@@ -76,9 +76,16 @@ export const api = {
       call<ReplayRecordDto>("send", { args: { source_id: sourceId, request } }),
   },
   filters: {
-    save: (f: { id?: string; name: string; query: string; color: string; pinned: boolean }) =>
-      call<FilterDto>("filters_save", { args: f }),
-    list: () => call<FilterDto[]>("filters_list"),
+    save: (f: {
+      id?: string;
+      name: string;
+      query: string;
+      color: string;
+      pinned: boolean;
+      kind: "captures" | "logcat";
+    }) => call<FilterDto>("filters_save", { args: f }),
+    list: (kind?: "captures" | "logcat") =>
+      call<FilterDto[]>("filters_list", kind ? { kind } : {}),
     delete: (id: string) => call<{ deleted: true }>("filters_delete", { id }),
   },
   rules: {

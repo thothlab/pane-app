@@ -13,8 +13,14 @@ pub async fn filters_save(
 }
 
 #[tauri::command]
-pub async fn filters_list(state: State<'_, AppState>) -> CmdResult<Vec<FilterDto>> {
-    state.storage.list_filters().map_err(to_api("db"))
+pub async fn filters_list(
+    state: State<'_, AppState>,
+    kind: Option<String>,
+) -> CmdResult<Vec<FilterDto>> {
+    state
+        .storage
+        .list_filters(kind.as_deref())
+        .map_err(to_api("db"))
 }
 
 #[tauri::command]
