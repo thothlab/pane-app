@@ -121,8 +121,32 @@ const LogcatView: Component = () => {
   // when the app restarts (PID changes) — that's the whole point of
   // "follow", as opposed to a stale `pid:1234` literal in the filter.
   const [packages, setPackages] = createSignal<string[]>([]);
+  const [packagesLoading, setPackagesLoading] = createSignal(false);
   const [followApp, setFollowApp] = createSignal<string | null>(null);
   const [followedPid, setFollowedPid] = createSignal<number | null>(null);
+
+  // Triggered from onMount (initial + 5s interval) and onMouseDown
+  // on the Follow-app dropdown — so a click always sees a fresh list
+  // even if the periodic tick hasn't fired since the user did
+  // something new on the device. `dumpsys activity oom` over USB is
+  // usually 50–200ms, but Samsung devices have been seen at >1s;
+  // the loading marker disambiguates "empty list" from "still
+  // fetching" in the popup.
+  let packagesInFlight = false;
+  const refreshPackages = async () => {
+    if (packagesInFlight) return;
+    packagesInFlight = true;
+    setPackagesLoading(true);
+    try {
+      const list = await invoke<string[]>("android_list_packages", { serial });
+      setPackages(list);
+    } catch {
+      setPackages([]);
+    } finally {
+      packagesInFlight = false;
+      setPackagesLoading(false);
+    }
+  };
 
   // Resizable column widths. Persisted in localStorage so a user's
   // preferred layout survives close/reopen of the logcat window.
@@ -191,8 +215,18 @@ const LogcatView: Component = () => {
   // Track whether the user is currently scrolled to the bottom. We
   // only auto-stick if they are — if they've scrolled up to read
   // something, we leave them there.
+  //
+  // The classic "ignore the scroll event we just generated" flag
+  // doesn't work at firehose rate: auto-scroll fires ~10× per
+  // second, so when the user actually does scroll up, the flag is
+  // very likely set right at that moment and the user's intent
+  // gets eaten — they're yanked back to the bottom and Follow stays
+  // on no matter what they do. Instead we track scrollTop deltas:
+  // programmatic scroll-to-bottom only ever moves scrollTop forward
+  // (or keeps it the same once the buffer caps), so any decrease is
+  // unambiguously user-driven.
   let scrollEl: HTMLDivElement | undefined;
-  let ignoreNextScroll = false;
+  let lastScrollTop = 0;
 
   // Compile the filter once per typed input — cheap regex/parse, then
   // we apply the predicate over the buffer on every render tick.
@@ -228,29 +262,17 @@ const LogcatView: Component = () => {
     return list;
   });
 
-  // Re-fetch the running-app list every 10s so newly-launched apps
+  // Re-fetch the running-app list periodically so newly-launched apps
   // appear in the dropdown without the user having to reopen the
-  // window. ps -A roundtrip is ~50ms over USB — barely noticeable.
-  // The active selection is preserved across refreshes; if the user
-  // had picked an app that's since exited, the "(not running)"
-  // indicator next to the dropdown surfaces that, the dropdown
-  // option itself stays as-typed.
+  // window. 5s instead of 10s — feels more responsive when the user
+  // just launched the app they want to follow. The active selection
+  // is preserved across refreshes; if the user had picked an app
+  // that's since exited, the "(not running)" indicator beside the
+  // dropdown surfaces that, the dropdown option itself stays as-typed.
   onMount(() => {
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const list = await invoke<string[]>("android_list_packages", { serial });
-        if (!cancelled) setPackages(list);
-      } catch {
-        if (!cancelled) setPackages([]);
-      }
-    };
-    tick();
-    const handle = setInterval(tick, 10000);
-    onCleanup(() => {
-      cancelled = true;
-      clearInterval(handle);
-    });
+    void refreshPackages();
+    const handle = setInterval(refreshPackages, 5000);
+    onCleanup(() => clearInterval(handle));
   });
 
   // While Follow-app is on, resolve the PID periodically. Polling is
@@ -329,22 +351,27 @@ const LogcatView: Component = () => {
     if (!autoScroll() || !scrollEl) return;
     queueMicrotask(() => {
       if (!scrollEl) return;
-      ignoreNextScroll = true;
       scrollEl.scrollTop = scrollEl.scrollHeight;
+      lastScrollTop = scrollEl.scrollTop;
     });
   });
 
   // Detect user scroll-away from the bottom and switch auto-scroll
   // off. Re-engaging is via the toolbar toggle.
+  //
+  // We compare against lastScrollTop instead of computing "is at
+  // bottom?" — at firehose rates the programmatic auto-scroll fires
+  // many times per second, and any "is at bottom" check loses the
+  // race vs. the user's scroll-up event. A 4px slack absorbs
+  // sub-pixel wheel jitter; anything bigger than that going
+  // backwards is the user.
   const onScroll = () => {
     if (!scrollEl) return;
-    if (ignoreNextScroll) {
-      ignoreNextScroll = false;
-      return;
+    const cur = scrollEl.scrollTop;
+    if (cur < lastScrollTop - 4 && autoScroll()) {
+      setAutoScroll(false);
     }
-    const atBottom =
-      scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 4;
-    if (!atBottom && autoScroll()) setAutoScroll(false);
+    lastScrollTop = cur;
   };
 
   const togglePause = () => setPaused(!paused());
@@ -390,8 +417,8 @@ const LogcatView: Component = () => {
     const next = !autoScroll();
     setAutoScroll(next);
     if (next && scrollEl) {
-      ignoreNextScroll = true;
       scrollEl.scrollTop = scrollEl.scrollHeight;
+      lastScrollTop = scrollEl.scrollTop;
     }
   };
 
@@ -592,6 +619,11 @@ const LogcatView: Component = () => {
             followApp() ? "bg-accent/15 text-accent" : "bg-bg-muted text-fg-muted"
           }`}
           value={followApp() ?? ""}
+          // Kick a fresh fetch when the user is about to open the
+          // popup, so the list isn't stale on click. Native
+          // <select> resolves the option set when the popup is
+          // built; mousedown fires before that.
+          onMouseDown={() => void refreshPackages()}
           onChange={(e) => {
             const v = e.currentTarget.value;
             setFollowApp(v === "" ? null : v);
@@ -599,6 +631,11 @@ const LogcatView: Component = () => {
           title={t()("logcat.follow_app_title")}
         >
           <option value="">{t()("logcat.follow_app_none")}</option>
+          <Show when={packagesLoading() && dropdownPackages().length === 0}>
+            <option value="" disabled>
+              {t()("logcat.follow_app_loading")}
+            </option>
+          </Show>
           <For each={dropdownPackages()}>
             {(pkg) => <option value={pkg}>{pkg}</option>}
           </For>

@@ -267,6 +267,7 @@ const ru: Dict = {
     follow_app_title:
       "Фильтр по PID конкретного приложения; авто-обновляется при рестарте",
     follow_app_no_pid: "(не запущено)",
+    follow_app_loading: "Загрузка…",
     export: "Экспорт",
     export_title: "Сохранить отфильтрованные записи в .log",
     export_failed: "Экспорт не удался: {{message}}",

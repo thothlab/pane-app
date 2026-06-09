@@ -268,6 +268,7 @@ const en = {
     follow_app_title:
       "Filter the view to a specific app's PID; auto-tracks restart",
     follow_app_no_pid: "(not running)",
+    follow_app_loading: "Loading apps…",
     export: "Export",
     export_title: "Export the currently-visible entries to a .log file",
     export_failed: "Export failed: {{message}}",
