@@ -231,11 +231,13 @@ const LogcatView: Component = () => {
     return all.filter((e) => pids.has(e.pid) && predicate(e));
   });
 
-  // Resolve every `app:<pkg>` referenced by the current filter to its
-  // current PID via `adb shell pidof PKG`. Polled every 5s so process
-  // restarts pick up the new PID without the user having to retype.
-  // The set rebuilds each tick — packages can be added/removed by
-  // editing the filter text, no separate teardown needed.
+  // Resolve every `app:<query>` referenced by the current filter to
+  // the running PIDs whose process name contains the query — via
+  // `ps -A` + substring filter (see android_pids_matching). Polled
+  // every 5s so process restarts and secondary-process spawns get
+  // picked up without retyping. The set rebuilds each tick — apps
+  // can be added/removed by editing the filter text, no separate
+  // teardown needed.
   createEffect(() => {
     const apps = matcher().appPackages;
     if (apps.length === 0) {
@@ -245,16 +247,16 @@ const LogcatView: Component = () => {
     let cancelled = false;
     const tick = async () => {
       const results = await Promise.all(
-        apps.map((pkg) =>
-          invoke<number | null>("android_pidof", { serial, package: pkg }).catch(
-            () => null as number | null,
+        apps.map((q) =>
+          invoke<number[]>("android_pids_matching", { serial, query: q }).catch(
+            () => [] as number[],
           ),
         ),
       );
       if (cancelled) return;
       const set = new Set<number>();
-      for (const pid of results) {
-        if (typeof pid === "number" && pid > 0) set.add(pid);
+      for (const pids of results) {
+        for (const p of pids) set.add(p);
       }
       setAppPids(set);
     };
@@ -270,18 +272,50 @@ const LogcatView: Component = () => {
   // `logcat://batch` with payload Vec<LogEntry> every 100ms / 50
   // entries (whichever first) on this WebviewWindow only — so the
   // main window never sees the firehose.
+  //
+  // Coalesce incoming batches through requestAnimationFrame: when
+  // adb logcat is first attached, the ring buffer dumps thousands
+  // of entries in 1–2 seconds (50–100+ IPC events/sec). Each event
+  // would trigger setEntries → visible() recompute → virtualizer
+  // recompute, monopolising the main thread and starving the OS
+  // resize-event queue. With rAF coalescing we collapse N batches
+  // arriving between two frames into a single setEntries call;
+  // the user sees the window resize react instantly while the
+  // logs still load smoothly behind it. Steady-state firehose
+  // (post-init) still benefits — 60Hz UI updates regardless of
+  // backend event rate.
   onMount(() => {
     let unlistenBatch: UnlistenFn | undefined;
     let unlistenError: UnlistenFn | undefined;
+    let pending: LogEntry[][] = [];
+    let flushScheduled = false;
+    let rafHandle: number | undefined;
+
+    const flush = () => {
+      flushScheduled = false;
+      rafHandle = undefined;
+      if (pending.length === 0) return;
+      const merged: LogEntry[] =
+        pending.length === 1 ? pending[0]! : pending.flat();
+      pending = [];
+      setEntries((prev) => {
+        const next = prev.length === 0 ? merged : prev.concat(merged);
+        return next.length > MAX_ENTRIES
+          ? next.slice(next.length - MAX_ENTRIES)
+          : next;
+      });
+    };
+
+    const scheduleFlush = () => {
+      if (flushScheduled) return;
+      flushScheduled = true;
+      rafHandle = requestAnimationFrame(flush);
+    };
 
     listen<LogEntry[]>("logcat://batch", (e) => {
       if (paused()) return;
-      setEntries((prev) => {
-        // Append + truncate to MAX_ENTRIES. Slicing once per batch is
-        // cheap; doing it per-entry would thrash GC on a firehose.
-        const next = prev.concat(e.payload);
-        return next.length > MAX_ENTRIES ? next.slice(next.length - MAX_ENTRIES) : next;
-      });
+      pending.push(e.payload);
+      scheduleFlush();
     }).then((u) => (unlistenBatch = u));
 
     listen<{ message: string }>("logcat://error", (e) => {
@@ -298,6 +332,7 @@ const LogcatView: Component = () => {
     onCleanup(() => {
       unlistenBatch?.();
       unlistenError?.();
+      if (rafHandle !== undefined) cancelAnimationFrame(rafHandle);
     });
   });
 

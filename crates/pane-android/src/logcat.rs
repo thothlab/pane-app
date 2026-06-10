@@ -160,7 +160,15 @@ impl Default for LogcatConfig {
     fn default() -> Self {
         Self {
             serial: String::new(),
-            batch_size: 50,
+            // Larger batch caps mean fewer Tauri IPC events during
+            // the initial ring-buffer dump (the burst peak is
+            // 2000–10000 entries/s on a Samsung S9-series). Combined
+            // with rAF coalescing on the renderer side, this keeps
+            // the main thread responsive enough that window resize
+            // takes effect immediately even during the first 1–2s
+            // of streaming. flush_interval stays at 100ms so steady-
+            // state latency is unchanged.
+            batch_size: 250,
             flush_interval: Duration::from_millis(100),
             max_reconnects: 5,
         }

@@ -161,18 +161,21 @@ pub async fn logcat_write_export(path: String, content: String) -> CmdResult<usi
     Ok(bytes)
 }
 
-/// Resolve a package's current PID, or `None` if it isn't running.
-/// The Logcat window polls this every 5s for each `app:<pkg>` token in
-/// the active filter, so process restarts pick up the new PID
-/// transparently.
+/// Resolve every PID whose process name contains `query` (case-
+/// insensitive). The Logcat window polls this every 5s for each
+/// `app:<query>` token in the active filter; process restarts and
+/// secondary-process spawns are picked up on the next tick. Matching
+/// substring rather than exact lets the user type partial names —
+/// `app:ru.` matches every running app whose package starts with
+/// `ru.`, same ergonomics as Lograbbit's App filter.
 #[tauri::command]
-pub async fn android_pidof(
+pub async fn android_pids_matching(
     serial: String,
-    package: String,
-) -> CmdResult<Option<u32>> {
+    query: String,
+) -> CmdResult<Vec<u32>> {
     let android = AndroidPlatform::new();
     android
-        .pidof(&serial, &package)
+        .pids_matching(&serial, &query)
         .await
         .map_err(to_api("adb"))
 }
