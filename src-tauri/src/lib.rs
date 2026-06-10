@@ -39,6 +39,7 @@ pub fn run() {
             // logcat
             commands::logcat::logcat_open,
             commands::logcat::android_pids_matching,
+            commands::logcat::android_pid_names,
             commands::logcat::logcat_write_export,
             // ca
             commands::ca::current,

@@ -307,6 +307,38 @@ impl AndroidPlatform {
             .collect())
     }
 
+    /// Snapshot of every running PID with its process name. Used by
+    /// the Logcat table to label rows with the package they came
+    /// from. One `ps -A` round-trip (~50ms over USB), polled every
+    /// 10s. PID reuse on Android is rare enough at that cadence that
+    /// stale entries aren't worth tracking separately.
+    pub async fn pid_names(
+        &self,
+        serial: &str,
+    ) -> Result<std::collections::HashMap<u32, String>> {
+        let out = run(
+            "adb",
+            &["-s", serial, "shell", "ps", "-A", "-o", "PID,NAME"],
+        )
+        .await?;
+        let mut map = std::collections::HashMap::new();
+        for line in out.lines().skip(1) {
+            let mut parts = line.split_whitespace();
+            let pid_s = match parts.next() {
+                Some(s) => s,
+                None => continue,
+            };
+            let name = match parts.next() {
+                Some(s) => s,
+                None => continue,
+            };
+            if let Ok(p) = pid_s.parse::<u32>() {
+                map.insert(p, name.to_string());
+            }
+        }
+        Ok(map)
+    }
+
     /// All running PIDs whose process name contains `query`
     /// (case-insensitive). Used by the Logcat `app:<query>` filter
     /// token. Substring (not exact) match so users can type a

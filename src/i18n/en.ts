@@ -280,6 +280,7 @@ const en = {
     empty_filtered: "No entries match the current filter.",
     col_time: "Time",
     col_pid: "PID",
+    col_app: "App",
     col_level: "L",
     col_tag: "Tag",
     col_message: "Message",

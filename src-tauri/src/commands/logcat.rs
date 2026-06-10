@@ -180,6 +180,18 @@ pub async fn android_pids_matching(
         .map_err(to_api("adb"))
 }
 
+/// Full PID → process-name snapshot. Polled by the Logcat window
+/// every 10s to label rows with the package the entry came from
+/// — the table's new App column reads from this map keyed on
+/// entry.pid. Returns a JSON object with PID strings as keys.
+#[tauri::command]
+pub async fn android_pid_names(
+    serial: String,
+) -> CmdResult<std::collections::HashMap<u32, String>> {
+    let android = AndroidPlatform::new();
+    android.pid_names(&serial).await.map_err(to_api("adb"))
+}
+
 /// URL-encode a string for use inside a query parameter value. We avoid
 /// pulling `urlencoding` for one-call use — the character set we see in
 /// real adb serials (`[A-Z0-9.:]`) doesn't actually need escaping, but

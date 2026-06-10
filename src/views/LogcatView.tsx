@@ -125,12 +125,25 @@ const LogcatView: Component = () => {
   // new pid).
   const [appPids, setAppPids] = createSignal<Set<number>>(new Set());
 
+  // PID → process name snapshot. Polled every 10s via
+  // `android_pid_names` so the App column in the table can label
+  // each entry with the package it came from. Accumulates across
+  // ticks so historical entries from a process that's since exited
+  // still display its name (PID reuse on Android is rare and gets
+  // overwritten on the next tick when it happens).
+  const [pidNames, setPidNames] = createSignal<Map<number, string>>(new Map());
+
   // Resizable column widths. Persisted in localStorage so a user's
   // preferred layout survives close/reopen of the logcat window.
   // `level` is fixed-1-char; `message` takes whatever space is left
   // (`1fr`). Drag handles live only on Time/PID/Tag.
-  type ColKey = "time" | "pid" | "tag";
-  const COL_DEFAULTS: Record<ColKey, number> = { time: 90, pid: 60, tag: 180 };
+  type ColKey = "time" | "pid" | "app" | "tag";
+  const COL_DEFAULTS: Record<ColKey, number> = {
+    time: 90,
+    pid: 60,
+    app: 200,
+    tag: 180,
+  };
   const COL_MIN = 40;
   const COL_STORAGE_KEY = "pane.logcat.col-widths";
 
@@ -142,6 +155,7 @@ const LogcatView: Component = () => {
       return {
         time: clampWidth(parsed.time ?? COL_DEFAULTS.time),
         pid: clampWidth(parsed.pid ?? COL_DEFAULTS.pid),
+        app: clampWidth(parsed.app ?? COL_DEFAULTS.app),
         tag: clampWidth(parsed.tag ?? COL_DEFAULTS.tag),
       };
     } catch {
@@ -162,7 +176,7 @@ const LogcatView: Component = () => {
   };
   const gridTemplate = () => {
     const w = colWidths();
-    return `${w.time}px ${w.pid}px 14px ${w.tag}px 1fr`;
+    return `${w.time}px ${w.pid}px ${w.app}px 14px ${w.tag}px 1fr`;
   };
 
   // Initiate a drag-resize for one of the resizable columns. Single
@@ -262,6 +276,36 @@ const LogcatView: Component = () => {
     };
     void tick();
     const handle = setInterval(tick, 5000);
+    onCleanup(() => {
+      cancelled = true;
+      clearInterval(handle);
+    });
+  });
+
+  // Poll PID → process-name snapshot. 10s cadence is enough — process
+  // launches/exits are infrequent on a Logcat-watch timescale, and
+  // `ps -A` is ~50ms over USB so cost is negligible.
+  onMount(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const raw = await invoke<Record<string, string>>("android_pid_names", {
+          serial,
+        });
+        if (cancelled) return;
+        setPidNames((prev) => {
+          const next = new Map(prev);
+          for (const [k, v] of Object.entries(raw)) {
+            next.set(Number(k), v);
+          }
+          return next;
+        });
+      } catch {
+        // adb hiccup — keep the previous snapshot, try again next tick.
+      }
+    };
+    void tick();
+    const handle = setInterval(tick, 10000);
     onCleanup(() => {
       cancelled = true;
       clearInterval(handle);
@@ -863,6 +907,11 @@ const LogcatView: Component = () => {
           onResize={(e) => startColResize("pid", e)}
           onReset={() => setColWidths({ ...colWidths(), pid: COL_DEFAULTS.pid })}
         />
+        <HeaderCell
+          label={t()("logcat.col_app")}
+          onResize={(e) => startColResize("app", e)}
+          onReset={() => setColWidths({ ...colWidths(), app: COL_DEFAULTS.app })}
+        />
         <span class="px-1 border-r border-border/40">{t()("logcat.col_level")}</span>
         <HeaderCell
           label={t()("logcat.col_tag")}
@@ -928,6 +977,12 @@ const LogcatView: Component = () => {
                         </span>
                         <span class="text-fg-muted truncate px-2 border-r border-border/30">
                           {entry().pid > 0 ? entry().pid : ""}
+                        </span>
+                        <span
+                          class="text-fg-muted truncate px-2 border-r border-border/30"
+                          title={pidNames().get(entry().pid) ?? ""}
+                        >
+                          {pidNames().get(entry().pid) ?? ""}
                         </span>
                         <span class={`px-1 border-r border-border/30 ${LEVEL_COLOR[entry().level]}`}>
                           {LEVEL_CHAR[entry().level]}
