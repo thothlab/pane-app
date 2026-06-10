@@ -271,9 +271,9 @@ const ru: Dict = {
     export: "Экспорт",
     export_title: "Сохранить отфильтрованные записи в .log",
     export_failed: "Экспорт не удался: {{message}}",
-    filter_placeholder: "tag:OkHttp · level:E · pid:1234 · ~regex · plain text",
+    filter_placeholder: "app:com.foo.bar · tag:OkHttp · level:E · pid:1234 · ~regex",
     filter_help:
-      "Слово без префикса — substring по tag или message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid.\n~pattern — regex (по tag или message).\nlevel:W..F — диапазон, все warning и выше.\nЗапятая в значении — OR альтернатив. Отрицание через !.\nНесколько токенов соединяются по AND.\n⌘K — очистить буфер. ⌘F — фокус в это поле. Пробел — пауза.",
+      "Слово без префикса — substring по tag или message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:com.example — авторезолв пакета в текущий PID; переподхватывает рестарт приложения.\n~pattern — regex (по tag или message).\nlevel:W..F — диапазон, все warning и выше.\nЗапятая в значении — OR альтернатив. Отрицание через !.\nНесколько токенов соединяются по AND.\n⌘K — очистить буфер. ⌘F — фокус в это поле. Пробел — пауза.",
     counter: "{{shown}} / {{total}}",
     empty_waiting: "Жду записи логов…",
     empty_filtered: "Под фильтр ничего не попадает.",

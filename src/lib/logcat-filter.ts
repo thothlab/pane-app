@@ -9,7 +9,7 @@
 //   term  := '!'? atom
 //   atom  := key ':' value | '~' regex | bareword
 //   value := single (',' single)*    # comma → OR
-//   key   := tag | level | pid | msg
+//   key   := tag | level | pid | msg | app
 //
 // Examples:
 //   "OkHttp"                       # bareword: substring in tag OR msg
@@ -17,11 +17,20 @@
 //   "level:E"                      # error only
 //   "level:W..F"                   # warn or above
 //   "pid:1234"
+//   "app:com.foo.bar"              # resolves package → current pid;
+//                                  # auto-tracks restarts
 //   "~^(?!.*Connection).+"         # regex (negative lookahead)
 //   "tag:OkHttp !msg:keep-alive"   # AND + negate
 //
-// Returns a predicate that's stable for the input — call sites usually
-// memoize it in a createMemo over the typed text.
+// `app:X` is special: it can't be evaluated in this pure-string pass
+// because we don't know the PID without a device round-trip. The
+// compiler returns its referenced package names alongside the
+// predicate so the caller can resolve them out-of-band (via
+// `android_pidof`) and intersect the resolved PIDs with the entry
+// stream itself. The predicate treats `app:` tokens as always-true.
+//
+// Returns a `{ predicate, appPackages }` pair, stable for the input —
+// call sites usually memoize it in a createMemo over the typed text.
 
 import type { LogEntry, LogLevel } from "@/views/LogcatView";
 
@@ -54,6 +63,14 @@ const LEVEL_FROM_TOKEN: Record<string, LogLevel> = {
 };
 
 type Predicate = (e: LogEntry) => boolean;
+
+export interface CompiledLogcatFilter {
+  predicate: Predicate;
+  /** Package names referenced via `app:` tokens. May contain
+   *  duplicates if the user typed several `app:` terms. The caller
+   *  resolves them to PIDs and applies an extra filter step. */
+  appPackages: string[];
+}
 
 /// Split a value on `,` into trimmed non-empty parts. Single value
 /// (no comma) → one-element array. Matches the comma-OR semantics we
@@ -101,7 +118,12 @@ function makeSubstringMatcher(value: string): (s: string) => boolean {
   return (s) => s.toLowerCase().includes(lower);
 }
 
-function buildAtom(token: string): Predicate {
+interface AtomResult {
+  pred: Predicate;
+  apps: string[];
+}
+
+function buildAtom(token: string): AtomResult {
   const negate = token.startsWith("!");
   const body = negate ? token.slice(1) : token;
 
@@ -115,7 +137,7 @@ function buildAtom(token: string): Predicate {
       throw new Error(`bad regex: ${pattern}: ${(err as Error).message}`);
     }
     const pred: Predicate = (e) => re.test(e.tag) || re.test(e.message);
-    return negate ? (e) => !pred(e) : pred;
+    return { pred: negate ? (e) => !pred(e) : pred, apps: [] };
   }
 
   const colon = body.indexOf(":");
@@ -123,14 +145,14 @@ function buildAtom(token: string): Predicate {
     // Bareword: substring across tag + message, OR.
     const match = makeSubstringMatcher(body);
     const pred: Predicate = (e) => match(e.tag) || match(e.message);
-    return negate ? (e) => !pred(e) : pred;
+    return { pred: negate ? (e) => !pred(e) : pred, apps: [] };
   }
 
   const key = body.slice(0, colon).toLowerCase();
   const value = body.slice(colon + 1);
   const values = splitValues(value);
   if (values.length === 0) {
-    return () => true;
+    return { pred: () => true, apps: [] };
   }
 
   let positive: Predicate;
@@ -166,10 +188,18 @@ function buildAtom(token: string): Predicate {
       positive = (e) => nums.includes(e.pid);
       break;
     }
+    case "app": {
+      // Predicate is always-true: the actual PID filtering happens
+      // out-of-band, after the caller resolves these package names
+      // via `android_pidof`. Negation isn't meaningful here — there's
+      // no in-band predicate to invert — so we just ignore `!app:`
+      // for now; can revisit if anyone hits that case.
+      return { pred: () => true, apps: values };
+    }
     default:
       throw new Error(`unknown filter key: ${key}`);
   }
-  return negate ? (e) => !positive(e) : positive;
+  return { pred: negate ? (e) => !positive(e) : positive, apps: [] };
 }
 
 /// Tokenize on whitespace, but keep `"quoted strings"` as single tokens
@@ -196,13 +226,18 @@ function tokenize(input: string): string[] {
   return out;
 }
 
-export function compileLogcatFilter(input: string): Predicate {
+export function compileLogcatFilter(input: string): CompiledLogcatFilter {
   const trimmed = input.trim();
-  if (!trimmed) return () => true;
+  if (!trimmed) return { predicate: () => true, appPackages: [] };
   const tokens = tokenize(trimmed);
-  if (tokens.length === 0) return () => true;
-  const preds = tokens.map(buildAtom);
+  if (tokens.length === 0) return { predicate: () => true, appPackages: [] };
+  const atoms = tokens.map(buildAtom);
+  const apps: string[] = [];
+  for (const a of atoms) {
+    if (a.apps.length > 0) apps.push(...a.apps);
+  }
   // Tokens AND together (same as Captures filter — different keys are
   // additive constraints).
-  return (e) => preds.every((p) => p(e));
+  const predicate: Predicate = (e) => atoms.every((a) => a.pred(e));
+  return { predicate, appPackages: apps };
 }

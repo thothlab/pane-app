@@ -272,9 +272,9 @@ const en = {
     export: "Export",
     export_title: "Export the currently-visible entries to a .log file",
     export_failed: "Export failed: {{message}}",
-    filter_placeholder: "tag:OkHttp · level:E · pid:1234 · ~regex · plain text",
+    filter_placeholder: "app:com.foo.bar · tag:OkHttp · level:E · pid:1234 · ~regex",
     filter_help:
-      "Bare word — substring in tag or message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid.\n~pattern — regex (matches tag or message).\nlevel:W..F — range, all warnings and above.\nComma in value ORs alternatives. Negate with !.\nMultiple tokens are ANDed.\n⌘K clears the buffer. ⌘F focuses this input. Space toggles pause.",
+      "Bare word — substring in tag or message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:com.example — auto-resolves the package to its current PID; re-resolves on app restart.\n~pattern — regex (matches tag or message).\nlevel:W..F — range, all warnings and above.\nComma in value ORs alternatives. Negate with !.\nMultiple tokens are ANDed.\n⌘K clears the buffer. ⌘F focuses this input. Space toggles pause.",
     counter: "{{shown}} / {{total}}",
     empty_waiting: "Waiting for log entries…",
     empty_filtered: "No entries match the current filter.",

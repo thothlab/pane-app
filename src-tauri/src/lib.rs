@@ -38,7 +38,6 @@ pub fn run() {
             commands::proxy::status,
             // logcat
             commands::logcat::logcat_open,
-            commands::logcat::android_list_packages,
             commands::logcat::android_pidof,
             commands::logcat::logcat_write_export,
             // ca

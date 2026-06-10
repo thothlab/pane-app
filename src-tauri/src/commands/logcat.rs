@@ -161,24 +161,10 @@ pub async fn logcat_write_export(path: String, content: String) -> CmdResult<usi
     Ok(bytes)
 }
 
-/// List **running** user-installed apps on a connected Android device,
-/// sorted alphabetically. Used by the Logcat window's "Follow app"
-/// dropdown. Restricting to running apps removes the surprise where
-/// users pick an installed-but-not-running app and the filter just
-/// shows "(not running)" with no entries — the dropdown should only
-/// surface apps with an actual PID to follow.
-#[tauri::command]
-pub async fn android_list_packages(serial: String) -> CmdResult<Vec<String>> {
-    let android = AndroidPlatform::new();
-    android
-        .list_running_user_packages(&serial)
-        .await
-        .map_err(to_api("adb"))
-}
-
 /// Resolve a package's current PID, or `None` if it isn't running.
-/// The Logcat window polls this every few seconds while "Follow app"
-/// is on so a process restart picks up the new PID transparently.
+/// The Logcat window polls this every 5s for each `app:<pkg>` token in
+/// the active filter, so process restarts pick up the new PID
+/// transparently.
 #[tauri::command]
 pub async fn android_pidof(
     serial: String,

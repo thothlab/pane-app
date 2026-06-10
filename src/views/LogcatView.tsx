@@ -22,7 +22,6 @@ import {
   Play,
   Search as SearchIcon,
   Star,
-  Target,
   Trash2,
   X,
 } from "lucide-solid";
@@ -115,38 +114,16 @@ const LogcatView: Component = () => {
   const [autoScroll, setAutoScroll] = createSignal(true);
   const [filter, setFilter] = createSignal("");
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
-  // Follow-app state. When `followApp` is set, we periodically resolve
-  // the package's current PID via `android_pidof` and additionally
-  // filter visible entries to that pid only. Resolves transparently
-  // when the app restarts (PID changes) — that's the whole point of
-  // "follow", as opposed to a stale `pid:1234` literal in the filter.
-  const [packages, setPackages] = createSignal<string[]>([]);
-  const [packagesLoading, setPackagesLoading] = createSignal(false);
-  const [followApp, setFollowApp] = createSignal<string | null>(null);
-  const [followedPid, setFollowedPid] = createSignal<number | null>(null);
-
-  // Triggered from onMount (initial + 5s interval) and onMouseDown
-  // on the Follow-app dropdown — so a click always sees a fresh list
-  // even if the periodic tick hasn't fired since the user did
-  // something new on the device. `dumpsys activity oom` over USB is
-  // usually 50–200ms, but Samsung devices have been seen at >1s;
-  // the loading marker disambiguates "empty list" from "still
-  // fetching" in the popup.
-  let packagesInFlight = false;
-  const refreshPackages = async () => {
-    if (packagesInFlight) return;
-    packagesInFlight = true;
-    setPackagesLoading(true);
-    try {
-      const list = await invoke<string[]>("android_list_packages", { serial });
-      setPackages(list);
-    } catch {
-      setPackages([]);
-    } finally {
-      packagesInFlight = false;
-      setPackagesLoading(false);
-    }
-  };
+  // Follow-app state. Driven entirely by `app:<package>` tokens in
+  // the filter DSL (see compileLogcatFilter). For each referenced
+  // package we periodically poll `android_pidof` and accumulate the
+  // current PIDs; the visible() filter then intersects entries.pid
+  // with that set. The "Lograbbit-style App tag" pattern — the
+  // package lives in the filter text itself, so it round-trips with
+  // saved filters and there's no separate dropdown widget to load.
+  // PIDs auto-update when the app restarts (poll resolves to the
+  // new pid).
+  const [appPids, setAppPids] = createSignal<Set<number>>(new Set());
 
   // Resizable column widths. Persisted in localStorage so a user's
   // preferred layout survives close/reopen of the logcat window.
@@ -230,71 +207,58 @@ const LogcatView: Component = () => {
 
   // Compile the filter once per typed input — cheap regex/parse, then
   // we apply the predicate over the buffer on every render tick.
+  // The compiler also returns the list of `app:<pkg>` package names
+  // it saw; we resolve those to PIDs out-of-band (see effect below).
   const matcher = createMemo(() => {
     try {
       setErrorMsg(null);
       return compileLogcatFilter(filter());
     } catch (e: unknown) {
       setErrorMsg((e as { message?: string })?.message ?? String(e));
-      return () => true;
+      return { predicate: () => true, appPackages: [] as string[] };
     }
   });
 
   const visible = createMemo(() => {
-    const m = matcher();
-    const pid = followedPid();
+    const { predicate, appPackages } = matcher();
+    const pids = appPids();
     const all = entries();
-    if (pid === null) return all.filter(m);
-    return all.filter((e) => e.pid === pid && m(e));
+    if (appPackages.length === 0) return all.filter(predicate);
+    // app:X is in the filter but the package isn't currently running →
+    // pids is empty → nothing matches, surfacing the "app not running"
+    // state by way of an empty list.
+    if (pids.size === 0) return [];
+    return all.filter((e) => pids.has(e.pid) && predicate(e));
   });
 
-  // Union of `packages()` (running, third-party — refreshed every
-  // 10s) with the currently-followed app, so the `<select>` always
-  // has an option whose `value` matches the bound value. Without
-  // this, every refresh tick can transiently drop the selected
-  // option and reset the select to "(off)" — visible to the user
-  // as the dropdown text flipping even though `followApp` signal
-  // is unchanged.
-  const dropdownPackages = createMemo(() => {
-    const list = [...packages()];
-    const cur = followApp();
-    if (cur && !list.includes(cur)) list.unshift(cur);
-    return list;
-  });
-
-  // Re-fetch the running-app list periodically so newly-launched apps
-  // appear in the dropdown without the user having to reopen the
-  // window. 5s instead of 10s — feels more responsive when the user
-  // just launched the app they want to follow. The active selection
-  // is preserved across refreshes; if the user had picked an app
-  // that's since exited, the "(not running)" indicator beside the
-  // dropdown surfaces that, the dropdown option itself stays as-typed.
-  onMount(() => {
-    void refreshPackages();
-    const handle = setInterval(refreshPackages, 5000);
-    onCleanup(() => clearInterval(handle));
-  });
-
-  // While Follow-app is on, resolve the PID periodically. Polling is
-  // crude vs. an event-based hook (PROCESS_STATE_BROADCAST etc. would
-  // be cleaner), but adb shell pidof is a 10ms round-trip and the
-  // user can't tell the difference at 5s granularity.
+  // Resolve every `app:<pkg>` referenced by the current filter to its
+  // current PID via `adb shell pidof PKG`. Polled every 5s so process
+  // restarts pick up the new PID without the user having to retype.
+  // The set rebuilds each tick — packages can be added/removed by
+  // editing the filter text, no separate teardown needed.
   createEffect(() => {
-    const pkg = followApp();
-    if (!pkg) {
-      setFollowedPid(null);
+    const apps = matcher().appPackages;
+    if (apps.length === 0) {
+      setAppPids(new Set<number>());
       return;
     }
     let cancelled = false;
     const tick = async () => {
-      try {
-        const pid = await invoke<number | null>("android_pidof", { serial, package: pkg });
-        if (!cancelled) setFollowedPid(pid);
-      } catch {
-        if (!cancelled) setFollowedPid(null);
+      const results = await Promise.all(
+        apps.map((pkg) =>
+          invoke<number | null>("android_pidof", { serial, package: pkg }).catch(
+            () => null as number | null,
+          ),
+        ),
+      );
+      if (cancelled) return;
+      const set = new Set<number>();
+      for (const pid of results) {
+        if (typeof pid === "number" && pid > 0) set.add(pid);
       }
+      setAppPids(set);
     };
-    tick();
+    void tick();
     const handle = setInterval(tick, 5000);
     onCleanup(() => {
       cancelled = true;
@@ -604,50 +568,6 @@ const LogcatView: Component = () => {
           <ArrowDown size={12} />
           {t()("logcat.auto_scroll")}
         </button>
-
-        {/* Follow-app dropdown. The options list is the union of
-            currently-running third-party packages PLUS whatever the
-            user has selected. Putting `followApp()` in the list
-            unconditionally (when set) prevents the browser from
-            silently resetting the `<select>` to the first option
-            on the 10s `setPackages` refresh — without this, every
-            refresh tick momentarily breaks the value-binding when
-            the prior option set is replaced. The "(not running)"
-            indicator beside the dropdown surfaces a stale pick. */}
-        <select
-          class={`text-xs px-2 py-1 rounded outline-none max-w-[200px] ${
-            followApp() ? "bg-accent/15 text-accent" : "bg-bg-muted text-fg-muted"
-          }`}
-          value={followApp() ?? ""}
-          // Kick a fresh fetch when the user is about to open the
-          // popup, so the list isn't stale on click. Native
-          // <select> resolves the option set when the popup is
-          // built; mousedown fires before that.
-          onMouseDown={() => void refreshPackages()}
-          onChange={(e) => {
-            const v = e.currentTarget.value;
-            setFollowApp(v === "" ? null : v);
-          }}
-          title={t()("logcat.follow_app_title")}
-        >
-          <option value="">{t()("logcat.follow_app_none")}</option>
-          <Show when={packagesLoading() && dropdownPackages().length === 0}>
-            <option value="" disabled>
-              {t()("logcat.follow_app_loading")}
-            </option>
-          </Show>
-          <For each={dropdownPackages()}>
-            {(pkg) => <option value={pkg}>{pkg}</option>}
-          </For>
-        </select>
-        <Show when={followApp()}>
-          <span class="inline-flex items-center gap-1 text-fg-muted whitespace-nowrap">
-            <Target size={12} />
-            <Show when={followedPid()} fallback={<i>{t()("logcat.follow_app_no_pid")}</i>}>
-              pid {followedPid()}
-            </Show>
-          </span>
-        </Show>
 
         {/* Token-highlight overlay over a transparent input. The
             previous Solid-<For>-based overlay rendered only the
@@ -1001,7 +921,7 @@ const LogcatView: Component = () => {
 // char). innerHTML is a single deterministic DOM update — no
 // reactive-list quirks possible.
 
-const LOGCAT_VALID_KEYS = new Set(["tag", "msg", "message", "level", "pid"]);
+const LOGCAT_VALID_KEYS = new Set(["tag", "msg", "message", "level", "pid", "app"]);
 
 function escapeHtml(s: string): string {
   return s
