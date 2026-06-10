@@ -283,6 +283,8 @@ const ru: Dict = {
     col_level: "У",
     col_tag: "Тег",
     col_message: "Сообщение",
+    col_menu_title: "Колонки",
+    col_menu_hint: "Правый клик — видимость колонок",
     save_filter: "Сохранить фильтр",
     save_filter_title: "Сохранить текущий фильтр",
     save_filter_name_placeholder: "Имя (напр. crashes)",

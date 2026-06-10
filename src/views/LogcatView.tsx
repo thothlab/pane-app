@@ -147,6 +147,61 @@ const LogcatView: Component = () => {
   const COL_MIN = 40;
   const COL_STORAGE_KEY = "pane.logcat.col-widths";
 
+  // Per-column show/hide, with `level` and `message` included so the
+  // header context-menu can hide them too. Persisted alongside widths
+  // (separate key so an older build that doesn't know about visibility
+  // still finds its widths).
+  type AllCol = "time" | "pid" | "app" | "level" | "tag" | "message";
+  const ALL_COLS: AllCol[] = ["time", "pid", "app", "level", "tag", "message"];
+  const VISIBLE_DEFAULTS: Record<AllCol, boolean> = {
+    time: true,
+    pid: true,
+    app: true,
+    level: true,
+    tag: true,
+    message: true,
+  };
+  const VISIBLE_STORAGE_KEY = "pane.logcat.col-visible";
+  const loadColVisible = (): Record<AllCol, boolean> => {
+    try {
+      const raw = localStorage.getItem(VISIBLE_STORAGE_KEY);
+      if (!raw) return { ...VISIBLE_DEFAULTS };
+      const parsed = JSON.parse(raw) as Partial<Record<AllCol, boolean>>;
+      const out = { ...VISIBLE_DEFAULTS };
+      for (const k of ALL_COLS) {
+        if (typeof parsed[k] === "boolean") out[k] = parsed[k] as boolean;
+      }
+      // Refuse all-hidden — at least one column must stay visible so
+      // there's still a place to right-click for the menu.
+      if (!ALL_COLS.some((k) => out[k])) return { ...VISIBLE_DEFAULTS };
+      return out;
+    } catch {
+      return { ...VISIBLE_DEFAULTS };
+    }
+  };
+  const [colVisible, setColVisibleRaw] = createSignal(loadColVisible());
+  const setColVisible = (next: Record<AllCol, boolean>) => {
+    if (!ALL_COLS.some((k) => next[k])) return; // keep at least one
+    setColVisibleRaw(next);
+    try {
+      localStorage.setItem(VISIBLE_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* storage unavailable */
+    }
+  };
+
+  // Header context-menu state. Right-click anywhere on the header row
+  // opens the column toggle list at the mouse position; outside click
+  // closes it.
+  const [headerMenuPos, setHeaderMenuPos] = createSignal<
+    { x: number; y: number } | null
+  >(null);
+  let headerMenuRef: HTMLDivElement | undefined;
+  const openHeaderMenu = (e: MouseEvent) => {
+    e.preventDefault();
+    setHeaderMenuPos({ x: e.clientX, y: e.clientY });
+  };
+
   const loadColWidths = (): Record<ColKey, number> => {
     try {
       const raw = localStorage.getItem(COL_STORAGE_KEY);
@@ -176,7 +231,15 @@ const LogcatView: Component = () => {
   };
   const gridTemplate = () => {
     const w = colWidths();
-    return `${w.time}px ${w.pid}px ${w.app}px 14px ${w.tag}px 1fr`;
+    const v = colVisible();
+    const parts: string[] = [];
+    if (v.time) parts.push(`${w.time}px`);
+    if (v.pid) parts.push(`${w.pid}px`);
+    if (v.app) parts.push(`${w.app}px`);
+    if (v.level) parts.push("14px");
+    if (v.tag) parts.push(`${w.tag}px`);
+    if (v.message) parts.push("1fr");
+    return parts.join(" ");
   };
 
   // Initiate a drag-resize for one of the resizable columns. Single
@@ -569,6 +632,13 @@ const LogcatView: Component = () => {
       if (savedListOpen() && savedListRef && !savedListRef.contains(target)) {
         setSavedListOpen(false);
       }
+      if (
+        headerMenuPos() &&
+        headerMenuRef &&
+        !headerMenuRef.contains(target)
+      ) {
+        setHeaderMenuPos(null);
+      }
     };
     document.addEventListener("mousedown", onDoc);
     onCleanup(() => document.removeEventListener("mousedown", onDoc));
@@ -896,30 +966,94 @@ const LogcatView: Component = () => {
       <div
         class="grid font-mono text-fg-muted uppercase tracking-wide text-[10px] px-3 py-1 border-b border-border bg-bg-subtle/60"
         style={{ "grid-template-columns": gridTemplate() }}
+        onContextMenu={openHeaderMenu}
+        title={t()("logcat.col_menu_hint")}
       >
-        <HeaderCell
-          label={t()("logcat.col_time")}
-          onResize={(e) => startColResize("time", e)}
-          onReset={() => setColWidths({ ...colWidths(), time: COL_DEFAULTS.time })}
-        />
-        <HeaderCell
-          label={t()("logcat.col_pid")}
-          onResize={(e) => startColResize("pid", e)}
-          onReset={() => setColWidths({ ...colWidths(), pid: COL_DEFAULTS.pid })}
-        />
-        <HeaderCell
-          label={t()("logcat.col_app")}
-          onResize={(e) => startColResize("app", e)}
-          onReset={() => setColWidths({ ...colWidths(), app: COL_DEFAULTS.app })}
-        />
-        <span class="px-1 border-r border-border/40">{t()("logcat.col_level")}</span>
-        <HeaderCell
-          label={t()("logcat.col_tag")}
-          onResize={(e) => startColResize("tag", e)}
-          onReset={() => setColWidths({ ...colWidths(), tag: COL_DEFAULTS.tag })}
-        />
-        <span class="px-2">{t()("logcat.col_message")}</span>
+        <Show when={colVisible().time}>
+          <HeaderCell
+            label={t()("logcat.col_time")}
+            onResize={(e) => startColResize("time", e)}
+            onReset={() =>
+              setColWidths({ ...colWidths(), time: COL_DEFAULTS.time })
+            }
+          />
+        </Show>
+        <Show when={colVisible().pid}>
+          <HeaderCell
+            label={t()("logcat.col_pid")}
+            onResize={(e) => startColResize("pid", e)}
+            onReset={() =>
+              setColWidths({ ...colWidths(), pid: COL_DEFAULTS.pid })
+            }
+          />
+        </Show>
+        <Show when={colVisible().app}>
+          <HeaderCell
+            label={t()("logcat.col_app")}
+            onResize={(e) => startColResize("app", e)}
+            onReset={() =>
+              setColWidths({ ...colWidths(), app: COL_DEFAULTS.app })
+            }
+          />
+        </Show>
+        <Show when={colVisible().level}>
+          <span class="px-1 border-r border-border/40">
+            {t()("logcat.col_level")}
+          </span>
+        </Show>
+        <Show when={colVisible().tag}>
+          <HeaderCell
+            label={t()("logcat.col_tag")}
+            onResize={(e) => startColResize("tag", e)}
+            onReset={() =>
+              setColWidths({ ...colWidths(), tag: COL_DEFAULTS.tag })
+            }
+          />
+        </Show>
+        <Show when={colVisible().message}>
+          <span class="px-2">{t()("logcat.col_message")}</span>
+        </Show>
       </div>
+
+      {/* Column show/hide menu. Anchored to the right-click position
+          via `fixed` + inline `left/top`. We don't bother flipping
+          if it would overflow the viewport bottom; the menu is small
+          (~150px tall) and the header sits at the top of the window. */}
+      <Show when={headerMenuPos()}>
+        <div
+          ref={(el) => (headerMenuRef = el)}
+          class="fixed z-50 bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs select-none"
+          style={{
+            left: `${headerMenuPos()!.x}px`,
+            top: `${headerMenuPos()!.y}px`,
+            "min-width": "180px",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div class="px-3 py-1 text-fg-muted uppercase tracking-wide text-[10px]">
+            {t()("logcat.col_menu_title")}
+          </div>
+          <For each={ALL_COLS}>
+            {(key) => (
+              <label class="flex items-center gap-2 px-3 py-1 cursor-pointer hover:bg-bg-muted">
+                <input
+                  type="checkbox"
+                  class="accent-accent"
+                  checked={colVisible()[key]}
+                  onChange={(e) =>
+                    setColVisible({
+                      ...colVisible(),
+                      [key]: e.currentTarget.checked,
+                    })
+                  }
+                />
+                <span>{t()(`logcat.col_${key}`)}</span>
+              </label>
+            )}
+          </For>
+        </div>
+      </Show>
 
       {/* Virtualized table. <For> over the reactive virtual-items
           accessor keeps row identity stable across the firehose;
@@ -972,23 +1106,39 @@ const LogcatView: Component = () => {
                           "grid-template-columns": gridTemplate(),
                         }}
                       >
-                        <span class="text-fg-muted truncate px-2 border-r border-border/30">
-                          {entry().timestamp}
-                        </span>
-                        <span class="text-fg-muted truncate px-2 border-r border-border/30">
-                          {entry().pid > 0 ? entry().pid : ""}
-                        </span>
-                        <span
-                          class="text-fg-muted truncate px-2 border-r border-border/30"
-                          title={pidNames().get(entry().pid) ?? ""}
-                        >
-                          {pidNames().get(entry().pid) ?? ""}
-                        </span>
-                        <span class={`px-1 border-r border-border/30 ${LEVEL_COLOR[entry().level]}`}>
-                          {LEVEL_CHAR[entry().level]}
-                        </span>
-                        <span class="truncate px-2 border-r border-border/30">{entry().tag}</span>
-                        <span class="truncate px-2">{entry().message}</span>
+                        <Show when={colVisible().time}>
+                          <span class="text-fg-muted truncate px-2 border-r border-border/30">
+                            {entry().timestamp}
+                          </span>
+                        </Show>
+                        <Show when={colVisible().pid}>
+                          <span class="text-fg-muted truncate px-2 border-r border-border/30">
+                            {entry().pid > 0 ? entry().pid : ""}
+                          </span>
+                        </Show>
+                        <Show when={colVisible().app}>
+                          <span
+                            class="text-fg-muted truncate px-2 border-r border-border/30"
+                            title={pidNames().get(entry().pid) ?? ""}
+                          >
+                            {pidNames().get(entry().pid) ?? ""}
+                          </span>
+                        </Show>
+                        <Show when={colVisible().level}>
+                          <span
+                            class={`px-1 border-r border-border/30 ${LEVEL_COLOR[entry().level]}`}
+                          >
+                            {LEVEL_CHAR[entry().level]}
+                          </span>
+                        </Show>
+                        <Show when={colVisible().tag}>
+                          <span class="truncate px-2 border-r border-border/30">
+                            {entry().tag}
+                          </span>
+                        </Show>
+                        <Show when={colVisible().message}>
+                          <span class="truncate px-2">{entry().message}</span>
+                        </Show>
                       </div>
                     )}
                   </Show>

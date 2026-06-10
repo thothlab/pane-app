@@ -284,6 +284,8 @@ const en = {
     col_level: "L",
     col_tag: "Tag",
     col_message: "Message",
+    col_menu_title: "Columns",
+    col_menu_hint: "Right-click for column visibility",
     save_filter: "Save filter",
     save_filter_title: "Save current filter",
     save_filter_name_placeholder: "Name (e.g. crashes)",
