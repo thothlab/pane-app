@@ -124,7 +124,7 @@ interface AtomResult {
 }
 
 function buildAtom(token: string): AtomResult {
-  const negate = token.startsWith("!");
+  let negate = token.startsWith("!");
   const body = negate ? token.slice(1) : token;
 
   // Regex form: ~pattern
@@ -149,7 +149,15 @@ function buildAtom(token: string): AtomResult {
   }
 
   const key = body.slice(0, colon).toLowerCase();
-  const value = body.slice(colon + 1);
+  let value = body.slice(colon + 1);
+  // Accept `key:!value` as equivalent to `!key:value`. Lograbbit and
+  // many other log viewers put the `!` after the colon, so users
+  // reach for it that way; rejecting `tag:!Anal` as "tag must equal
+  // literal '!Anal'" was a recurring surprise.
+  if (value.startsWith("!")) {
+    negate = !negate;
+    value = value.slice(1);
+  }
   const values = splitValues(value);
   if (values.length === 0) {
     return { pred: () => true, apps: [] };

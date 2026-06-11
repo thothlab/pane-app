@@ -515,25 +515,14 @@ const LogcatView: Component = () => {
     }
   };
 
-  // Hotkeys. Space toggles pause; Cmd/Ctrl-K clears; Cmd/Ctrl-F focuses
-  // the filter input. Active only when no input is focused (so typing
-  // a space inside the filter doesn't pause).
-  //
-  // The text-field check goes through `document.activeElement` rather
-  // than `e.target` because WebKit's keydown target can lag behind the
-  // OS-tracked focus when the user has just clicked into the input
-  // (the first space after click was getting eaten by the global
-  // hotkey before the event re-targeted to the input). activeElement
-  // is the canonical focus owner.
+  // Hotkeys: Cmd/Ctrl-K clears, Cmd/Ctrl-F focuses the filter input.
+  // Space-as-pause was removed — even with a `document.activeElement`
+  // guard, Tauri's WebKit would intermittently eat the first space
+  // after a click into the filter input, mangling sequences like
+  // `app:foo tag:bar` into `app:footag:bar`. The toolbar Pause
+  // button is right there; the global hotkey wasn't worth the
+  // recurring bug.
   onMount(() => {
-    const isInEditable = () => {
-      const a = document.activeElement;
-      if (!a) return false;
-      if (a instanceof HTMLInputElement) return true;
-      if (a instanceof HTMLTextAreaElement) return true;
-      if ((a as HTMLElement).isContentEditable) return true;
-      return false;
-    };
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -543,11 +532,6 @@ const LogcatView: Component = () => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
         filterInputRef?.focus();
-        return;
-      }
-      if (e.key === " " && !isInEditable()) {
-        e.preventDefault();
-        togglePause();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1192,13 +1176,22 @@ function buildLogcatFilterHtml(text: string): string {
     }
     const m = body.match(/^([a-zA-Z_]+)(:)(.*)$/);
     if (m) {
-      const [, key, colon, value] = m;
+      const [, key, colon, valueRaw] = m;
       const known = LOGCAT_VALID_KEYS.has(key!.toLowerCase());
       const cls = known
         ? "text-accent"
         : "text-danger underline decoration-dotted";
       out.push(`<span class="${cls}">${escapeHtml(key!)}</span>`);
       out.push(`<span class="text-fg-muted">${escapeHtml(colon!)}</span>`);
+      let value = valueRaw ?? "";
+      // `key:!value` form — `!` after the colon is the negation
+      // marker, same as a leading `!` on the whole token. Paint it
+      // in danger-red so the user sees that it's structural, not
+      // part of the value.
+      if (value.startsWith("!")) {
+        out.push('<span class="text-danger">!</span>');
+        value = value.slice(1);
+      }
       if (value) out.push(`<span class="text-fg">${escapeHtml(value)}</span>`);
     } else {
       out.push(`<span class="text-fg">${escapeHtml(body)}</span>`);

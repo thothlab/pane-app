@@ -274,7 +274,7 @@ const en = {
     export_failed: "Export failed: {{message}}",
     filter_placeholder: "app:com.foo · tag:OkHttp · level:E · pid:1234 · ~regex",
     filter_help:
-      "Bare word — substring in tag or message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:<package> — substring match against running process names; auto-tracks app restarts. Type `app:ru.` to match every running package starting with `ru.`.\n~pattern — regex (matches tag or message).\nlevel:W..F — range, all warnings and above.\nComma in value ORs alternatives. Negate with !.\nMultiple tokens are ANDed.\n⌘K clears the buffer. ⌘F focuses this input. Space toggles pause.",
+      "Bare word — substring in tag or message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:<package> — substring match against running process names; auto-tracks app restarts. Type `app:ru.` to match every running package starting with `ru.`.\n~pattern — regex (matches tag or message).\nlevel:W..F — range, all warnings and above.\nComma in value ORs alternatives. Negate with !: `!tag:Anal` or `tag:!Anal`.\nMultiple tokens are ANDed.\n⌘K clears the buffer. ⌘F focuses this input.",
     counter: "{{shown}} / {{total}}",
     empty_waiting: "Waiting for log entries…",
     empty_filtered: "No entries match the current filter.",
