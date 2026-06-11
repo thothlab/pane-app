@@ -714,9 +714,20 @@ const LogcatView: Component = () => {
           <div
             ref={(el) => (filterOverlayRef = el)}
             aria-hidden="true"
-            class="absolute inset-0 pointer-events-none text-xs font-mono whitespace-pre overflow-hidden px-2 py-1 pr-14 flex items-center"
-            innerHTML={highlightedFilterHtml()}
-          />
+            class="absolute inset-0 pointer-events-none text-xs font-mono overflow-hidden px-2 py-1 pr-14 flex items-center"
+          >
+            {/* Wrap the highlight HTML in a single inline span so
+                flexbox sees one item — without the wrapper, each
+                top-level <span> becomes its own flex item and the
+                anonymous text-node spaces between tokens (`app:foo `,
+                ` tag:bar`) get collapsed by the layout, making
+                multi-token filters look glued together visually
+                even though `filter()` still has the spaces in it. */}
+            <span
+              class="whitespace-pre flex-shrink-0"
+              innerHTML={highlightedFilterHtml()}
+            />
+          </div>
           <input
             ref={(el) => (filterInputRef = el)}
             type="text"
