@@ -339,53 +339,6 @@ impl AndroidPlatform {
         Ok(map)
     }
 
-    /// All running PIDs whose process name contains `query`
-    /// (case-insensitive). Used by the Logcat `app:<query>` filter
-    /// token. Substring (not exact) match so users can type a
-    /// prefix like `ru.` and get every package that starts with it,
-    /// same ergonomics as Lograbbit's "App" filter.
-    ///
-    /// We use `ps -A` instead of `pidof` because `pidof` requires an
-    /// exact name and doesn't support partial matching; `ps -A` is
-    /// already on every Android device, cheap (~50ms over USB), and
-    /// gives us PID + full process name in one round-trip — including
-    /// `:subprocess` suffixes so `app:com.foo:bg` works too.
-    ///
-    /// Returns sorted+deduped. An empty query returns empty (caller
-    /// shouldn't ever pass empty, but guard so we don't accidentally
-    /// match every process).
-    pub async fn pids_matching(&self, serial: &str, query: &str) -> Result<Vec<u32>> {
-        let needle = query.trim().to_lowercase();
-        if needle.is_empty() {
-            return Ok(Vec::new());
-        }
-        let out = run(
-            "adb",
-            &["-s", serial, "shell", "ps", "-A", "-o", "PID,NAME"],
-        )
-        .await?;
-        let mut pids: Vec<u32> = Vec::new();
-        for line in out.lines().skip(1) {
-            let mut parts = line.split_whitespace();
-            let pid_s = match parts.next() {
-                Some(s) => s,
-                None => continue,
-            };
-            let name = match parts.next() {
-                Some(s) => s,
-                None => continue,
-            };
-            if name.to_lowercase().contains(&needle) {
-                if let Ok(p) = pid_s.parse::<u32>() {
-                    pids.push(p);
-                }
-            }
-        }
-        pids.sort_unstable();
-        pids.dedup();
-        Ok(pids)
-    }
-
     pub async fn remove(&self, serial: &str) -> Result<()> {
         // Clear proxy first so the device gets internet back before we
         // tear down the heartbeat reverse. Order matters: if we tear

@@ -114,23 +114,18 @@ const LogcatView: Component = () => {
   const [autoScroll, setAutoScroll] = createSignal(true);
   const [filter, setFilter] = createSignal("");
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
-  // Follow-app state. Driven entirely by `app:<package>` tokens in
-  // the filter DSL (see compileLogcatFilter). For each referenced
-  // package we periodically poll `android_pidof` and accumulate the
-  // current PIDs; the visible() filter then intersects entries.pid
-  // with that set. The "Lograbbit-style App tag" pattern — the
-  // package lives in the filter text itself, so it round-trips with
-  // saved filters and there's no separate dropdown widget to load.
-  // PIDs auto-update when the app restarts (poll resolves to the
-  // new pid).
-  const [appPids, setAppPids] = createSignal<Set<number>>(new Set());
-
   // PID → process name snapshot. Polled every 10s via
   // `android_pid_names` so the App column in the table can label
   // each entry with the package it came from. Accumulates across
   // ticks so historical entries from a process that's since exited
   // still display its name (PID reuse on Android is rare and gets
   // overwritten on the next tick when it happens).
+  //
+  // Also drives `app:<query>` filtering — `appPids` below is a
+  // derived memo over this map. One source of truth means there's
+  // no race between two separate poll cycles, and no chance for an
+  // adb hiccup on one of them to flicker the filtered view back to
+  // empty.
   const [pidNames, setPidNames] = createSignal<Map<number, string>>(new Map());
 
   // Resizable column widths. Persisted in localStorage so a user's
@@ -308,41 +303,29 @@ const LogcatView: Component = () => {
     return all.filter((e) => pids.has(e.pid) && predicate(e));
   });
 
-  // Resolve every `app:<query>` referenced by the current filter to
-  // the running PIDs whose process name contains the query — via
-  // `ps -A` + substring filter (see android_pids_matching). Polled
-  // every 5s so process restarts and secondary-process spawns get
-  // picked up without retyping. The set rebuilds each tick — apps
-  // can be added/removed by editing the filter text, no separate
-  // teardown needed.
-  createEffect(() => {
+  // PIDs whose process name matches any `app:<query>` token in the
+  // current filter, derived from the pidNames snapshot rather than
+  // a separate poll. The accumulative nature of pidNames (we never
+  // forget PIDs we've seen) means historical entries from a process
+  // that's since exited still show up — their PID is still in the
+  // map. New processes / restarts are picked up at the next
+  // pidNames tick (10s).
+  const appPids = createMemo(() => {
     const apps = matcher().appPackages;
-    if (apps.length === 0) {
-      setAppPids(new Set<number>());
-      return;
-    }
-    let cancelled = false;
-    const tick = async () => {
-      const results = await Promise.all(
-        apps.map((q) =>
-          invoke<number[]>("android_pids_matching", { serial, query: q }).catch(
-            () => [] as number[],
-          ),
-        ),
-      );
-      if (cancelled) return;
-      const set = new Set<number>();
-      for (const pids of results) {
-        for (const p of pids) set.add(p);
+    if (apps.length === 0) return new Set<number>();
+    const needles = apps.map((q) => q.trim().toLowerCase()).filter(Boolean);
+    if (needles.length === 0) return new Set<number>();
+    const set = new Set<number>();
+    for (const [pid, name] of pidNames()) {
+      const lower = name.toLowerCase();
+      for (const n of needles) {
+        if (lower.includes(n)) {
+          set.add(pid);
+          break;
+        }
       }
-      setAppPids(set);
-    };
-    void tick();
-    const handle = setInterval(tick, 5000);
-    onCleanup(() => {
-      cancelled = true;
-      clearInterval(handle);
-    });
+    }
+    return set;
   });
 
   // Poll PID → process-name snapshot. 10s cadence is enough — process

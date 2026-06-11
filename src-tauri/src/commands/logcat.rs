@@ -161,25 +161,6 @@ pub async fn logcat_write_export(path: String, content: String) -> CmdResult<usi
     Ok(bytes)
 }
 
-/// Resolve every PID whose process name contains `query` (case-
-/// insensitive). The Logcat window polls this every 5s for each
-/// `app:<query>` token in the active filter; process restarts and
-/// secondary-process spawns are picked up on the next tick. Matching
-/// substring rather than exact lets the user type partial names —
-/// `app:ru.` matches every running app whose package starts with
-/// `ru.`, same ergonomics as Lograbbit's App filter.
-#[tauri::command]
-pub async fn android_pids_matching(
-    serial: String,
-    query: String,
-) -> CmdResult<Vec<u32>> {
-    let android = AndroidPlatform::new();
-    android
-        .pids_matching(&serial, &query)
-        .await
-        .map_err(to_api("adb"))
-}
-
 /// Full PID → process-name snapshot. Polled by the Logcat window
 /// every 10s to label rows with the package the entry came from
 /// — the table's new App column reads from this map keyed on
