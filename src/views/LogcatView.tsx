@@ -531,10 +531,23 @@ const LogcatView: Component = () => {
   // Hotkeys. Space toggles pause; Cmd/Ctrl-K clears; Cmd/Ctrl-F focuses
   // the filter input. Active only when no input is focused (so typing
   // a space inside the filter doesn't pause).
+  //
+  // The text-field check goes through `document.activeElement` rather
+  // than `e.target` because WebKit's keydown target can lag behind the
+  // OS-tracked focus when the user has just clicked into the input
+  // (the first space after click was getting eaten by the global
+  // hotkey before the event re-targeted to the input). activeElement
+  // is the canonical focus owner.
   onMount(() => {
+    const isInEditable = () => {
+      const a = document.activeElement;
+      if (!a) return false;
+      if (a instanceof HTMLInputElement) return true;
+      if (a instanceof HTMLTextAreaElement) return true;
+      if ((a as HTMLElement).isContentEditable) return true;
+      return false;
+    };
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName ?? "";
-      const inTextField = tag === "INPUT" || tag === "TEXTAREA";
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         clearAll();
@@ -545,7 +558,7 @@ const LogcatView: Component = () => {
         filterInputRef?.focus();
         return;
       }
-      if (e.key === " " && !inTextField) {
+      if (e.key === " " && !isInEditable()) {
         e.preventDefault();
         togglePause();
       }
