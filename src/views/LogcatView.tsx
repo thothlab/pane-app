@@ -291,18 +291,6 @@ const LogcatView: Component = () => {
     }
   });
 
-  const visible = createMemo(() => {
-    const { predicate, appPackages } = matcher();
-    const pids = appPids();
-    const all = entries();
-    if (appPackages.length === 0) return all.filter(predicate);
-    // app:X is in the filter but the package isn't currently running →
-    // pids is empty → nothing matches, surfacing the "app not running"
-    // state by way of an empty list.
-    if (pids.size === 0) return [];
-    return all.filter((e) => pids.has(e.pid) && predicate(e));
-  });
-
   // PIDs whose process name matches any `app:<query>` token in the
   // current filter, derived from the pidNames snapshot rather than
   // a separate poll. The accumulative nature of pidNames (we never
@@ -310,6 +298,10 @@ const LogcatView: Component = () => {
   // that's since exited still show up — their PID is still in the
   // map. New processes / restarts are picked up at the next
   // pidNames tick (10s).
+  //
+  // Declared before `visible` so the eager evaluation of the visible
+  // memo's body doesn't hit a TDZ ReferenceError — Solid runs the
+  // memo body once on creation to establish the initial value.
   const appPids = createMemo(() => {
     const apps = matcher().appPackages;
     if (apps.length === 0) return new Set<number>();
@@ -326,6 +318,18 @@ const LogcatView: Component = () => {
       }
     }
     return set;
+  });
+
+  const visible = createMemo(() => {
+    const { predicate, appPackages } = matcher();
+    const pids = appPids();
+    const all = entries();
+    if (appPackages.length === 0) return all.filter(predicate);
+    // app:X is in the filter but the package isn't currently running →
+    // pids is empty → nothing matches, surfacing the "app not running"
+    // state by way of an empty list.
+    if (pids.size === 0) return [];
+    return all.filter((e) => pids.has(e.pid) && predicate(e));
   });
 
   // Poll PID → process-name snapshot. 10s cadence is enough — process
