@@ -55,10 +55,12 @@ export interface LogEntry {
   message: string;
 }
 
-// Hard cap to bound memory on a chatty device. 10k entries × ~200B
-// average = ~2 MB resident, fits comfortably and gives ~30s of history
-// even on a verbose logcat firehose. Older entries shift out FIFO.
-const MAX_ENTRIES = 10_000;
+// Hard cap to bound memory on a chatty device. 100k entries × ~200B
+// average = ~20 MB resident — fits comfortably and gives ~5 min of
+// history even on a verbose firehose, so filtered-by-app views don't
+// lose context as the unfiltered firehose churns. Older entries shift
+// out FIFO.
+const MAX_ENTRIES = 100_000;
 
 const LEVEL_COLOR: Record<LogLevel, string> = {
   verbose: "text-fg-muted",
@@ -287,7 +289,10 @@ const LogcatView: Component = () => {
       return compileLogcatFilter(filter());
     } catch (e: unknown) {
       setErrorMsg((e as { message?: string })?.message ?? String(e));
-      return { predicate: () => true, appPackages: [] as string[] };
+      return {
+        predicate: () => true,
+        appPackages: [] as { pkg: string; negate: boolean }[],
+      };
     }
   });
 
@@ -302,34 +307,41 @@ const LogcatView: Component = () => {
   // Declared before `visible` so the eager evaluation of the visible
   // memo's body doesn't hit a TDZ ReferenceError — Solid runs the
   // memo body once on creation to establish the initial value.
+  // Two PID sets: `include` from positive `app:` values (e.g. `app:foo`)
+  // and `exclude` from negated values (e.g. `app:!bar`). An entry passes
+  // when its pid is in `include` (or include is empty) AND not in
+  // `exclude`. Both sets derive from the same pidNames snapshot so they
+  // can't disagree.
   const appPids = createMemo(() => {
     const apps = matcher().appPackages;
-    if (apps.length === 0) return new Set<number>();
-    const needles = apps.map((q) => q.trim().toLowerCase()).filter(Boolean);
-    if (needles.length === 0) return new Set<number>();
-    const set = new Set<number>();
+    const empty = { include: new Set<number>(), exclude: new Set<number>(), hasPositive: false };
+    if (apps.length === 0) return empty;
+    const pos = apps.filter((a) => !a.negate).map((a) => a.pkg.trim().toLowerCase()).filter(Boolean);
+    const neg = apps.filter((a) => a.negate).map((a) => a.pkg.trim().toLowerCase()).filter(Boolean);
+    const include = new Set<number>();
+    const exclude = new Set<number>();
     for (const [pid, name] of pidNames()) {
       const lower = name.toLowerCase();
-      for (const n of needles) {
-        if (lower.includes(n)) {
-          set.add(pid);
-          break;
-        }
-      }
+      if (pos.some((n) => lower.includes(n))) include.add(pid);
+      if (neg.some((n) => lower.includes(n))) exclude.add(pid);
     }
-    return set;
+    return { include, exclude, hasPositive: pos.length > 0 };
   });
 
   const visible = createMemo(() => {
     const { predicate, appPackages } = matcher();
-    const pids = appPids();
+    const { include, exclude, hasPositive } = appPids();
     const all = entries();
     if (appPackages.length === 0) return all.filter(predicate);
-    // app:X is in the filter but the package isn't currently running →
-    // pids is empty → nothing matches, surfacing the "app not running"
-    // state by way of an empty list.
-    if (pids.size === 0) return [];
-    return all.filter((e) => pids.has(e.pid) && predicate(e));
+    // Positive app:X is in the filter but the package isn't currently
+    // running → include is empty → nothing matches, surfacing the
+    // "app not running" state via an empty list.
+    if (hasPositive && include.size === 0) return [];
+    return all.filter((e) => {
+      if (hasPositive && !include.has(e.pid)) return false;
+      if (exclude.has(e.pid)) return false;
+      return predicate(e);
+    });
   });
 
   // Poll PID → process-name snapshot. 10s cadence is enough — process
@@ -959,7 +971,7 @@ const LogcatView: Component = () => {
           per-cell border-r — no grid gap so the borders are
           column-edge aligned. */}
       <div
-        class="grid font-mono text-fg-muted uppercase tracking-wide text-[10px] px-3 py-1 border-b border-border bg-bg-subtle/60"
+        class="grid font-mono text-fg-muted tracking-wide text-[10px] px-3 py-1 border-b border-border bg-bg-subtle/60"
         style={{ "grid-template-columns": gridTemplate() }}
         onContextMenu={openHeaderMenu}
         title={t()("logcat.col_menu_hint")}

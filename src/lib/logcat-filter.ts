@@ -7,27 +7,35 @@
 // Grammar:
 //   expr  := term (WS term)*
 //   term  := '!'? atom
-//   atom  := key ':' value | '~' regex | bareword
-//   value := single (',' single)*    # comma → OR
+//   atom  := key ':' valuelist | '~' regex | bareword
+//   value := '!'? single                  # per-value negation
+//   valuelist := value (',' value)*       # comma → see semantics below
 //   key   := tag | level | pid | msg | app
 //
+// Within a single key list (e.g. `tag:a,b,!c,!d`):
+//   - positive values OR together         → (tag~a OR tag~b)
+//   - negative values all must NOT match  → (tag!~c AND tag!~d)
+//   - the two groups AND together         → ((a OR b)) AND (!c AND !d)
+// Outer `!key:...` still flips the whole result.
+//
 // Examples:
-//   "OkHttp"                       # bareword: substring in tag OR msg
-//   "tag:OkHttp,Retrofit"          # tag OR tag
-//   "level:E"                      # error only
-//   "level:W..F"                   # warn or above
+//   "OkHttp"                              # bareword: substring in tag OR msg
+//   "tag:OkHttp,Retrofit"                 # tag~OkHttp OR tag~Retrofit
+//   "tag:!CatalogParser,!Spam,SSH"        # tag!~CatalogParser AND tag!~Spam AND tag~SSH
+//   "level:E"                             # error only
+//   "level:W..F"                          # warn or above
 //   "pid:1234"
-//   "app:com.foo.bar"              # resolves package → current pid;
-//                                  # auto-tracks restarts
-//   "~^(?!.*Connection).+"         # regex (negative lookahead)
-//   "tag:OkHttp !msg:keep-alive"   # AND + negate
+//   "app:com.foo.bar"                     # resolves package → current pid; auto-tracks restarts
+//   "app:com.foo,!com.foo.helper"         # com.foo's pids minus com.foo.helper's pids
+//   "~^(?!.*Connection).+"                # regex (negative lookahead)
+//   "tag:OkHttp !msg:keep-alive"          # AND + outer negate
 //
 // `app:X` is special: it can't be evaluated in this pure-string pass
 // because we don't know the PID without a device round-trip. The
-// compiler returns its referenced package names alongside the
-// predicate so the caller can resolve them out-of-band (via
-// `android_pidof`) and intersect the resolved PIDs with the entry
-// stream itself. The predicate treats `app:` tokens as always-true.
+// compiler returns the package names (with per-value negation) so the
+// caller can resolve them out-of-band (via `android_pidof`) and
+// intersect/subtract the resolved PIDs from the entry stream. The
+// predicate treats `app:` tokens as always-true.
 //
 // Returns a `{ predicate, appPackages }` pair, stable for the input —
 // call sites usually memoize it in a createMemo over the typed text.
@@ -64,23 +72,42 @@ const LEVEL_FROM_TOKEN: Record<string, LogLevel> = {
 
 type Predicate = (e: LogEntry) => boolean;
 
-export interface CompiledLogcatFilter {
-  predicate: Predicate;
-  /** Package names referenced via `app:` tokens. May contain
-   *  duplicates if the user typed several `app:` terms. The caller
-   *  resolves them to PIDs and applies an extra filter step. */
-  appPackages: string[];
+export interface AppPackageRef {
+  pkg: string;
+  negate: boolean;
 }
 
-/// Split a value on `,` into trimmed non-empty parts. Single value
-/// (no comma) → one-element array. Matches the comma-OR semantics we
-/// use in the Captures filter for consistency.
-function splitValues(value: string): string[] {
-  if (!value.includes(",")) return [value];
-  return value
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+export interface CompiledLogcatFilter {
+  predicate: Predicate;
+  /** Package names referenced via `app:` tokens, with per-value
+   *  negation. The caller resolves package names to PIDs and applies
+   *  the include/exclude logic. */
+  appPackages: AppPackageRef[];
+}
+
+interface RawValue {
+  value: string;
+  negate: boolean;
+}
+
+/// Split a value on `,` into trimmed non-empty parts, picking up a
+/// leading `!` per part as negation. Single value (no comma) → one-
+/// element array. Matches the comma semantics in the file header.
+function splitValues(value: string): RawValue[] {
+  const parts = value.includes(",") ? value.split(",") : [value];
+  const out: RawValue[] = [];
+  for (const raw of parts) {
+    let s = raw.trim();
+    if (s.length === 0) continue;
+    let negate = false;
+    if (s.startsWith("!")) {
+      negate = true;
+      s = s.slice(1).trim();
+    }
+    if (s.length === 0) continue;
+    out.push({ value: s, negate });
+  }
+  return out;
 }
 
 function parseLevelRange(raw: string): { min: number; max: number } | null {
@@ -118,13 +145,29 @@ function makeSubstringMatcher(value: string): (s: string) => boolean {
   return (s) => s.toLowerCase().includes(lower);
 }
 
+/// Combine positive (OR) and negative (all-must-NOT) value lists over
+/// a single string-field extractor. Returns a predicate.
+function combineStringValues(
+  values: RawValue[],
+  field: (e: LogEntry) => string,
+): Predicate {
+  const positives = values.filter((v) => !v.negate).map((v) => makeSubstringMatcher(v.value));
+  const negatives = values.filter((v) => v.negate).map((v) => makeSubstringMatcher(v.value));
+  return (e) => {
+    const s = field(e);
+    if (positives.length > 0 && !positives.some((m) => m(s))) return false;
+    if (negatives.some((m) => m(s))) return false;
+    return true;
+  };
+}
+
 interface AtomResult {
   pred: Predicate;
-  apps: string[];
+  apps: AppPackageRef[];
 }
 
 function buildAtom(token: string): AtomResult {
-  let negate = token.startsWith("!");
+  const negate = token.startsWith("!");
   const body = negate ? token.slice(1) : token;
 
   // Regex form: ~pattern
@@ -149,15 +192,7 @@ function buildAtom(token: string): AtomResult {
   }
 
   const key = body.slice(0, colon).toLowerCase();
-  let value = body.slice(colon + 1);
-  // Accept `key:!value` as equivalent to `!key:value`. Lograbbit and
-  // many other log viewers put the `!` after the colon, so users
-  // reach for it that way; rejecting `tag:!Anal` as "tag must equal
-  // literal '!Anal'" was a recurring surprise.
-  if (value.startsWith("!")) {
-    negate = !negate;
-    value = value.slice(1);
-  }
+  const value = body.slice(colon + 1);
   const values = splitValues(value);
   if (values.length === 0) {
     return { pred: () => true, apps: [] };
@@ -166,43 +201,55 @@ function buildAtom(token: string): AtomResult {
   let positive: Predicate;
   switch (key) {
     case "tag": {
-      const matchers = values.map(makeSubstringMatcher);
-      positive = (e) => matchers.some((m) => m(e.tag));
+      positive = combineStringValues(values, (e) => e.tag);
       break;
     }
     case "msg":
     case "message": {
-      const matchers = values.map(makeSubstringMatcher);
-      positive = (e) => matchers.some((m) => m(e.message));
+      positive = combineStringValues(values, (e) => e.message);
       break;
     }
     case "level": {
-      const ranges = values.map(parseLevelRange);
-      if (ranges.some((r) => r === null)) {
-        throw new Error(`bad level: ${value}`);
-      }
+      const ranges = values.map((v) => {
+        const r = parseLevelRange(v.value);
+        if (r === null) throw new Error(`bad level: ${v.value}`);
+        return { range: r, negate: v.negate };
+      });
+      const pos = ranges.filter((r) => !r.negate);
+      const neg = ranges.filter((r) => r.negate);
       positive = (e) => {
         const n = LEVEL_ORDER[e.level];
-        return ranges.some((r) => n >= r!.min && n <= r!.max);
+        if (pos.length > 0 && !pos.some((r) => n >= r.range.min && n <= r.range.max)) return false;
+        if (neg.some((r) => n >= r.range.min && n <= r.range.max)) return false;
+        return true;
       };
       break;
     }
     case "pid": {
       const nums = values.map((v) => {
-        const n = parseInt(v, 10);
-        if (!Number.isFinite(n)) throw new Error(`bad pid: ${v}`);
-        return n;
+        const n = parseInt(v.value, 10);
+        if (!Number.isFinite(n)) throw new Error(`bad pid: ${v.value}`);
+        return { n, negate: v.negate };
       });
-      positive = (e) => nums.includes(e.pid);
+      const pos = nums.filter((p) => !p.negate).map((p) => p.n);
+      const neg = nums.filter((p) => p.negate).map((p) => p.n);
+      positive = (e) => {
+        if (pos.length > 0 && !pos.includes(e.pid)) return false;
+        if (neg.includes(e.pid)) return false;
+        return true;
+      };
       break;
     }
     case "app": {
-      // Predicate is always-true: the actual PID filtering happens
-      // out-of-band, after the caller resolves these package names
-      // via `android_pidof`. Negation isn't meaningful here — there's
-      // no in-band predicate to invert — so we just ignore `!app:`
-      // for now; can revisit if anyone hits that case.
-      return { pred: () => true, apps: values };
+      // Predicate is always-true: actual PID filtering happens out-of-
+      // band, after the caller resolves these package names via
+      // `android_pidof`. Outer `!app:` is not meaningful — there's no
+      // in-band predicate to invert — so we drop it. Per-value `!`
+      // inside the list IS meaningful and is passed through.
+      return {
+        pred: () => true,
+        apps: values.map((v) => ({ pkg: v.value, negate: v.negate })),
+      };
     }
     default:
       throw new Error(`unknown filter key: ${key}`);
@@ -240,7 +287,7 @@ export function compileLogcatFilter(input: string): CompiledLogcatFilter {
   const tokens = tokenize(trimmed);
   if (tokens.length === 0) return { predicate: () => true, appPackages: [] };
   const atoms = tokens.map(buildAtom);
-  const apps: string[] = [];
+  const apps: AppPackageRef[] = [];
   for (const a of atoms) {
     if (a.apps.length > 0) apps.push(...a.apps);
   }

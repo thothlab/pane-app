@@ -246,8 +246,9 @@ focuses the existing window rather than spawning a duplicate.
 
 What's inside:
 
-- **Virtualized 10k-entry buffer**: Time · PID · Level (coloured
-  V/D/I/W/E/F) · Tag · Message.
+- **Virtualized 100k-entry buffer** (~5 min of history even on a
+  chatty firehose): Time · PID · Level (coloured V/D/I/W/E/F) · Tag ·
+  Message.
 - **Pause** (Space) — freezes the buffer, the upstream stream keeps
   running on the backend. **Clear** (⌘K) — wipes the buffer.
   **Follow** — auto-scroll to newest entry; turns off automatically
@@ -260,14 +261,21 @@ What's inside:
 - **Filter DSL** — in-memory (the buffer is already in renderer
   memory, no need to go through SQL):
   ```text
-  OkHttp                       # bare word: substring in tag or message
-  tag:OkHttp,Retrofit          # OR (comma) inside the value
-  level:E                      # error only
-  level:W..F                   # range: warn and above
-  pid:1234                     # exact PID
-  ~^(?!.*Connection)           # regex via ~, matches tag or message
-  tag:OkHttp !msg:keep-alive   # AND between tokens, ! to negate
+  OkHttp                              # bare word: substring in tag or message
+  tag:OkHttp,Retrofit                 # comma-joined positives — OR
+  tag:!CatalogParser,!TrafficStats    # negatives via ! — all must NOT match
+  tag:!Spam,!Noise,SSH                # mixed: (not Spam AND not Noise) AND contains SSH
+  level:E                             # error only
+  level:W..F                          # range: warn and above
+  pid:1234                            # exact PID
+  app:com.foo,!com.foo.helper         # pids of com.foo minus pids of com.foo.helper
+  ~^(?!.*Connection)                  # regex via ~, matches tag or message
+  !tag:OkHttp                         # outer ! — flips the whole token
+  tag:OkHttp !msg:keep-alive          # AND between tokens
   ```
+  A comma in a value combines alternatives: positives OR together,
+  negatives (`!value`) all must NOT match, the two groups AND together.
+  An outer `!key:foo` flips the entire token.
 - **Export** — save the currently-visible filtered view to a `.log`
   file in `threadtime` format (drop-in for Android Studio / any
   grep pipeline).

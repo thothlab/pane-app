@@ -238,19 +238,24 @@ viewer определяет JSON / XML / text:
 
 Что внутри окна:
 
-- **Виртуализованная таблица** на 10k последних записей: время · PID · level (цветной символ V/D/I/W/E/F) · tag · message.
+- **Виртуализованная таблица** на 100k последних записей (~5 мин истории даже на болтливом firehose): время · PID · level (цветной символ V/D/I/W/E/F) · tag · message.
 - **Pause** (Space) — буфер замирает, поток продолжается на бэке. **Clear** (⌘K) — чистит буфер. **Follow** — авто-прокрутка к новым строкам (отключается автоматически если пользователь сам прокрутил вверх).
 - **Follow app** — дропдаун со списком установленных third-party пакетов. Выбираешь приложение → каждые 5 сек резолвится PID через `adb shell pidof`, фильтр накладывается автоматически. При рестарте приложения PID обновляется, фильтр продолжает работать без вмешательства.
 - **Filter DSL** — собственный, in-memory (буфер уже в памяти, SQL не нужен):
   ```text
-  OkHttp                    # bareword: substring в tag или message
-  tag:OkHttp,Retrofit       # OR (запятая) внутри значения
-  level:E                   # только error
-  level:W..F                # диапазон, warn и выше
-  pid:1234                  # конкретный PID
-  ~^(?!.*Connection)        # regex (через ~), matches tag или message
-  tag:OkHttp !msg:keep-alive   # AND между токенами, ! для negation
+  OkHttp                              # bareword: substring в tag или message
+  tag:OkHttp,Retrofit                 # позитивы через запятую — OR
+  tag:!CatalogParser,!TrafficStats    # негативы через ! — все должны НЕ совпасть
+  tag:!Spam,!Noise,SSH                # смешанно: (не Spam И не Noise) И содержит SSH
+  level:E                             # только error
+  level:W..F                          # диапазон, warn и выше
+  pid:1234                            # конкретный PID
+  app:com.foo,!com.foo.helper         # pid процессов com.foo минус pid com.foo.helper
+  ~^(?!.*Connection)                  # regex (через ~), matches tag или message
+  !tag:OkHttp                         # внешнее ! — инвертирует весь токен
+  tag:OkHttp !msg:keep-alive          # AND между токенами
   ```
+  Запятая в значении объединяет альтернативы: позитивы — OR, негативы (`!value`) — все должны НЕ совпасть, две группы соединяются по AND. Внешнее `!key:foo` инвертирует весь токен.
 - **Export** — сохранение текущей отфильтрованной выборки в `.log` файл в формате `threadtime` (открывается в Android Studio / любой grep-цепочке).
 - **⌘F** — фокус в поле фильтра.
 
