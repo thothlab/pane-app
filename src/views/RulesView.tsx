@@ -1,4 +1,4 @@
-import { type Component, createSignal, createMemo, For, Index, Show, onMount } from "solid-js";
+import { type Component, createEffect, createSignal, createMemo, For, Index, Show, onMount } from "solid-js";
 import {
   Plus,
   Trash2,
@@ -14,6 +14,17 @@ import {
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import { t, tr } from "@/i18n";
+import {
+  rulesCollapsed,
+  setRulesCollapsed,
+  rulesEditing,
+  setRulesEditing,
+  type RulesEditing,
+  ruleDraftKey,
+  loadRuleDraft,
+  saveRuleDraft,
+  clearRuleDraft,
+} from "@/stores/rules-ui";
 import type {
   RuleDto,
   RuleUpsertArgs,
@@ -38,14 +49,19 @@ const NO_AC = {
   spellcheck: false,
 } as const;
 
-type Editing = { kind: "rule"; collectionId: string | null; id: string | "new" } | null;
+type Editing = RulesEditing;
 
 const RulesView: Component = () => {
   const [rules, setRules] = createSignal<RuleDto[]>([]);
   const [collections, setCollections] = createSignal<RuleCollectionDto[]>([]);
-  const [editing, setEditing] = createSignal<Editing>(null);
+  // `editing` and `collapsed` are hoisted into module-level signals
+  // (stores/rules-ui) so they survive view remount across nav and
+  // app restart. Local aliases keep the call-sites below unchanged.
+  const editing = rulesEditing;
+  const setEditing = setRulesEditing;
+  const collapsed = rulesCollapsed;
+  const setCollapsed = setRulesCollapsed;
   const [loading, setLoading] = createSignal(true);
-  const [collapsed, setCollapsed] = createSignal<Record<string, boolean>>({});
 
   // Inline collection-creation form. `creatingName === null` means hidden.
   // `creatingCallback` is invoked with the newly-created id (used when the
@@ -179,6 +195,9 @@ const RulesView: Component = () => {
     await api.rules.delete(r.id);
     const ed = editing();
     if (ed?.kind === "rule" && ed.id === r.id) setEditing(null);
+    // Drop any persisted draft for this rule — its key would otherwise
+    // orphan in localStorage forever.
+    clearRuleDraft(ruleDraftKey(r.id, r.collection_id));
     await refresh();
   };
 
@@ -667,7 +686,23 @@ const RuleEditor: Component<{
   onCancel: () => void;
   onSaved: (saved: RuleDto) => void;
 }> = (p) => {
+  // Stable storage key for this editor instance. Drafts are persisted
+  // per-(rule|new+collection) so switching between two rules doesn't
+  // merge their in-progress edits.
+  const draftKey = ruleDraftKey(p.initial?.id ?? null, p.defaultCollectionId);
+
+  // Track whether init() restored from a persisted draft. If it did,
+  // the saved draft is authoritative — we skip the body-load below so
+  // we don't clobber user-typed text (including a deliberately empty
+  // body) with the version on disk.
+  let hadInitialDraft = false;
+
   const init = (): DraftState => {
+    const saved = loadRuleDraft<DraftState>(draftKey);
+    if (saved) {
+      hadInitialDraft = true;
+      return saved;
+    }
     const r = p.initial;
     if (!r) return emptyDraft(p.defaultCollectionId);
     return {
@@ -702,9 +737,26 @@ const RuleEditor: Component<{
   const existingBodyId = createMemo(() => p.initial?.res_body_id ?? null);
   const existingBodySize = createMemo(() => p.initial?.res_body_size ?? 0);
 
+  // Persist the in-progress draft on every change. localStorage write
+  // is sync and well under a millisecond for a typical rule, so no
+  // debounce is needed at human typing rates. Skip the very first
+  // run when we just rehydrated FROM the store — pointless rewrite.
+  let skipNextSave = hadInitialDraft;
+  createEffect(() => {
+    const v = d();
+    if (skipNextSave) {
+      skipNextSave = false;
+      return;
+    }
+    saveRuleDraft(draftKey, v);
+  });
+
   // Load the existing response body into the textarea on open so the user
-  // sees what's currently stored and can edit it in place.
+  // sees what's currently stored and can edit it in place. Skipped if
+  // we restored a draft above — the draft's body text is what the
+  // user last had, which beats whatever's on disk.
   onMount(async () => {
+    if (hadInitialDraft) return;
     const id = existingBodyId();
     if (!id) return;
     try {
@@ -724,6 +776,15 @@ const RuleEditor: Component<{
       setBodyLoading(false);
     }
   });
+
+  // Explicit user dismiss — both the ChevronUp ("collapse without
+  // saving") and the Cancel button funnel through here. Clearing the
+  // draft on dismiss preserves the obvious semantics: navigation pauses
+  // the work (draft survives), but an explicit close discards it.
+  const dismiss = () => {
+    clearRuleDraft(draftKey);
+    p.onCancel();
+  };
 
   const save = async () => {
     setBusy(true);
@@ -756,6 +817,9 @@ const RuleEditor: Component<{
         res_delay_ms: draft.res_delay_ms,
       };
       const saved = await api.rules.upsert(args);
+      // Saved state is authoritative now — drop the in-progress draft
+      // so the editor doesn't reopen on the stale pre-save snapshot.
+      clearRuleDraft(draftKey);
       p.onSaved(saved);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
@@ -770,7 +834,7 @@ const RuleEditor: Component<{
         <button
           class="text-fg-muted hover:text-fg shrink-0 p-0.5 rounded hover:bg-bg-muted"
           title={t()("rules.collapse_without_saving")}
-          onClick={p.onCancel}
+          onClick={dismiss}
         >
           <ChevronUp size={14} />
         </button>
@@ -1040,7 +1104,7 @@ const RuleEditor: Component<{
       <div class="flex items-center justify-end gap-2 pt-2 border-t border-border">
         <button
           class="text-sm px-3 py-1.5 rounded hover:bg-bg-muted text-fg-muted"
-          onClick={p.onCancel}
+          onClick={dismiss}
           disabled={busy()}
         >
           {t()("rules.cancel")}
