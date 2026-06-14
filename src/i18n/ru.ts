@@ -77,7 +77,7 @@ const ru: Dict = {
     copy_path_title: "Скопировать путь",
   },
   captures: {
-    add_to_rules_title: "Добавить в Rules",
+    add_to_rules_title: "Добавить в правила",
     add_to_rules_ungrouped: "Без коллекции",
     add_to_rules_new_collection: "Новая коллекция…",
     add_to_rules_default_collection: "Из захваченных",
