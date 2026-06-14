@@ -421,12 +421,54 @@ const LogcatView: Component = () => {
       const merged: LogEntry[] =
         pending.length === 1 ? pending[0]! : pending.flat();
       pending = [];
+
+      // FIFO-shift compensation. Once the buffer hits MAX_ENTRIES,
+      // every new batch pushes the same count off the front — the
+      // virtualizer's count stays at MAX, scrollTop stays put, but
+      // the rows at every fixed pixel offset have rotated forward.
+      // Result for an autoScroll-off user: the content visibly
+      // "scrolls down" under their viewport even though they didn't
+      // ask for it. Anchor to the entry currently at the top of the
+      // viewport, then after the buffer turns over re-locate that
+      // exact entry and restore the same screen position.
+      let anchor:
+        | { entry: LogEntry; pxOffset: number }
+        | undefined;
+      if (!autoScroll() && scrollEl) {
+        const rowH = Math.max(
+          1,
+          Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT),
+        );
+        const topIdx = Math.floor(scrollEl.scrollTop / rowH);
+        const e = visible()[topIdx];
+        if (e) anchor = { entry: e, pxOffset: scrollEl.scrollTop - topIdx * rowH };
+      }
+
       setEntries((prev) => {
         const next = prev.length === 0 ? merged : prev.concat(merged);
         return next.length > MAX_ENTRIES
           ? next.slice(next.length - MAX_ENTRIES)
           : next;
       });
+
+      if (anchor && scrollEl) {
+        queueMicrotask(() => {
+          if (!scrollEl || !anchor) return;
+          // visible() is reactive — after setEntries above it points
+          // at the updated array. indexOf is reference-equality, so
+          // we find the exact same LogEntry object regardless of
+          // how the buffer turned over.
+          const newVisible = visible();
+          const idx = newVisible.indexOf(anchor.entry);
+          if (idx < 0) return; // entry filtered out — nothing to anchor to
+          const rowH = Math.max(
+            1,
+            Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT),
+          );
+          scrollEl.scrollTop = idx * rowH + anchor.pxOffset;
+          lastScrollTop = scrollEl.scrollTop;
+        });
+      }
     };
 
     const scheduleFlush = () => {
