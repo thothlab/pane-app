@@ -21,6 +21,7 @@
 
 import { createMemo, createSignal } from "solid-js";
 import * as i18n from "@solid-primitives/i18n";
+import { emit, listen } from "@tauri-apps/api/event";
 
 import en from "./en";
 import ru from "./ru";
@@ -35,6 +36,7 @@ export const LOCALES: { code: Locale; label: string }[] = [
 
 const DEFAULT_LOCALE: Locale = "en";
 const STORAGE_KEY = "pane:locale";
+const SYNC_EVENT = "pane://locale-changed";
 
 // Pre-flatten so each lookup is a single Map hit instead of walking
 // nested objects. Done once at module load, dictionaries are static.
@@ -59,7 +61,9 @@ const [locale, setLocaleSignal] = createSignal<Locale>(loadLocale());
 export { locale };
 
 /** Persist + apply a new locale. Triggers a re-render of every
- *  component that reads `t()`. */
+ *  component that reads `t()`. Also broadcasts to sibling Tauri
+ *  windows (logcat) — they import this module too but their
+ *  `locale` signal is frozen at load time without this hook. */
 export function setLocale(next: Locale): void {
   try {
     localStorage.setItem(STORAGE_KEY, next);
@@ -67,6 +71,24 @@ export function setLocale(next: Locale): void {
     /* swallow — locale still changes in-memory */
   }
   setLocaleSignal(next);
+  void emit(SYNC_EVENT, next).catch(() => {});
+}
+
+// Cross-window sync. Mirrors the theme/font-scale stores: storage
+// events alone aren't reliable across Tauri's per-window WebViews, so
+// a Tauri event is the robust channel. Each window installs its own
+// listener at module load.
+if (typeof window !== "undefined") {
+  void listen<Locale>(SYNC_EVENT, (e) => {
+    const v = e.payload;
+    if (v === "en" || v === "ru") setLocaleSignal(v);
+  }).catch(() => {});
+
+  window.addEventListener("storage", (e) => {
+    if (e.key !== STORAGE_KEY) return;
+    const v = e.newValue;
+    if (v === "en" || v === "ru") setLocaleSignal(v);
+  });
 }
 
 /** Reactive translator. Call as `t()(key, params?)` inside JSX.
