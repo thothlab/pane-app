@@ -80,6 +80,12 @@ const en = {
     copy_path_title: "Copy path",
   },
   captures: {
+    add_to_rules_title: "Add to rules",
+    add_to_rules_ungrouped: "Ungrouped",
+    add_to_rules_new_collection: "New collection…",
+    add_to_rules_default_collection: "From captures",
+    add_to_rules_done: "Added rule \"{name}\" to \"{collection}\"",
+    add_to_rules_failed: "Failed to add: {message}",
     column_idx: "#",
     column_method: "Method",
     column_status: "Status",

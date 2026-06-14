@@ -77,6 +77,12 @@ const ru: Dict = {
     copy_path_title: "Скопировать путь",
   },
   captures: {
+    add_to_rules_title: "Добавить в Rules",
+    add_to_rules_ungrouped: "Без коллекции",
+    add_to_rules_new_collection: "Новая коллекция…",
+    add_to_rules_default_collection: "Из захваченных",
+    add_to_rules_done: "Правило «{name}» добавлено в «{collection}»",
+    add_to_rules_failed: "Не удалось добавить: {message}",
     column_idx: "#",
     column_method: "Метод",
     column_status: "Статус",

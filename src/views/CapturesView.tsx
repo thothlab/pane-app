@@ -1,10 +1,15 @@
 import { type Component, createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
-import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Pin, Star } from "lucide-solid";
+import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Pin, Star, FolderPlus, Shuffle } from "lucide-solid";
 import { api } from "@/ipc/client";
 import { listenToCaptures } from "@/ipc/events";
-import type { CaptureDto } from "@/ipc/types";
+import type { CaptureDto, RuleCollectionDto, RuleDto, RuleUpsertArgs } from "@/ipc/types";
+import {
+  setRulesEditing,
+  rulesCollapsed,
+  setRulesCollapsed,
+} from "@/stores/rules-ui";
 import DetailPanes from "@/components/DetailPanes";
 import { VerticalResizer } from "@/components/VerticalResizer";
 import {
@@ -305,6 +310,179 @@ const CapturesView: Component = () => {
     }),
   );
 
+  // ── Add-to-Rules context menu ──────────────────────────────────────
+  // Right-clicking a row opens a small picker rather than the browser
+  // context menu. It lists current rule collections and a "new
+  // collection" action. Selecting any of them creates a stub rule
+  // pre-filled from the capture (method + host + path + captured
+  // response) — same shape the manual rule editor produces, so the
+  // user can refine it in the Rules view if needed.
+  const [addMenuPos, setAddMenuPos] = createSignal<
+    { x: number; y: number; captureId: string } | null
+  >(null);
+  const [addCollections, setAddCollections] = createSignal<RuleCollectionDto[]>([]);
+  const [addBusy, setAddBusy] = createSignal(false);
+  const [addToast, setAddToast] = createSignal<string | null>(null);
+  let addMenuRef: HTMLDivElement | undefined;
+
+  const openAddMenu = async (e: MouseEvent, captureId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setAddMenuPos({ x: e.clientX, y: e.clientY, captureId });
+    // Refresh collections on each open — cheap call, and the user
+    // may have created/renamed collections in the Rules tab since
+    // we last looked.
+    try {
+      setAddCollections(await api.collections.list());
+    } catch {
+      setAddCollections([]);
+    }
+  };
+
+  const closeAddMenu = () => setAddMenuPos(null);
+
+  // Build a RuleUpsertArgs from a captured request — used by the
+  // context menu's "Add to <collection>" path. Fetches the full
+  // capture (headers) and response body via the regular APIs.
+  const buildRuleFromCapture = async (
+    captureId: string,
+    collectionId: string | null,
+  ): Promise<RuleUpsertArgs> => {
+    const cap = await api.captures.get(captureId);
+    let bodyBase64: string | null = null;
+    let bodyMime: string | null = null;
+    if (cap.res_body_id) {
+      try {
+        const body = await api.captures.body(cap.res_body_id, 8 * 1024 * 1024);
+        bodyBase64 = body.bytes_base64;
+        bodyMime = body.mime;
+      } catch {
+        /* body fetch failed — leave empty, user can fill in editor */
+      }
+    }
+    // Strip query string from the path glob; match_params is the
+    // intended slot for query matching, but we don't auto-populate
+    // it — wildcard query matches are the more common case, and the
+    // user can pin specific params in the Rules editor.
+    const qIdx = cap.url_path.indexOf("?");
+    const pathGlob = qIdx >= 0 ? cap.url_path.slice(0, qIdx) : cap.url_path;
+    return {
+      collection_id: collectionId,
+      name: `${cap.method} ${cap.server_host}${pathGlob}`.slice(0, 120),
+      enabled: true,
+      priority: 0,
+      mode: "stub",
+      patches: [],
+      match_method: cap.method || null,
+      match_host_glob: cap.server_host || null,
+      match_path_glob: pathGlob || null,
+      match_params: [],
+      res_status: cap.status ?? 200,
+      res_headers: (cap.res_headers ?? []).map((h) => ({
+        name: h.name,
+        value: h.value,
+      })),
+      res_body_base64: bodyBase64,
+      res_body_mime: bodyMime,
+      res_delay_ms: 0,
+    };
+  };
+
+  // Resolve a human-readable collection label for the toast. Looks up
+  // by id in the snapshot used to render the menu so we don't have to
+  // hit the backend again.
+  const collectionLabel = (collectionId: string | null): string => {
+    if (collectionId === null) return tr("captures.add_to_rules_ungrouped");
+    const c = addCollections().find((x) => x.id === collectionId);
+    return c?.name ?? tr("captures.add_to_rules_ungrouped");
+  };
+
+  // Shared post-success path: navigate state so the Rules tab opens
+  // the editor for this rule, expand the target collection (otherwise
+  // the editor would render inside a collapsed section and the user
+  // wouldn't see it), and show a toast that names BOTH the rule and
+  // its destination collection so it's unambiguous where it landed.
+  const finishAdd = (rule: RuleDto, targetCollectionLabel: string) => {
+    setRulesEditing({
+      kind: "rule",
+      collectionId: rule.collection_id,
+      id: rule.id,
+    });
+    const sectionKey = rule.collection_id ?? "__ungrouped__";
+    if (rulesCollapsed()[sectionKey]) {
+      setRulesCollapsed({ ...rulesCollapsed(), [sectionKey]: false });
+    }
+    setAddToast(
+      tr("captures.add_to_rules_done", {
+        name: rule.name,
+        collection: targetCollectionLabel,
+      }),
+    );
+    setTimeout(() => setAddToast(null), 3000);
+    closeAddMenu();
+  };
+
+  const addToCollection = async (collectionId: string | null) => {
+    const pos = addMenuPos();
+    if (!pos || addBusy()) return;
+    setAddBusy(true);
+    try {
+      const label = collectionLabel(collectionId);
+      const args = await buildRuleFromCapture(pos.captureId, collectionId);
+      const rule = await api.rules.upsert(args);
+      finishAdd(rule, label);
+    } catch (e: unknown) {
+      alert(
+        tr("captures.add_to_rules_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+      );
+    } finally {
+      setAddBusy(false);
+    }
+  };
+
+  const addToNewCollection = async () => {
+    const pos = addMenuPos();
+    if (!pos || addBusy()) return;
+    setAddBusy(true);
+    try {
+      const created = await api.collections.upsert({
+        name: tr("captures.add_to_rules_default_collection"),
+        enabled: true,
+        priority: 0,
+      });
+      // Inline the rule creation here rather than recursing into
+      // `addToCollection`. The recursive call short-circuited on its
+      // own `addBusy()` guard, silently leaving an empty collection
+      // and no rule — exactly the symptom users reported.
+      const args = await buildRuleFromCapture(pos.captureId, created.id);
+      const rule = await api.rules.upsert(args);
+      finishAdd(rule, created.name);
+    } catch (e: unknown) {
+      alert(
+        tr("captures.add_to_rules_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+      );
+    } finally {
+      setAddBusy(false);
+    }
+  };
+
+  // Outside click closes the menu. Mounted alongside the existing
+  // document handlers.
+  onMount(() => {
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (addMenuPos() && addMenuRef && !addMenuRef.contains(t)) {
+        closeAddMenu();
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    onCleanup(() => document.removeEventListener("mousedown", onDoc));
+  });
+
   const selected = createMemo(() => captures().find((c) => c.id === selectedId()) ?? null);
 
   const clearAll = async () => {
@@ -550,6 +728,7 @@ const CapturesView: Component = () => {
                       }}
                       onClick={() => setSelectedId(cap.id)}
                       onDblClick={() => navigate(`/replay/${cap.id}`)}
+                      onContextMenu={(e) => openAddMenu(e, cap.id)}
                     >
                       <div class="px-2 truncate text-fg-muted">{row.index + 1}</div>
                       <div class="px-2 truncate">{cap.method}</div>
@@ -590,6 +769,75 @@ const CapturesView: Component = () => {
           <DetailPanes capture={selected()} />
         </div>
       </div>
+
+      {/* Add-to-Rules popover. Positioned at the click coordinates;
+          clamped only by the viewport — content is short (~6 lines)
+          and right-clicks near the edge are rare. Outside-click and
+          Escape close it; menu items dispatch directly. */}
+      <Show when={addMenuPos()}>
+        <div
+          ref={(el) => (addMenuRef = el)}
+          class="fixed z-50 bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs select-none"
+          style={{
+            left: `${addMenuPos()!.x}px`,
+            top: `${addMenuPos()!.y}px`,
+            "min-width": "220px",
+            "max-width": "320px",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div class="px-3 py-1 text-fg-muted uppercase tracking-wide text-[10px]">
+            {t()("captures.add_to_rules_title")}
+          </div>
+          <Show when={addCollections().length > 0}>
+            <For each={addCollections()}>
+              {(c) => (
+                <button
+                  type="button"
+                  class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
+                  disabled={addBusy()}
+                  onClick={() => void addToCollection(c.id)}
+                >
+                  <Shuffle size={12} class="text-accent shrink-0" />
+                  <span class="truncate flex-1">{c.name}</span>
+                </button>
+              )}
+            </For>
+          </Show>
+          <button
+            type="button"
+            class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
+            disabled={addBusy()}
+            onClick={() => void addToCollection(null)}
+          >
+            <Shuffle size={12} class="text-fg-muted shrink-0" />
+            <span class="truncate flex-1 text-fg-muted">
+              {t()("captures.add_to_rules_ungrouped")}
+            </span>
+          </button>
+          <div class="border-t border-border my-1" />
+          <button
+            type="button"
+            class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
+            disabled={addBusy()}
+            onClick={() => void addToNewCollection()}
+          >
+            <FolderPlus size={12} class="text-accent shrink-0" />
+            <span class="truncate flex-1">
+              {t()("captures.add_to_rules_new_collection")}
+            </span>
+          </button>
+        </div>
+      </Show>
+
+      {/* Add-to-Rules confirmation toast. Bottom-right of the view,
+          auto-dismisses via setTimeout in addToCollection. */}
+      <Show when={addToast()}>
+        <div class="fixed bottom-4 right-4 z-50 bg-bg-subtle border border-accent/40 rounded shadow-lg px-3 py-2 text-xs text-fg max-w-sm">
+          {addToast()}
+        </div>
+      </Show>
     </div>
   );
 };
