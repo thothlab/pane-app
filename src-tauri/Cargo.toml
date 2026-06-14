@@ -45,6 +45,16 @@ pane-android.workspace = true
 pane-setup-server.workspace = true
 pane-pinning.workspace = true
 
+# Pin a transitive dep we don't use directly. brotli 8.0.3 (pulled by
+# tauri-codegen for asset compression) is broken with alloc-stdlib
+# 0.2.3 (released 2026-06-14 — `StandardAlloc` no longer satisfies
+# `Allocator<ZopfliNode>` etc., E0277). CI re-resolves semver-compat
+# versions and silently picked up 0.2.3, so every platform build
+# started failing. Locking to 0.2.2 here forces the resolver to keep
+# the working version regardless of cache state. Drop this when
+# brotli/alloc-stdlib publish a compatible pair.
+alloc-stdlib = "=0.2.2"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

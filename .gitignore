@@ -1,7 +1,10 @@
 # Rust
 target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock IS committed — Pane ships as a binary, so reproducible
+# transitive-dep resolution matters. A silent semver bump to a broken
+# minor release otherwise takes the CI matrix down (happened on
+# 2026-06-14 with alloc-stdlib 0.2.3).
 
 # Node
 node_modules/
