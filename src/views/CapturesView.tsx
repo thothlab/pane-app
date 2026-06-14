@@ -163,6 +163,12 @@ const CapturesView: Component = () => {
 
   const refresh = async () => {
     if (paused()) return;
+    // While the user is scrolled away from the bottom (autoFollow off),
+    // freeze the list — otherwise every 1.5s tick replaces captures(),
+    // the virtualizer reflows, and the user is yanked back to the top
+    // mid-read. Resuming Follow triggers an immediate refresh so the
+    // user sees the latest entries the moment they re-engage.
+    if (!autoFollow()) return;
     try {
       setCaptures(await api.captures.list(filter() || undefined, 500));
       setFilterError(null);
@@ -279,9 +285,14 @@ const CapturesView: Component = () => {
   function toggleAutoFollow() {
     const next = !autoFollow();
     setAutoFollow(next);
-    if (next && scrollEl) {
-      ignoreNextScroll = true;
-      scrollEl.scrollTop = scrollEl.scrollHeight;
+    if (next) {
+      // Pull the latest entries right away so the user doesn't sit on
+      // a stale view until the next 1.5s tick. Then snap to bottom.
+      void refresh();
+      if (scrollEl) {
+        ignoreNextScroll = true;
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      }
     }
   }
 
@@ -301,14 +312,20 @@ const CapturesView: Component = () => {
     });
   });
 
-  const virtualizer = createMemo(() =>
-    createVirtualizer({
-      count: captures().length,
-      getScrollElement: () => scrollEl ?? null,
-      estimateSize: () => 32,
-      overscan: 10,
-    }),
-  );
+  // Stable virtualizer instance. The earlier `createMemo(() =>
+  // createVirtualizer({...}))` re-created the whole instance on every
+  // count change, which wiped its scroll state — that's why the list
+  // snapped back to the top a second after the user scrolled. Reading
+  // `captures().length` via a getter keeps the count reactive without
+  // rebuilding the virtualizer.
+  const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+    get count() {
+      return captures().length;
+    },
+    getScrollElement: () => scrollEl ?? null,
+    estimateSize: () => 32,
+    overscan: 10,
+  });
 
   // ── Add-to-Rules context menu ──────────────────────────────────────
   // Right-clicking a row opens a small picker rather than the browser
@@ -712,8 +729,8 @@ const CapturesView: Component = () => {
               </div>
             }
           >
-            <div class="relative" style={{ height: `${virtualizer().getTotalSize()}px` }}>
-              <For each={virtualizer().getVirtualItems()}>
+            <div class="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
+              <For each={virtualizer.getVirtualItems()}>
                 {(row) => {
                   const cap = captures()[row.index];
                   return (
