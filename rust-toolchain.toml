@@ -1,4 +1,7 @@
 [toolchain]
-channel = "stable"
+# Pinned to match CI (.github/workflows/release.yml + ci.yml). Locked
+# dep tree (tauri-utils 2.9.2, brotli) doesn't compile on rustc ≥1.95;
+# bump together with those crates.
+channel = "1.94.1"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

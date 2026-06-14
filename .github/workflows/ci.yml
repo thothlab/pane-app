@@ -10,8 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned — see comment in release.yml. Locked deps don't
+      # compile on rustc ≥1.95.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.94.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Install Tauri deps
@@ -34,7 +37,9 @@ jobs:
     needs: lint-rust
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.1
       - uses: Swatinem/rust-cache@v2
       - name: Install Tauri deps
         run: |
@@ -66,7 +71,9 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.1
       - uses: Swatinem/rust-cache@v2
       - uses: pnpm/action-setup@v3
         with: { version: 9 }

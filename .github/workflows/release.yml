@@ -51,9 +51,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pin to a known-good rustc. The previous `@stable` (which
+      # ignores `rust-toolchain.toml`) picked up rustc ≥1.95 and
+      # blew up on locked dep versions: tauri-utils 2.9.2's
+      # `impl<P: AsRef<Path>> From<P> for AssetKey` hits the new
+      # coherence-future-compat lint (E0119 vs `time::HourBase`),
+      # and `brotli` fails its custom-`Allocator` impls. 1.94.1 is
+      # the local dev toolchain and builds the same locked tree
+      # cleanly; bump when we upgrade the deps.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.94.1
           targets: ${{ matrix.platform.rust }}
 
       - uses: Swatinem/rust-cache@v2
