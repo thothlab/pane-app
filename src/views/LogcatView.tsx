@@ -1139,7 +1139,7 @@ const LogcatView: Component = () => {
                   <Show when={e()}>
                     {(entry) => (
                       <div
-                        class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px ${LEVEL_ROW_COLOR[entry().level]}`}
+                        class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 ${LEVEL_ROW_COLOR[entry().level]}`}
                         style={{
                           transform: `translateY(${vi.start}px)`,
                           "grid-template-columns": gridTemplate(),

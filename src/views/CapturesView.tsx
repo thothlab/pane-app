@@ -735,7 +735,7 @@ const CapturesView: Component = () => {
                   const cap = captures()[row.index];
                   return (
                     <div
-                      class={`grid absolute left-0 right-0 items-center cursor-pointer ${
+                      class={`grid absolute left-0 right-0 items-center cursor-pointer border-b border-border/30 ${rowColor(cap.status, cap.error_kind)} ${
                         selectedId() === cap.id ? "bg-bg-muted" : "hover:bg-bg-subtle"
                       }`}
                       style={{
@@ -747,7 +747,7 @@ const CapturesView: Component = () => {
                       onDblClick={() => navigate(`/replay/${cap.id}`)}
                       onContextMenu={(e) => openAddMenu(e, cap.id)}
                     >
-                      <div class="px-2 truncate text-fg-muted">{row.index + 1}</div>
+                      <div class="px-2 truncate">{row.index + 1}</div>
                       <div class="px-2 truncate">{cap.method}</div>
                       <div
                         class={`px-2 truncate ${statusColor(cap.status, cap.error_kind)}`}
@@ -763,8 +763,8 @@ const CapturesView: Component = () => {
                       </div>
                       <div class="px-2 truncate">{cap.server_host}</div>
                       <div class="px-2 truncate">{cap.url_path}</div>
-                      <div class="px-2 truncate text-fg-muted">{cap.duration_ms ?? "—"}</div>
-                      <div class="px-2 truncate text-fg-muted">{fmtBytes(cap.total_bytes)}</div>
+                      <div class="px-2 truncate">{cap.duration_ms ?? "—"}</div>
+                      <div class="px-2 truncate">{fmtBytes(cap.total_bytes)}</div>
                     </div>
                   );
                 }}
@@ -868,6 +868,21 @@ function statusColor(status: number | null, errorKind: string | null) {
   if (status >= 400) return "text-warn";
   if (status >= 300) return "text-accent";
   return "text-success";
+}
+
+// Whole-row tint by status. 2xx and pending rows stay default so the
+// list reads as quiet baseline noise — only failures stand out. 5xx
+// and transport errors also get a soft red row background so the
+// user's eye catches them at a glance in a long list (same trick
+// LogcatView uses for `fatal`).
+function rowColor(status: number | null, errorKind: string | null): string {
+  if (errorKind === "pinning" || errorKind === "tls_handshake") return "text-warn";
+  if (errorKind) return "text-danger bg-danger/10";
+  if (status === null) return "";
+  if (status >= 500) return "text-danger bg-danger/10";
+  if (status >= 400) return "text-warn";
+  if (status >= 300) return "text-accent";
+  return "";
 }
 
 function errorHint(errorKind: string | null): string | undefined {
