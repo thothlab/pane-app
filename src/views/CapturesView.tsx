@@ -161,14 +161,14 @@ const CapturesView: Component = () => {
     window.addEventListener("mouseup", onUp);
   }
 
-  const refresh = async () => {
+  const refresh = async (force = false) => {
     if (paused()) return;
-    // While the user is scrolled away from the bottom (autoFollow off),
-    // freeze the list — otherwise every 1.5s tick replaces captures(),
-    // the virtualizer reflows, and the user is yanked back to the top
-    // mid-read. Resuming Follow triggers an immediate refresh so the
-    // user sees the latest entries the moment they re-engage.
-    if (!autoFollow()) return;
+    // Poll-driven and backend-event-driven refreshes freeze while
+    // Follow is off — otherwise every tick replaces captures(), the
+    // virtualizer reflows, and the user is yanked away from what
+    // they're reading. User-initiated calls (mount, filter change,
+    // toggle Follow back on) pass force=true and always go through.
+    if (!force && !autoFollow() && captures().length > 0) return;
     try {
       setCaptures(await api.captures.list(filter() || undefined, 500));
       setFilterError(null);
@@ -288,7 +288,7 @@ const CapturesView: Component = () => {
     if (next) {
       // Pull the latest entries right away so the user doesn't sit on
       // a stale view until the next 1.5s tick. Then snap to bottom.
-      void refresh();
+      void refresh(true);
       if (scrollEl) {
         ignoreNextScroll = true;
         scrollEl.scrollTop = scrollEl.scrollHeight;
@@ -297,13 +297,18 @@ const CapturesView: Component = () => {
   }
 
   let refreshTimer: ReturnType<typeof setTimeout>;
-  const debouncedRefresh = () => {
+  // `force` controls whether the refresh ignores the Follow-off gate.
+  // Filter input passes true (user expects results immediately), the
+  // backend `listenToCaptures` event passes false (let the gate decide).
+  const debouncedRefresh = (force = false) => {
     clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(refresh, 200);
+    refreshTimer = setTimeout(() => void refresh(force), 200);
   };
 
   onMount(() => {
-    refresh();
+    // Initial load always goes through — even if the user had Follow
+    // off from a previous session, they need something to look at.
+    void refresh(true);
     const off = listenToCaptures(() => debouncedRefresh());
     const t = setInterval(refresh, 1500);
     onCleanup(() => {
@@ -511,7 +516,7 @@ const CapturesView: Component = () => {
       alert(tr("captures.clear_failed", { message: msg }));
       return;
     }
-    refresh();
+    void refresh(true);
   };
 
   return (
@@ -539,7 +544,7 @@ const CapturesView: Component = () => {
             value={filter()}
             onInput={(e) => {
               setFilter(e.currentTarget.value);
-              debouncedRefresh();
+              debouncedRefresh(true);
               syncFilterScroll();
             }}
             onScroll={syncFilterScroll}
@@ -747,7 +752,7 @@ const CapturesView: Component = () => {
                       onDblClick={() => navigate(`/replay/${cap.id}`)}
                       onContextMenu={(e) => openAddMenu(e, cap.id)}
                     >
-                      <div class="px-2 truncate">{row.index + 1}</div>
+                      <div class="px-2 truncate text-fg-muted">{row.index + 1}</div>
                       <div class="px-2 truncate">{cap.method}</div>
                       <div
                         class={`px-2 truncate ${statusColor(cap.status, cap.error_kind)}`}
@@ -763,8 +768,8 @@ const CapturesView: Component = () => {
                       </div>
                       <div class="px-2 truncate">{cap.server_host}</div>
                       <div class="px-2 truncate">{cap.url_path}</div>
-                      <div class="px-2 truncate">{cap.duration_ms ?? "—"}</div>
-                      <div class="px-2 truncate">{fmtBytes(cap.total_bytes)}</div>
+                      <div class="px-2 truncate text-fg-muted">{cap.duration_ms ?? "—"}</div>
+                      <div class="px-2 truncate text-fg-muted">{fmtBytes(cap.total_bytes)}</div>
                     </div>
                   );
                 }}
@@ -870,18 +875,12 @@ function statusColor(status: number | null, errorKind: string | null) {
   return "text-success";
 }
 
-// Whole-row tint by status. 2xx and pending rows stay default so the
-// list reads as quiet baseline noise — only failures stand out. 5xx
-// and transport errors also get a soft red row background so the
-// user's eye catches them at a glance in a long list (same trick
-// LogcatView uses for `fatal`).
+// Whole-row tint — only failures (5xx and transport errors) light up.
+// Everything else stays default so the list reads as quiet baseline
+// noise and red rows truly stand out.
 function rowColor(status: number | null, errorKind: string | null): string {
-  if (errorKind === "pinning" || errorKind === "tls_handshake") return "text-warn";
-  if (errorKind) return "text-danger bg-danger/10";
-  if (status === null) return "";
-  if (status >= 500) return "text-danger bg-danger/10";
-  if (status >= 400) return "text-warn";
-  if (status >= 300) return "text-accent";
+  if (errorKind) return "text-danger";
+  if (status !== null && status >= 500) return "text-danger";
   return "";
 }
 
