@@ -5,6 +5,7 @@ import { Route, Router } from "@solidjs/router";
 import Layout from "./components/Layout";
 import "./styles/index.css";
 import "./stores/theme";
+import "./stores/font-scale";
 
 const Captures = lazy(() => import("./views/CapturesView"));
 const Devices = lazy(() => import("./views/DevicesView"));

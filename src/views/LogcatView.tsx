@@ -28,6 +28,7 @@ import {
 import { t, tr } from "@/i18n";
 import { compileLogcatFilter } from "@/lib/logcat-filter";
 import { savedFiltersFor } from "@/stores/saved-filters";
+import { fontScale, ROOT_PX } from "@/stores/font-scale";
 
 // Same palette as CapturesView's save popover so the colour dots in the
 // two scopes look identical. Kept local rather than shared because there's
@@ -69,6 +70,22 @@ const LEVEL_COLOR: Record<LogLevel, string> = {
   warn: "text-warn",
   error: "text-danger",
   fatal: "text-danger font-bold",
+  silent: "text-fg-muted",
+};
+
+// Whole-row tint by level. Cells that explicitly set `text-fg-muted`
+// (time/pid/app) keep their colour and stay quiet; tag/message inherit
+// from the row and get the level tint. Info uses the default `text-fg`
+// so "normal" logs look normal — only warnings/errors stand out, which
+// is what the user actually wants to spot. Fatal also gets a soft red
+// background so it's impossible to miss in a firehose.
+const LEVEL_ROW_COLOR: Record<LogLevel, string> = {
+  verbose: "text-fg-muted",
+  debug: "text-accent",
+  info: "",
+  warn: "text-warn",
+  error: "text-danger",
+  fatal: "text-danger font-bold bg-danger/10",
   silent: "text-fg-muted",
 };
 
@@ -665,13 +682,28 @@ const LogcatView: Component = () => {
   // scroll state, (b) saturated the main thread enough that toolbar
   // events stopped firing. `mergeProps` inside the lib makes the
   // option getters reactive without rebuilding the instance.
+  // Row height tracks the root font-size so rows don't overlap when
+  // the user bumps the text-size setting. The 22/16 ratio gives the
+  // current 22px row at the default 16px root and scales linearly
+  // from there (text-xs line-height is `1rem`, plus the `py-px`
+  // padding — fits within this estimate at every scale step).
+  const ROW_PX_PER_ROOT = 22 / 16;
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     get count() {
       return visible().length;
     },
     getScrollElement: () => scrollEl ?? null,
-    estimateSize: () => 22,
+    estimateSize: () => Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT),
     overscan: 30,
+  });
+
+  // Force the virtualizer to remeasure when the user changes the font
+  // scale. estimateSize() now depends on fontScale(), but the
+  // virtualizer doesn't track that automatically — call .measure() so
+  // already-positioned virtual items recompute against the new size.
+  createEffect(() => {
+    void fontScale();
+    virtualizer.measure();
   });
 
   return (
@@ -1107,7 +1139,7 @@ const LogcatView: Component = () => {
                   <Show when={e()}>
                     {(entry) => (
                       <div
-                        class="absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px"
+                        class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px ${LEVEL_ROW_COLOR[entry().level]}`}
                         style={{
                           transform: `translateY(${vi.start}px)`,
                           "grid-template-columns": gridTemplate(),

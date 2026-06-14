@@ -4,6 +4,12 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import { setTheme, theme, type Theme } from "@/stores/theme";
+import {
+  fontScale,
+  setFontScale,
+  FONT_SCALE_OPTIONS,
+  type FontScale,
+} from "@/stores/font-scale";
 import { t, tr, locale, setLocale, LOCALES } from "@/i18n";
 
 // Theme button labels are looked up via i18n in the JSX. Statically
@@ -14,6 +20,16 @@ const THEME_OPTIONS: Array<{ value: Theme; labelKey: "settings.theme_light" | "s
   { value: "dark", labelKey: "settings.theme_dark" },
   { value: "system", labelKey: "settings.theme_system" },
 ];
+
+const FONT_SCALE_LABEL_KEY: Record<
+  FontScale,
+  "settings.font_scale_sm" | "settings.font_scale_md" | "settings.font_scale_lg" | "settings.font_scale_xl"
+> = {
+  sm: "settings.font_scale_sm",
+  md: "settings.font_scale_md",
+  lg: "settings.font_scale_lg",
+  xl: "settings.font_scale_xl",
+};
 
 type CaFormat = "pem" | "der" | "qr" | "mobileconfig";
 
@@ -92,6 +108,28 @@ const SettingsView: Component = () => {
                   class="px-3 py-1.5 hover:bg-bg-muted aria-checked:bg-accent aria-checked:text-white not-[:last-child]:border-r not-[:last-child]:border-border"
                 >
                   {t()(opt.labelKey)}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <div class="text-sm w-24">{t()("settings.font_scale_label")}</div>
+          <div
+            role="radiogroup"
+            aria-label={t()("settings.font_scale_label")}
+            class="inline-flex rounded border border-border overflow-hidden text-xs"
+          >
+            <For each={FONT_SCALE_OPTIONS}>
+              {(opt) => (
+                <button
+                  role="radio"
+                  aria-checked={fontScale() === opt}
+                  onClick={() => setFontScale(opt)}
+                  class="px-3 py-1.5 hover:bg-bg-muted aria-checked:bg-accent aria-checked:text-white not-[:last-child]:border-r not-[:last-child]:border-border"
+                >
+                  {t()(FONT_SCALE_LABEL_KEY[opt])}
                 </button>
               )}
             </For>
