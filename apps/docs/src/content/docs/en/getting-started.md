@@ -234,6 +234,19 @@ Typing the name of an existing saved filter in the Save dialog
 turns the button into **Update** — overwrites query/color/pin
 in place, no duplicate row.
 
+Hairline dividers run between rows; failures (5xx and transport
+errors like pinning / TLS-handshake failure) tint the whole row red.
+Every other status keeps the row default and shows the status code
+itself in a status-appropriate colour. Right-click any row to add it
+to Rules as a stub (see [Response stubs](/docs/rules/) → "Quick path
+from Captures").
+
+The **Follow** toggle on the toolbar pins the list to the latest
+entry. Turn it off (or scroll up) and the list freezes — periodic
+fetches pause until you click Follow again or scroll to the bottom,
+so you can read older entries without the table reflowing under
+your eye. Filter changes still take effect immediately.
+
 The horizontal split between **Headers** and **Body** on the
 Request/Response tabs is draggable. Position is remembered per pane
 (stored in localStorage) and persists across restart. Double-click
