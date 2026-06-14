@@ -10,10 +10,12 @@
  */
 
 import { createEffect, createSignal } from "solid-js";
+import { emit, listen } from "@tauri-apps/api/event";
 
 export type Theme = "light" | "dark" | "system";
 
 const STORAGE_KEY = "pane:theme";
+const SYNC_EVENT = "pane://theme-changed";
 
 function loadStored(): Theme {
   if (typeof localStorage === "undefined") return "system";
@@ -32,6 +34,18 @@ const [osDark, setOsDark] = createSignal(
 if (typeof window !== "undefined") {
   const mql = window.matchMedia("(prefers-color-scheme: dark)");
   mql.addEventListener("change", (e) => setOsDark(e.matches));
+
+  // Cross-window sync. The logcat window is a separate Tauri WebView
+  // that imports this module too, but its in-memory signal is frozen
+  // at load time — without this listener, flipping the theme in the
+  // main window doesn't propagate, so logcat stays light. `storage`
+  // fires in OTHER same-origin contexts when localStorage changes, so
+  // this is exactly the right hook. (No-op in the originating window.)
+  window.addEventListener("storage", (e) => {
+    if (e.key !== STORAGE_KEY) return;
+    const v = e.newValue;
+    if (v === "light" || v === "dark" || v === "system") setThemeSignal(v);
+  });
 }
 
 export function effectiveTheme(): "light" | "dark" {
@@ -47,6 +61,21 @@ export function setTheme(t: Theme): void {
   } catch {
     // Private mode / disabled storage — keep in-memory.
   }
+  // Broadcast to other Tauri windows (logcat). storage events alone
+  // aren't reliable across Tauri's per-window WebViews, so a Tauri
+  // event is the robust channel. Fire-and-forget — we don't care if
+  // there are no listeners yet.
+  void emit(SYNC_EVENT, t).catch(() => {});
+}
+
+// Subscribe to theme broadcasts from other windows. Each window
+// installs its own listener at module load. No unsubscribe — the
+// listener lives for the lifetime of the window, same as the signal.
+if (typeof window !== "undefined") {
+  void listen<Theme>(SYNC_EVENT, (e) => {
+    const v = e.payload;
+    if (v === "light" || v === "dark" || v === "system") setThemeSignal(v);
+  }).catch(() => {});
 }
 
 createEffect(() => {
