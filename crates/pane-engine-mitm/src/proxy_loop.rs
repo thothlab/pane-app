@@ -262,6 +262,11 @@ async fn handle_tls_inner(
     } else {
         format!("/{target}")
     };
+    // Replace the placeholder CONNECT method (set when the outer
+    // tunnel row was inserted) with the actual HTTP verb from inside
+    // the TLS stream — otherwise the entire HTTPS traffic shows up
+    // as CONNECT in the captures list.
+    update_method(&storage, cap_id, &method)?;
     update_url_path(&storage, cap_id, &path)?;
     persist_headers(&storage, cap_id, "request", &headers)?;
 
@@ -585,6 +590,15 @@ fn update_url_path(storage: &Storage, id: Uuid, path: &str) -> anyhow::Result<()
     conn.execute(
         "UPDATE capture SET url_path=?1 WHERE id=?2",
         params![path, id.to_string()],
+    )?;
+    Ok(())
+}
+
+fn update_method(storage: &Storage, id: Uuid, method: &str) -> anyhow::Result<()> {
+    let conn = storage.conn().lock();
+    conn.execute(
+        "UPDATE capture SET method=?1 WHERE id=?2",
+        params![method, id.to_string()],
     )?;
     Ok(())
 }
