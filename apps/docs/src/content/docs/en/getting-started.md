@@ -188,7 +188,9 @@ proportionally. Default is `Small` — matches the pre-0.1.65 look.
 
 Pane ships in **English** and **Russian**. English is the default.
 Switch from **Settings → Appearance → Language**. The choice persists
-in `localStorage` and applies reactively — no restart needed.
+in `localStorage`, applies reactively without restart, and is synced
+to every open Pane window (including standalone Logcat windows) the
+moment you switch.
 
 Every UI screen is translated (Captures, Rules, Devices, Settings,
 About, Replay, body viewer, manual-install guide). Backend-side

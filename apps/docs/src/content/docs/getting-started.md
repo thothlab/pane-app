@@ -188,7 +188,9 @@ auto-cleanup при unplug — всё остальное продолжит ра
 
 Pane доступен на **English** и **русском**. По умолчанию — English.
 Переключить: **Settings → Appearance → Language**. Выбор сохраняется
-в `localStorage` и применяется реактивно, без перезапуска приложения.
+в `localStorage`, применяется реактивно без перезапуска приложения и
+сразу синхронизируется со всеми открытыми окнами Pane, включая
+отдельные окна Logcat.
 
 Переведены все экраны UI (Captures, Rules, Devices, Settings, About,
 Replay, body viewer, manual-install guide). Технические сообщения от
