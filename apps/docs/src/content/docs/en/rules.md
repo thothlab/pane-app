@@ -10,6 +10,27 @@ Pane supports two modes for substituting responses on requests passing through t
 
 Patch mode is convenient in scenarios where the client depends on server-generated fields (tokens, timestamps, ids) — they stay real, while you swap only the specific values needed for testing.
 
+## Quick path: from Captures
+
+Right-clicking a row in **Captures** opens an "Add to rules" picker. It lists existing collections, an "Ungrouped" slot, and a "New collection…" option (creates a collection with the default name `From captures` — you can rename it later).
+
+When you pick one, Pane creates a stub rule pre-filled from the captured request:
+
+- `method`, `host_glob`, `path_glob` (the query string is stripped — `match_params` stays empty so the mock matches regardless of query),
+- `res_status`, `res_headers`, `res_body` are taken straight from the captured response.
+
+The Rules tab is also pre-aimed at this new rule's editor — switch tabs and you can tweak name, body, headers and hit Save.
+
+## Editor state is preserved
+
+Rules-tab state now survives both tab switches and full app restarts:
+
+- which collections are collapsed,
+- which rule is currently being edited,
+- a per-editor draft of every field, **including** the response-body textarea.
+
+This covers the common "open rule → switch to Captures → copy something → switch back → paste → save" flow — before this, the editor would be closed on return and you had to re-expand every time. The draft is dropped only on Save, Cancel, or the "collapse without saving" arrow (↑ in the editor header).
+
 ## Where to configure
 
 Sidebar → **Rules** → collection → rule in `Patch — forward, then mutate` mode.

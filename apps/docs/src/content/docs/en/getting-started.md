@@ -173,6 +173,17 @@ auto-cleanup but everything else keeps working.
   pinning in your debug build. For owned-device security research,
   Frida or Magisk modules layer on top of Pane.
 
+## Theme and text size
+
+**Settings → Appearance → Theme** toggles light / dark (`System`
+follows the OS setting). The choice is synced across every open Pane
+window, including standalone Logcat windows.
+
+**Settings → Appearance → Text size** scales the whole UI in four
+steps: `Small / Medium / Large / Extra large`. It sets `font-size`
+on `<html>`, so every text size, padding, and icon grows
+proportionally. Default is `Small` — matches the pre-0.1.65 look.
+
 ## Interface language
 
 Pane ships in **English** and **Russian**. English is the default.
