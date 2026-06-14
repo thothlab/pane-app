@@ -73,16 +73,16 @@ const LEVEL_COLOR: Record<LogLevel, string> = {
   silent: "text-fg-muted",
 };
 
-// Whole-row tint by level. Cells that explicitly set `text-fg-muted`
-// (time/pid/app) keep their colour and stay quiet; tag/message inherit
-// from the row and get the level tint. Info uses the default `text-fg`
-// so "normal" logs look normal — only warnings/errors stand out, which
-// is what the user actually wants to spot. Fatal also gets a soft red
-// background so it's impossible to miss in a firehose.
+// Whole-row tint by level. All cells inherit from the row — no cell
+// hardcodes a colour any more, so time/pid/app/tag/message all tint
+// together. The level cell still uses LEVEL_COLOR explicitly because
+// it carries `font-bold` and matches what Android Studio's logcat
+// does (one-letter level indicator stands out). Fatal also gets a
+// soft red background so it's impossible to miss in a firehose.
 const LEVEL_ROW_COLOR: Record<LogLevel, string> = {
   verbose: "text-fg-muted",
   debug: "text-accent",
-  info: "",
+  info: "text-success",
   warn: "text-warn",
   error: "text-danger",
   fatal: "text-danger font-bold bg-danger/10",
@@ -1146,18 +1146,18 @@ const LogcatView: Component = () => {
                         }}
                       >
                         <Show when={colVisible().time}>
-                          <span class="text-fg-muted truncate px-2 border-r border-border/30">
+                          <span class="truncate px-2 border-r border-border/30">
                             {entry().timestamp}
                           </span>
                         </Show>
                         <Show when={colVisible().pid}>
-                          <span class="text-fg-muted truncate px-2 border-r border-border/30">
+                          <span class="truncate px-2 border-r border-border/30">
                             {entry().pid > 0 ? entry().pid : ""}
                           </span>
                         </Show>
                         <Show when={colVisible().app}>
                           <span
-                            class="text-fg-muted truncate px-2 border-r border-border/30"
+                            class="truncate px-2 border-r border-border/30"
                             title={pidNames().get(entry().pid) ?? ""}
                           >
                             {pidNames().get(entry().pid) ?? ""}

@@ -258,8 +258,10 @@ focuses the existing window rather than spawning a duplicate.
 What's inside:
 
 - **Virtualized 100k-entry buffer** (~5 min of history even on a
-  chatty firehose): Time · PID · Level (coloured V/D/I/W/E/F) · Tag ·
-  Message.
+  chatty firehose): Time · PID · Level (V/D/I/W/E/F) · Tag · Message.
+  Whole rows tint by level: `verbose`/`silent` muted, `debug` blue,
+  `info` green, `warn` yellow, `error` red, `fatal` bold red with a
+  soft red row background.
 - **Pause** (Space) — freezes the buffer, the upstream stream keeps
   running on the backend. **Clear** (⌘K) — wipes the buffer.
   **Follow** — auto-scroll to newest entry; turns off automatically
