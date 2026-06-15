@@ -848,13 +848,28 @@ const LogcatView: Component = () => {
 
   // Row + cell classes that depend on wrap mode. Pre-computed strings
   // so the per-row render doesn't string-concat on every virtualized
-  // row tick. `items-baseline` looks better when all cells are single-
-  // line; `items-start` is needed once any cell wraps so short cells
-  // align to the top of the row instead of floating mid-height.
+  // row tick.
+  //
+  // `items-baseline` looks better when all cells are single-line;
+  // `items-start` is needed once any cell wraps so short cells align
+  // to the top of the row instead of floating mid-height.
+  //
+  // Wrap is applied SELECTIVELY — only to `tag` and `message`. Time /
+  // PID / Level / App stay `truncate` regardless of mode, the way
+  // LogRabbit and Android Studio's Logcat do it. Wrapping every column
+  // (early attempt) made the table illegible: timestamps got broken at
+  // arbitrary characters, PID numbers split mid-digit, and the visual
+  // alignment between rows fell apart entirely.
   const rowWhitespaceClass = () =>
-    wrap() ? "items-start" : "whitespace-nowrap items-baseline";
-  const cellTextClass = () =>
-    wrap() ? "break-all whitespace-pre-wrap" : "truncate";
+    wrap() ? "items-start" : "items-baseline";
+  // Fixed-width / short-value columns: always single-line.
+  const fixedCellClass = "truncate";
+  // Long-value columns (tag, message). In wrap mode `whitespace-pre-wrap`
+  // honours embedded spaces so word breaks happen at natural points, and
+  // `break-words` falls back to mid-word breaks only when a single token
+  // can't fit (long URLs, hex blobs).
+  const wrappableCellClass = () =>
+    wrap() ? "whitespace-pre-wrap break-words" : "truncate";
 
   return (
     <div class="flex flex-col h-screen bg-bg text-fg text-xs">
@@ -1345,12 +1360,20 @@ const LogcatView: Component = () => {
                         entry().pid > 0 ? String(entry().pid) : "";
                       return (
                         <div
-                          // measureElement lets the virtualizer cope with
-                          // variable row heights when wrap mode wraps long
-                          // messages over several lines. data-index is the
-                          // identity tanstack-virtual uses to map the
-                          // measured DOM node back to its virtual row.
-                          ref={(el) => el && virtualizer.measureElement(el)}
+                          // tanstack's measureElement is an arrow method
+                          // bound to the instance — pass it as-is so the
+                          // internal ResizeObserver hookup (size-change
+                          // tracking, not just initial measurement) goes
+                          // through. Wrapping it in `(el) => el && ...`
+                          // looks harmless but breaks the cleanup path
+                          // that virtual-core uses to detach old nodes,
+                          // and rows ended up positioned by the stale
+                          // single-line estimate while their real heights
+                          // grew — exactly the visible overlap in wrap
+                          // mode. data-index is the identity tanstack
+                          // reads to map a measured DOM node back to its
+                          // virtual row.
+                          ref={virtualizer.measureElement}
                           data-index={vi.index}
                           class={`absolute left-0 right-0 grid font-mono px-3 py-px border-b border-border/30 ${rowWhitespaceClass()} ${LEVEL_ROW_COLOR[entry().level]}`}
                           style={{
@@ -1360,21 +1383,21 @@ const LogcatView: Component = () => {
                         >
                           <Show when={colVisible().time}>
                             <span
-                              class={`${cellTextClass()} px-2 border-r border-border/30`}
+                              class={`${fixedCellClass} px-2 border-r border-border/30`}
                             >
                               {renderHL(entry().timestamp)}
                             </span>
                           </Show>
                           <Show when={colVisible().pid}>
                             <span
-                              class={`${cellTextClass()} px-2 border-r border-border/30`}
+                              class={`${fixedCellClass} px-2 border-r border-border/30`}
                             >
                               {renderHL(pidStr())}
                             </span>
                           </Show>
                           <Show when={colVisible().app}>
                             <span
-                              class={`${cellTextClass()} px-2 border-r border-border/30`}
+                              class={`${fixedCellClass} px-2 border-r border-border/30`}
                               title={appName()}
                             >
                               {renderHL(appName())}
@@ -1389,13 +1412,13 @@ const LogcatView: Component = () => {
                           </Show>
                           <Show when={colVisible().tag}>
                             <span
-                              class={`${cellTextClass()} px-2 border-r border-border/30`}
+                              class={`${wrappableCellClass()} px-2 border-r border-border/30`}
                             >
                               {renderHL(entry().tag)}
                             </span>
                           </Show>
                           <Show when={colVisible().message}>
-                            <span class={`${cellTextClass()} px-2`}>
+                            <span class={`${wrappableCellClass()} px-2`}>
                               {renderHL(entry().message)}
                             </span>
                           </Show>
