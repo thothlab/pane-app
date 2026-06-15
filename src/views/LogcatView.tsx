@@ -24,7 +24,6 @@ import {
   Search as SearchIcon,
   Star,
   Trash2,
-  WrapText,
   X,
 } from "lucide-solid";
 import { t, tr } from "@/i18n";
@@ -151,25 +150,6 @@ const LogcatView: Component = () => {
   // (`tag:X level:E`) is for shaping the firehose; this is the
   // "I know what I'm looking for, get me there" pass over the result.
   const [search, setSearch] = createSignal("");
-  // Wrap long cell text onto multiple lines vs. the default single-line
-  // truncation. Persisted because users tend to lock in one preference.
-  const WRAP_STORAGE_KEY = "pane.logcat.wrap";
-  const loadWrap = (): boolean => {
-    try {
-      return localStorage.getItem(WRAP_STORAGE_KEY) === "1";
-    } catch {
-      return false;
-    }
-  };
-  const [wrap, setWrapRaw] = createSignal(loadWrap());
-  const setWrap = (next: boolean) => {
-    setWrapRaw(next);
-    try {
-      localStorage.setItem(WRAP_STORAGE_KEY, next ? "1" : "0");
-    } catch {
-      /* storage unavailable */
-    }
-  };
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
   // PID → process name snapshot. Polled every 10s via
   // `android_pid_names` so the App column in the table can label
@@ -793,13 +773,7 @@ const LogcatView: Component = () => {
   // the user bumps the text-size setting. The 22/16 ratio gives the
   // current 22px row at the default 16px root and scales linearly
   // from there (text-xs line-height is `1rem`, plus the `py-px`
-  // padding — fits within this estimate at every scale step). In
-  // wrap mode the same estimate covers two lines: 1-line rows have a
-  // bit of slack below, multi-line rows are no worse than 3 lines —
-  // and `measureElement` corrects the rest asynchronously via
-  // ResizeObserver. Doubling the estimate is what keeps the FIRST
-  // paint after a wrap toggle from collapsing rows on top of each
-  // other while the RO catch-up cycle runs.
+  // padding — fits within this estimate at every scale step).
   const ROW_PX_PER_ROOT = 22 / 16;
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     get count() {
@@ -807,13 +781,6 @@ const LogcatView: Component = () => {
     },
     getScrollElement: () => scrollEl ?? null,
     estimateSize: () => Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT),
-    // Push ResizeObserver callbacks through requestAnimationFrame so
-    // the resize cycle ride the same frame budget the autoScroll
-    // effect drives. Without this, RO can fire mid-frame while Solid
-    // is still applying the wrap class updates, the offsetHeight read
-    // returns a half-laid-out value, and rows freeze at whatever the
-    // first stale measurement reported.
-    useAnimationFrameWithResizeObserver: true,
     overscan: 30,
   });
 
@@ -821,12 +788,8 @@ const LogcatView: Component = () => {
   // scale. estimateSize() now depends on fontScale(), but the
   // virtualizer doesn't track that automatically — call .measure() so
   // already-positioned virtual items recompute against the new size.
-  // Also remeasures on wrap toggle — flipping `wrap` swaps single-line
-  // rows for variable-height wrapped rows; the cached sizes from before
-  // the toggle are wrong.
   createEffect(() => {
     void fontScale();
-    void wrap();
     virtualizer.measure();
   });
 
@@ -859,30 +822,6 @@ const LogcatView: Component = () => {
     return out;
   };
 
-  // Row + cell classes that depend on wrap mode. Pre-computed strings
-  // so the per-row render doesn't string-concat on every virtualized
-  // row tick.
-  //
-  // `items-baseline` looks better when all cells are single-line;
-  // `items-start` is needed once any cell wraps so short cells align
-  // to the top of the row instead of floating mid-height.
-  //
-  // Wrap is applied SELECTIVELY — only to `tag` and `message`. Time /
-  // PID / Level / App stay `truncate` regardless of mode, the way
-  // LogRabbit and Android Studio's Logcat do it. Wrapping every column
-  // (early attempt) made the table illegible: timestamps got broken at
-  // arbitrary characters, PID numbers split mid-digit, and the visual
-  // alignment between rows fell apart entirely.
-  const rowWhitespaceClass = () =>
-    wrap() ? "items-start" : "items-baseline";
-  // Fixed-width / short-value columns: always single-line.
-  const fixedCellClass = "truncate";
-  // Long-value columns (tag, message). In wrap mode `whitespace-pre-wrap`
-  // honours embedded spaces so word breaks happen at natural points, and
-  // `break-words` falls back to mid-word breaks only when a single token
-  // can't fit (long URLs, hex blobs).
-  const wrappableCellClass = () =>
-    wrap() ? "whitespace-pre-wrap break-words" : "truncate";
 
   return (
     <div class="flex flex-col h-screen bg-bg text-fg text-xs">
@@ -922,16 +861,6 @@ const LogcatView: Component = () => {
         >
           <ArrowDown size={12} />
           {t()("logcat.auto_scroll")}
-        </button>
-        <button
-          class={`inline-flex items-center gap-1 px-2 py-1 rounded ${
-            wrap() ? "bg-accent/15 text-accent" : "hover:bg-bg-muted text-fg-muted"
-          }`}
-          onClick={() => setWrap(!wrap())}
-          title={t()("logcat.wrap_rows_title")}
-        >
-          <WrapText size={12} />
-          {t()("logcat.wrap_rows")}
         </button>
 
         {/* Token-highlight overlay over a transparent input. The
@@ -1373,37 +1302,25 @@ const LogcatView: Component = () => {
                         entry().pid > 0 ? String(entry().pid) : "";
                       return (
                         <div
-                          // tanstack's bound arrow method — RO registers
-                          // the element on mount, then size changes are
-                          // delivered via `useAnimationFrameWithResize-
-                          // Observer: true` so each measure-and-resize
-                          // cycle lands on a frame boundary instead of
-                          // racing the autoScroll loop.
-                          ref={virtualizer.measureElement}
-                          data-index={vi.index}
-                          class={`absolute left-0 right-0 grid font-mono px-3 py-px border-b border-border/30 ${rowWhitespaceClass()} ${LEVEL_ROW_COLOR[entry().level]}`}
+                          class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 ${LEVEL_ROW_COLOR[entry().level]}`}
                           style={{
                             transform: `translateY(${vi.start}px)`,
                             "grid-template-columns": gridTemplate(),
                           }}
                         >
                           <Show when={colVisible().time}>
-                            <span
-                              class={`${fixedCellClass} px-2 border-r border-border/30`}
-                            >
+                            <span class="truncate px-2 border-r border-border/30">
                               {renderHL(entry().timestamp)}
                             </span>
                           </Show>
                           <Show when={colVisible().pid}>
-                            <span
-                              class={`${fixedCellClass} px-2 border-r border-border/30`}
-                            >
+                            <span class="truncate px-2 border-r border-border/30">
                               {renderHL(pidStr())}
                             </span>
                           </Show>
                           <Show when={colVisible().app}>
                             <span
-                              class={`${fixedCellClass} px-2 border-r border-border/30`}
+                              class="truncate px-2 border-r border-border/30"
                               title={appName()}
                             >
                               {renderHL(appName())}
@@ -1417,14 +1334,12 @@ const LogcatView: Component = () => {
                             </span>
                           </Show>
                           <Show when={colVisible().tag}>
-                            <span
-                              class={`${wrappableCellClass()} px-2 border-r border-border/30`}
-                            >
+                            <span class="truncate px-2 border-r border-border/30">
                               {renderHL(entry().tag)}
                             </span>
                           </Show>
                           <Show when={colVisible().message}>
-                            <span class={`${wrappableCellClass()} px-2`}>
+                            <span class="truncate px-2">
                               {renderHL(entry().message)}
                             </span>
                           </Show>
