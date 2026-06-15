@@ -322,8 +322,6 @@ What's inside:
   match highlighting. Useful once the filter has narrowed the firehose
   down to hundreds/thousands of rows and you need to spot a specific
   word among them.
-- **Wrap** — toolbar toggle: long cell text wraps onto multiple lines
-  instead of getting truncated with an ellipsis.
 - **Status bar** at the foot of the window: `Viewing N of M`
   (`M+` means the buffer has hit MAX_ENTRIES = 100k and older entries
   are being dropped FIFO).
