@@ -793,14 +793,23 @@ const LogcatView: Component = () => {
   // the user bumps the text-size setting. The 22/16 ratio gives the
   // current 22px row at the default 16px root and scales linearly
   // from there (text-xs line-height is `1rem`, plus the `py-px`
-  // padding — fits within this estimate at every scale step).
+  // padding — fits within this estimate at every scale step). In
+  // wrap mode the same estimate covers two lines: 1-line rows have a
+  // bit of slack below, multi-line rows are no worse than 3 lines —
+  // and `measureElement` corrects the rest asynchronously via
+  // ResizeObserver. Doubling the estimate is what keeps the FIRST
+  // paint after a wrap toggle from collapsing rows on top of each
+  // other while the RO catch-up cycle runs.
   const ROW_PX_PER_ROOT = 22 / 16;
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     get count() {
       return visible().length;
     },
     getScrollElement: () => scrollEl ?? null,
-    estimateSize: () => Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT),
+    estimateSize: () => {
+      const base = Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT);
+      return wrap() ? base * 2 : base;
+    },
     overscan: 30,
   });
 
