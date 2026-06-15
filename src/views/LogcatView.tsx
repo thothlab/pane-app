@@ -806,14 +806,14 @@ const LogcatView: Component = () => {
       return visible().length;
     },
     getScrollElement: () => scrollEl ?? null,
-    estimateSize: () => {
-      const base = Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT);
-      // 3× in wrap mode covers up to ~3 lines without overlap before RO
-      // catches up. 1-/2-line rows shrink to their real size once
-      // measureElement settles; the over-estimate is only the initial-
-      // paint band-aid for the async measurement gap during autoScroll.
-      return wrap() ? base * 3 : base;
-    },
+    estimateSize: () => Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT),
+    // Push ResizeObserver callbacks through requestAnimationFrame so
+    // the resize cycle ride the same frame budget the autoScroll
+    // effect drives. Without this, RO can fire mid-frame while Solid
+    // is still applying the wrap class updates, the offsetHeight read
+    // returns a half-laid-out value, and rows freeze at whatever the
+    // first stale measurement reported.
+    useAnimationFrameWithResizeObserver: true,
     overscan: 30,
   });
 
@@ -1373,38 +1373,13 @@ const LogcatView: Component = () => {
                         entry().pid > 0 ? String(entry().pid) : "";
                       return (
                         <div
-                          // Two-step measurement to defeat tanstack's
-                          // sync-path bailout during autoScroll:
-                          //
-                          // 1) `virtualizer.measureElement(el)` registers
-                          //    the element with the internal Resize-
-                          //    Observer. tanstack does the right thing
-                          //    on size changes via RO async.
-                          //
-                          // 2) `queueMicrotask(...resizeItem(...))`
-                          //    forces an immediate size update. The sync
-                          //    path inside tanstack's measureElement is
-                          //    guarded behind `!isScrolling`, and our
-                          //    autoScroll-to-bottom keeps `isScrolling`
-                          //    true on the firehose, so the initial size
-                          //    read from the sync path never lands — the
-                          //    row paints at the estimate while RO
-                          //    asynchronously catches up, and during
-                          //    continuous autoScroll the cycle never
-                          //    settles → persistent overlap in wrap mode.
-                          //    Calling `resizeItem` ourselves inside a
-                          //    microtask (after Solid has flushed the
-                          //    reactive class updates and the browser has
-                          //    laid out the cells) bypasses that guard
-                          //    and lands the real height on the first
-                          //    paint.
-                          ref={(el) => {
-                            virtualizer.measureElement(el);
-                            queueMicrotask(() => {
-                              if (!el.isConnected) return;
-                              virtualizer.resizeItem(vi.index, el.offsetHeight);
-                            });
-                          }}
+                          // tanstack's bound arrow method — RO registers
+                          // the element on mount, then size changes are
+                          // delivered via `useAnimationFrameWithResize-
+                          // Observer: true` so each measure-and-resize
+                          // cycle lands on a frame boundary instead of
+                          // racing the autoScroll loop.
+                          ref={virtualizer.measureElement}
                           data-index={vi.index}
                           class={`absolute left-0 right-0 grid font-mono px-3 py-px border-b border-border/30 ${rowWhitespaceClass()} ${LEVEL_ROW_COLOR[entry().level]}`}
                           style={{
