@@ -304,10 +304,33 @@ What's inside:
   A comma in a value combines alternatives: positives OR together,
   negatives (`!value`) all must NOT match, the two groups AND together.
   An outer `!key:foo` flips the entire token.
+- **Regex via `~`** — the pattern is compiled with the native JS
+  `RegExp` and tested against `tag` OR `message`. Case-sensitive (no
+  `/.../i` flag to pass; workaround — character class `[Oo]`):
+  ```text
+  ~OkHttp                              # substring via regex (same as bareword)
+  ~^Choreographer                      # tag/message STARTS WITH Choreographer
+  ~Connection (refused|reset|aborted)  # alternation via |
+  ~\d+ms\b                             # number + "ms" — latency markers
+  ~^(?!.*heartbeat).+                  # negative lookahead — everything NOT heartbeat
+  ~stack.*overflow                     # any chars between two words
+  !~^E/                                # outer ! — drop everything matching
+  ~slow tag:OkHttp level:W..F          # AND with other keys
+  ```
+- **Find in filtered** (`⌘⇧F`) — a separate input next to the filter:
+  plain substring search over the already-filtered rows with in-cell
+  match highlighting. Useful once the filter has narrowed the firehose
+  down to hundreds/thousands of rows and you need to spot a specific
+  word among them.
+- **Wrap** — toolbar toggle: long cell text wraps onto multiple lines
+  instead of getting truncated with an ellipsis.
+- **Status bar** at the foot of the window: `Viewing N of M`
+  (`M+` means the buffer has hit MAX_ENTRIES = 100k and older entries
+  are being dropped FIFO).
 - **Export** — save the currently-visible filtered view to a `.log`
   file in `threadtime` format (drop-in for Android Studio / any
   grep pipeline).
-- **⌘F** — focuses the filter input.
+- **⌘F** focuses the filter input. **⌘⇧F** focuses the search input.
 
 Safety bits:
 - Closing the window kills the `adb logcat` subprocess (via

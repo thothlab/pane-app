@@ -4,6 +4,7 @@ import {
   createMemo,
   createSignal,
   For,
+  type JSX,
   onCleanup,
   onMount,
   Show,
@@ -23,6 +24,7 @@ import {
   Search as SearchIcon,
   Star,
   Trash2,
+  WrapText,
   X,
 } from "lucide-solid";
 import { t, tr } from "@/i18n";
@@ -89,6 +91,17 @@ const LEVEL_ROW_COLOR: Record<LogLevel, string> = {
   silent: "text-fg-muted",
 };
 
+// Platform-aware shortcut labels for the toolbar inputs. macOS users
+// expect the symbol form (⌘F / ⌘⇧F); Windows/Linux users expect the
+// verbal form (Ctrl+F / Ctrl+Shift+F). Picked once at module load —
+// the host OS doesn't change mid-session, no point making these
+// reactive.
+const IS_MAC_PLATFORM = /Mac|iPhone|iPad/.test(
+  navigator.platform || navigator.userAgent,
+);
+const FILTER_HOTKEY_LABEL = IS_MAC_PLATFORM ? "⌘F" : "Ctrl+F";
+const SEARCH_HOTKEY_LABEL = IS_MAC_PLATFORM ? "⌘⇧F" : "Ctrl+Shift+F";
+
 const LEVEL_CHAR: Record<LogLevel, string> = {
   verbose: "V",
   debug: "D",
@@ -132,6 +145,31 @@ const LogcatView: Component = () => {
   const [paused, setPaused] = createSignal(false);
   const [autoScroll, setAutoScroll] = createSignal(true);
   const [filter, setFilter] = createSignal("");
+  // Plain-substring search that stacks on top of the DSL filter. Narrows
+  // the visible rows to those containing the term AND highlights every
+  // match in-cell with <mark>. Separate from `filter` because the DSL
+  // (`tag:X level:E`) is for shaping the firehose; this is the
+  // "I know what I'm looking for, get me there" pass over the result.
+  const [search, setSearch] = createSignal("");
+  // Wrap long cell text onto multiple lines vs. the default single-line
+  // truncation. Persisted because users tend to lock in one preference.
+  const WRAP_STORAGE_KEY = "pane.logcat.wrap";
+  const loadWrap = (): boolean => {
+    try {
+      return localStorage.getItem(WRAP_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  };
+  const [wrap, setWrapRaw] = createSignal(loadWrap());
+  const setWrap = (next: boolean) => {
+    setWrapRaw(next);
+    try {
+      localStorage.setItem(WRAP_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  };
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
   // PID → process name snapshot. Polled every 10s via
   // `android_pid_names` so the App column in the table can label
@@ -345,20 +383,41 @@ const LogcatView: Component = () => {
     return { include, exclude, hasPositive: pos.length > 0 };
   });
 
+  // Substring search applied AFTER the DSL filter. Lowercased once per
+  // typed input and checked against tag / message / app-name; the
+  // numeric pid is also matched as a string so `search:1234` finds
+  // entries from that pid even when the App column is empty.
+  const searchLower = createMemo(() => search().trim().toLowerCase());
+  const matchesSearch = (e: LogEntry, term: string, names: Map<number, string>): boolean => {
+    if (!term) return true;
+    if (e.tag.toLowerCase().includes(term)) return true;
+    if (e.message.toLowerCase().includes(term)) return true;
+    if (String(e.pid).includes(term)) return true;
+    if (e.timestamp.toLowerCase().includes(term)) return true;
+    const name = names.get(e.pid);
+    if (name && name.toLowerCase().includes(term)) return true;
+    return false;
+  };
+
   const visible = createMemo(() => {
     const { predicate, appPackages } = matcher();
     const { include, exclude, hasPositive } = appPids();
+    const term = searchLower();
+    const names = pidNames();
     const all = entries();
-    if (appPackages.length === 0) return all.filter(predicate);
+    const filterByDsl = (e: LogEntry) => {
+      if (appPackages.length > 0) {
+        if (hasPositive && !include.has(e.pid)) return false;
+        if (exclude.has(e.pid)) return false;
+      }
+      return predicate(e);
+    };
     // Positive app:X is in the filter but the package isn't currently
     // running → include is empty → nothing matches, surfacing the
     // "app not running" state via an empty list.
-    if (hasPositive && include.size === 0) return [];
-    return all.filter((e) => {
-      if (hasPositive && !include.has(e.pid)) return false;
-      if (exclude.has(e.pid)) return false;
-      return predicate(e);
-    });
+    if (appPackages.length > 0 && hasPositive && include.size === 0) return [];
+    if (!term) return all.filter(filterByDsl);
+    return all.filter((e) => filterByDsl(e) && matchesSearch(e, term, names));
   });
 
   // Poll PID → process-name snapshot. 10s cadence is enough — process
@@ -602,7 +661,12 @@ const LogcatView: Component = () => {
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        filterInputRef?.focus();
+        // Cmd+Shift+F → quick substring search; Cmd+F (no shift) → DSL
+        // filter. Two hotkeys because the two inputs serve different
+        // mental modes: shape the firehose vs. find a specific token in
+        // what's already on screen.
+        if (e.shiftKey) searchInputRef?.focus();
+        else filterInputRef?.focus();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -611,6 +675,7 @@ const LogcatView: Component = () => {
 
   let filterInputRef: HTMLInputElement | undefined;
   let filterOverlayRef: HTMLDivElement | undefined;
+  let searchInputRef: HTMLInputElement | undefined;
 
   // Saved-filters scope. The logcat window has its own filter list,
   // kept separate from captures by the `kind` column added in V005 —
@@ -743,10 +808,53 @@ const LogcatView: Component = () => {
   // scale. estimateSize() now depends on fontScale(), but the
   // virtualizer doesn't track that automatically — call .measure() so
   // already-positioned virtual items recompute against the new size.
+  // Also remeasures on wrap toggle — flipping `wrap` swaps single-line
+  // rows for variable-height wrapped rows; the cached sizes from before
+  // the toggle are wrong.
   createEffect(() => {
     void fontScale();
+    void wrap();
     virtualizer.measure();
   });
+
+  // Render a string with every occurrence of the active search term
+  // wrapped in <mark>. Case-insensitive; returns the raw string when
+  // search is empty so we don't pay the split/join cost on the firehose
+  // hot path. The hot range slice keeps the original casing — only the
+  // match boundary uses the lowered haystack.
+  const renderHL = (text: string): JSX.Element => {
+    const term = searchLower();
+    if (!term || !text) return text;
+    const lower = text.toLowerCase();
+    if (!lower.includes(term)) return text;
+    const out: JSX.Element[] = [];
+    let i = 0;
+    while (i < text.length) {
+      const idx = lower.indexOf(term, i);
+      if (idx < 0) {
+        out.push(text.slice(i));
+        break;
+      }
+      if (idx > i) out.push(text.slice(i, idx));
+      out.push(
+        <mark class="bg-warn/30 text-fg rounded-sm px-0.5">
+          {text.slice(idx, idx + term.length)}
+        </mark>,
+      );
+      i = idx + term.length;
+    }
+    return out;
+  };
+
+  // Row + cell classes that depend on wrap mode. Pre-computed strings
+  // so the per-row render doesn't string-concat on every virtualized
+  // row tick. `items-baseline` looks better when all cells are single-
+  // line; `items-start` is needed once any cell wraps so short cells
+  // align to the top of the row instead of floating mid-height.
+  const rowWhitespaceClass = () =>
+    wrap() ? "items-start" : "whitespace-nowrap items-baseline";
+  const cellTextClass = () =>
+    wrap() ? "break-all whitespace-pre-wrap" : "truncate";
 
   return (
     <div class="flex flex-col h-screen bg-bg text-fg text-xs">
@@ -787,6 +895,16 @@ const LogcatView: Component = () => {
           <ArrowDown size={12} />
           {t()("logcat.auto_scroll")}
         </button>
+        <button
+          class={`inline-flex items-center gap-1 px-2 py-1 rounded ${
+            wrap() ? "bg-accent/15 text-accent" : "hover:bg-bg-muted text-fg-muted"
+          }`}
+          onClick={() => setWrap(!wrap())}
+          title={t()("logcat.wrap_rows_title")}
+        >
+          <WrapText size={12} />
+          {t()("logcat.wrap_rows")}
+        </button>
 
         {/* Token-highlight overlay over a transparent input. The
             previous Solid-<For>-based overlay rendered only the
@@ -795,12 +913,20 @@ const LogcatView: Component = () => {
             sidesteps Solid reactivity entirely: a memoized HTML
             string is rendered via `innerHTML`, so the DOM update
             is a single deterministic assignment. */}
-        <SearchIcon size={14} class="text-fg-muted shrink-0" />
         <div class="flex-1 relative flex items-center bg-bg-muted rounded focus-within:ring-1 focus-within:ring-accent">
+          {/* Inset funnel icon — sits on the left edge of the field
+              the same way the magnifier sits on the search field, so
+              the two paired inputs look symmetric. `left-2` matches
+              the input's `pl-7` left padding (7 = icon width 14px +
+              gutter ~14px) so the typed text never overlaps the icon. */}
+          <FilterIcon
+            size={12}
+            class="absolute left-2 inset-y-0 my-auto h-3 text-fg-muted pointer-events-none z-10"
+          />
           <div
             ref={(el) => (filterOverlayRef = el)}
             aria-hidden="true"
-            class="absolute inset-0 pointer-events-none text-xs font-mono overflow-hidden px-2 py-1 pr-14 flex items-center"
+            class="absolute inset-0 pointer-events-none text-xs font-mono overflow-hidden pl-7 pr-14 py-1 flex items-center"
           >
             {/* Wrap the highlight HTML in a single inline span so
                 flexbox sees one item — without the wrapper, each
@@ -817,8 +943,10 @@ const LogcatView: Component = () => {
           <input
             ref={(el) => (filterInputRef = el)}
             type="text"
-            class="relative w-full bg-transparent rounded px-2 py-1 pr-14 outline-none text-xs font-mono text-transparent caret-fg placeholder:text-fg-muted"
-            placeholder={t()("logcat.filter_placeholder")}
+            class="relative w-full bg-transparent rounded pl-7 pr-14 py-1 outline-none text-xs font-mono text-transparent caret-fg placeholder:text-fg-muted"
+            placeholder={tr("logcat.filter_placeholder", {
+              hotkey: FILTER_HOTKEY_LABEL,
+            })}
             value={filter()}
             onInput={(e) => {
               setFilter(e.currentTarget.value);
@@ -1021,12 +1149,44 @@ const LogcatView: Component = () => {
             </div>
           </Show>
         </div>
-        <span class="text-fg-muted whitespace-nowrap">
-          {tr("logcat.counter", {
-            shown: String(visible().length),
-            total: String(entries().length),
-          })}
-        </span>
+        {/* Substring search — sits next to the DSL filter so the two are
+            visually paired. Narrower than the filter (max-w-xs) since
+            it's a simple term, not a query. Clears on Esc. */}
+        <div class="relative flex items-center bg-bg-muted rounded focus-within:ring-1 focus-within:ring-accent w-48">
+          <SearchIcon size={12} class="text-fg-muted shrink-0 ml-2" />
+          <input
+            ref={(el) => (searchInputRef = el)}
+            type="text"
+            class="w-full bg-transparent rounded px-2 py-1 pr-7 outline-none text-xs font-mono"
+            placeholder={tr("logcat.search_placeholder", {
+              hotkey: SEARCH_HOTKEY_LABEL,
+            })}
+            value={search()}
+            onInput={(e) => setSearch(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && search()) {
+                e.preventDefault();
+                setSearch("");
+              }
+            }}
+            title={t()("logcat.search_title")}
+            autocapitalize="off"
+            autocomplete="off"
+            autocorrect="off"
+            spellcheck={false}
+          />
+          <Show when={search()}>
+            <button
+              type="button"
+              class="absolute right-1 inset-y-0 my-auto h-5 w-5 inline-flex items-center justify-center rounded text-fg-muted hover:text-fg hover:bg-bg-subtle"
+              onClick={() => setSearch("")}
+              title={t()("logcat.search_clear")}
+              aria-label={t()("logcat.search_clear")}
+            >
+              <X size={11} />
+            </button>
+          </Show>
+        </div>
       </div>
 
       {/* Error banner — soft, non-blocking. */}
@@ -1179,55 +1339,95 @@ const LogcatView: Component = () => {
                 const e = createMemo(() => visible()[vi.index]);
                 return (
                   <Show when={e()}>
-                    {(entry) => (
-                      <div
-                        class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 ${LEVEL_ROW_COLOR[entry().level]}`}
-                        style={{
-                          transform: `translateY(${vi.start}px)`,
-                          "grid-template-columns": gridTemplate(),
-                        }}
-                      >
-                        <Show when={colVisible().time}>
-                          <span class="truncate px-2 border-r border-border/30">
-                            {entry().timestamp}
-                          </span>
-                        </Show>
-                        <Show when={colVisible().pid}>
-                          <span class="truncate px-2 border-r border-border/30">
-                            {entry().pid > 0 ? entry().pid : ""}
-                          </span>
-                        </Show>
-                        <Show when={colVisible().app}>
-                          <span
-                            class="truncate px-2 border-r border-border/30"
-                            title={pidNames().get(entry().pid) ?? ""}
-                          >
-                            {pidNames().get(entry().pid) ?? ""}
-                          </span>
-                        </Show>
-                        <Show when={colVisible().level}>
-                          <span
-                            class={`px-1 border-r border-border/30 ${LEVEL_COLOR[entry().level]}`}
-                          >
-                            {LEVEL_CHAR[entry().level]}
-                          </span>
-                        </Show>
-                        <Show when={colVisible().tag}>
-                          <span class="truncate px-2 border-r border-border/30">
-                            {entry().tag}
-                          </span>
-                        </Show>
-                        <Show when={colVisible().message}>
-                          <span class="truncate px-2">{entry().message}</span>
-                        </Show>
-                      </div>
-                    )}
+                    {(entry) => {
+                      const appName = () => pidNames().get(entry().pid) ?? "";
+                      const pidStr = () =>
+                        entry().pid > 0 ? String(entry().pid) : "";
+                      return (
+                        <div
+                          // measureElement lets the virtualizer cope with
+                          // variable row heights when wrap mode wraps long
+                          // messages over several lines. data-index is the
+                          // identity tanstack-virtual uses to map the
+                          // measured DOM node back to its virtual row.
+                          ref={(el) => el && virtualizer.measureElement(el)}
+                          data-index={vi.index}
+                          class={`absolute left-0 right-0 grid font-mono px-3 py-px border-b border-border/30 ${rowWhitespaceClass()} ${LEVEL_ROW_COLOR[entry().level]}`}
+                          style={{
+                            transform: `translateY(${vi.start}px)`,
+                            "grid-template-columns": gridTemplate(),
+                          }}
+                        >
+                          <Show when={colVisible().time}>
+                            <span
+                              class={`${cellTextClass()} px-2 border-r border-border/30`}
+                            >
+                              {renderHL(entry().timestamp)}
+                            </span>
+                          </Show>
+                          <Show when={colVisible().pid}>
+                            <span
+                              class={`${cellTextClass()} px-2 border-r border-border/30`}
+                            >
+                              {renderHL(pidStr())}
+                            </span>
+                          </Show>
+                          <Show when={colVisible().app}>
+                            <span
+                              class={`${cellTextClass()} px-2 border-r border-border/30`}
+                              title={appName()}
+                            >
+                              {renderHL(appName())}
+                            </span>
+                          </Show>
+                          <Show when={colVisible().level}>
+                            <span
+                              class={`px-1 border-r border-border/30 ${LEVEL_COLOR[entry().level]}`}
+                            >
+                              {LEVEL_CHAR[entry().level]}
+                            </span>
+                          </Show>
+                          <Show when={colVisible().tag}>
+                            <span
+                              class={`${cellTextClass()} px-2 border-r border-border/30`}
+                            >
+                              {renderHL(entry().tag)}
+                            </span>
+                          </Show>
+                          <Show when={colVisible().message}>
+                            <span class={`${cellTextClass()} px-2`}>
+                              {renderHL(entry().message)}
+                            </span>
+                          </Show>
+                        </div>
+                      );
+                    }}
                   </Show>
                 );
               }}
             </For>
           </div>
         </Show>
+      </div>
+
+      {/* Status bar. LogRabbit-style row at the foot of the window
+          carrying the counter on the left — keeps the toolbar uncluttered
+          and the digits in one fixed spot. `pl-5` (= row's `px-3` + the
+          first cell's `px-2`) aligns the counter's left edge with the
+          start of the first column above it. The `+` suffix appears
+          when the in-memory ring buffer has hit MAX_ENTRIES, signalling
+          that older entries have been dropped FIFO and the visible
+          total is the cap, not the actual log volume since attach. */}
+      <div class="flex items-center pl-5 pr-3 py-1 border-t border-border bg-bg-subtle text-fg-muted text-[11px] tabular-nums">
+        <span>
+          {tr("logcat.counter", {
+            shown: String(visible().length),
+            total:
+              entries().length >= MAX_ENTRIES
+                ? `${MAX_ENTRIES}+`
+                : String(entries().length),
+          })}
+        </span>
       </div>
     </div>
   );
