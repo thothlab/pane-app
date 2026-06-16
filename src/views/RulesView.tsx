@@ -1094,7 +1094,7 @@ const RuleEditor: Component<{
             {t()("rules.delay_label")}
             <input {...NO_AC}
               type="number"
-              class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm"
+              class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm text-fg"
               value={d().res_delay_ms}
               // Allow a transient empty value mid-edit: a fallback in onInput
               // (`|| 0`) snaps the field back the moment the user erases the
