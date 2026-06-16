@@ -293,6 +293,7 @@ const ru: Dict = {
     filter_help:
       "Слово без префикса — substring по tag или message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:<package> — substring по именам запущенных процессов; авто-подхват рестарта. `app:ru.` поймает все запущенные пакеты начинающиеся с `ru.`.\n~pattern — regex (по tag или message).\nlevel:W..F — диапазон, все warning и выше.\nЗапятая в значении объединяет альтернативы: позитивы — OR (`tag:A,B` = A или B), каждое значение можно отрицать через `!` (`tag:!Spam,!Noise,SSH` = не Spam И не Noise И содержит SSH). `!tag:foo` инвертирует весь токен.\nНесколько токенов соединяются по AND.\n⌘K — очистить буфер. ⌘F — фокус в это поле.",
     counter: "Показано {{shown}} из {{total}}",
+    pending_counter: "+{{n}} новых",
     empty_waiting: "Жду записи логов…",
     empty_filtered: "Под фильтр ничего не попадает.",
     col_time: "Время",

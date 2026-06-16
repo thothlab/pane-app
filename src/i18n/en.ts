@@ -294,6 +294,7 @@ const en = {
     filter_help:
       "Bare word — substring in tag or message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:<package> — substring match against running process names; auto-tracks app restarts. Type `app:ru.` to match every running package starting with `ru.`.\n~pattern — regex (matches tag or message).\nlevel:W..F — range, all warnings and above.\nComma in value combines alternatives: positives OR (`tag:A,B` = A or B), each value can be negated with `!` (`tag:!Spam,!Noise,SSH` = not Spam AND not Noise AND contains SSH). `!tag:foo` flips the whole term.\nMultiple tokens are ANDed.\n⌘K clears the buffer. ⌘F focuses this input.",
     counter: "Viewing {{shown}} of {{total}}",
+    pending_counter: "+{{n}} new",
     empty_waiting: "Waiting for log entries…",
     empty_filtered: "No entries match the current filter.",
     col_time: "Time",

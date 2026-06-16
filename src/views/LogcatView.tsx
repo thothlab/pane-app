@@ -430,11 +430,21 @@ const LogcatView: Component = () => {
     });
   });
 
-  // Subscribe to the per-window batched stream. Backend emits
-  // `logcat://batch` with payload Vec<LogEntry> every 100ms / 50
-  // entries (whichever first) on this WebviewWindow only — so the
-  // main window never sees the firehose.
-  //
+  // Incoming batches are held here between rAF ticks and (when Follow
+  // is OFF) for as long as the user stays scrolled away from the
+  // bottom. Lifted to component scope so toggleAutoScroll() can
+  // drain them when the user re-engages Follow.
+  let pending: LogEntry[][] = [];
+  let pendingTotal = 0;
+  let flushScheduled = false;
+  let rafHandle: number | undefined;
+  // Surfaced in the status bar as a "+N new" badge so the user can
+  // see the stream is still alive while their view is frozen.
+  // Only updated while !autoScroll(); under Follow ON, pending
+  // drains within one rAF tick and a transient setter would flash
+  // the badge on every batch.
+  const [pendingCount, setPendingCount] = createSignal(0);
+
   // Coalesce incoming batches through requestAnimationFrame: when
   // adb logcat is first attached, the ring buffer dumps thousands
   // of entries in 1–2 seconds (50–100+ IPC events/sec). Each event
@@ -446,79 +456,59 @@ const LogcatView: Component = () => {
   // logs still load smoothly behind it. Steady-state firehose
   // (post-init) still benefits — 60Hz UI updates regardless of
   // backend event rate.
+  //
+  // When !autoScroll() flush() early-returns without touching
+  // entries. This is the fix for the "constant flicker with Follow
+  // off" bug: committing FIFO-shifted batches rotates the buffer
+  // under the user's anchor, and the virtualizer's scroll-offset
+  // catches up async via the scroll event (WebKit queues those),
+  // so for one frame scrollTop and the rendered range disagree.
+  // Holding batches until the user re-engages Follow eliminates the
+  // churn entirely — same UX as IntelliJ logcat / Console.app.
+  const flush = () => {
+    flushScheduled = false;
+    rafHandle = undefined;
+    if (pending.length === 0) return;
+    if (!autoScroll()) return;
+    const merged: LogEntry[] =
+      pending.length === 1 ? pending[0]! : pending.flat();
+    pending = [];
+    pendingTotal = 0;
+    setPendingCount(0);
+    setEntries((prev) => {
+      const next = prev.length === 0 ? merged : prev.concat(merged);
+      return next.length > MAX_ENTRIES
+        ? next.slice(next.length - MAX_ENTRIES)
+        : next;
+    });
+  };
+
+  const scheduleFlush = () => {
+    if (flushScheduled) return;
+    flushScheduled = true;
+    rafHandle = requestAnimationFrame(flush);
+  };
+
+  // Subscribe to the per-window batched stream. Backend emits
+  // `logcat://batch` with payload Vec<LogEntry> every 100ms / 50
+  // entries (whichever first) on this WebviewWindow only — so the
+  // main window never sees the firehose.
   onMount(() => {
     let unlistenBatch: UnlistenFn | undefined;
     let unlistenError: UnlistenFn | undefined;
-    let pending: LogEntry[][] = [];
-    let flushScheduled = false;
-    let rafHandle: number | undefined;
-
-    const flush = () => {
-      flushScheduled = false;
-      rafHandle = undefined;
-      if (pending.length === 0) return;
-      const merged: LogEntry[] =
-        pending.length === 1 ? pending[0]! : pending.flat();
-      pending = [];
-
-      // FIFO-shift compensation. Once the buffer hits MAX_ENTRIES,
-      // every new batch pushes the same count off the front — the
-      // virtualizer's count stays at MAX, scrollTop stays put, but
-      // the rows at every fixed pixel offset have rotated forward.
-      // Result for an autoScroll-off user: the content visibly
-      // "scrolls down" under their viewport even though they didn't
-      // ask for it. Anchor to the entry currently at the top of the
-      // viewport, then after the buffer turns over re-locate that
-      // exact entry and restore the same screen position.
-      let anchor:
-        | { entry: LogEntry; pxOffset: number }
-        | undefined;
-      if (!autoScroll() && scrollEl) {
-        const rowH = Math.max(
-          1,
-          Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT),
-        );
-        const topIdx = Math.floor(scrollEl.scrollTop / rowH);
-        const e = visible()[topIdx];
-        if (e) anchor = { entry: e, pxOffset: scrollEl.scrollTop - topIdx * rowH };
-      }
-
-      setEntries((prev) => {
-        const next = prev.length === 0 ? merged : prev.concat(merged);
-        return next.length > MAX_ENTRIES
-          ? next.slice(next.length - MAX_ENTRIES)
-          : next;
-      });
-
-      if (anchor && scrollEl) {
-        queueMicrotask(() => {
-          if (!scrollEl || !anchor) return;
-          // visible() is reactive — after setEntries above it points
-          // at the updated array. indexOf is reference-equality, so
-          // we find the exact same LogEntry object regardless of
-          // how the buffer turned over.
-          const newVisible = visible();
-          const idx = newVisible.indexOf(anchor.entry);
-          if (idx < 0) return; // entry filtered out — nothing to anchor to
-          const rowH = Math.max(
-            1,
-            Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT),
-          );
-          scrollEl.scrollTop = idx * rowH + anchor.pxOffset;
-          lastScrollTop = scrollEl.scrollTop;
-        });
-      }
-    };
-
-    const scheduleFlush = () => {
-      if (flushScheduled) return;
-      flushScheduled = true;
-      rafHandle = requestAnimationFrame(flush);
-    };
 
     listen<LogEntry[]>("logcat://batch", (e) => {
       if (paused()) return;
       pending.push(e.payload);
+      pendingTotal += e.payload.length;
+      // Cap pending at MAX_ENTRIES so a user who scrolls up and
+      // walks away doesn't blow out memory. FIFO drop from the
+      // front — same as the entries() ring buffer.
+      while (pendingTotal > MAX_ENTRIES && pending.length > 0) {
+        const dropped = pending.shift()!;
+        pendingTotal -= dropped.length;
+      }
+      if (!autoScroll()) setPendingCount(pendingTotal);
       scheduleFlush();
     }).then((u) => (unlistenBatch = u));
 
@@ -560,25 +550,42 @@ const LogcatView: Component = () => {
   });
 
   // Detect user scroll-away from the bottom and switch auto-scroll
-  // off. Re-engaging is via the toolbar toggle.
+  // off; symmetrically, when the user scrolls back down to the
+  // bottom, re-engage Follow and drain any held batches.
   //
   // We compare against lastScrollTop instead of computing "is at
-  // bottom?" — at firehose rates the programmatic auto-scroll fires
-  // many times per second, and any "is at bottom" check loses the
-  // race vs. the user's scroll-up event. A 4px slack absorbs
-  // sub-pixel wheel jitter; anything bigger than that going
-  // backwards is the user.
+  // bottom?" for the OFF transition — at firehose rates the
+  // programmatic auto-scroll fires many times per second, and any
+  // "is at bottom" check loses the race vs. the user's scroll-up
+  // event. A 4px slack absorbs sub-pixel wheel jitter; anything
+  // bigger than that going backwards is the user.
+  //
+  // The ON transition is safe to gate on "at bottom" because with
+  // Follow OFF entries() is frozen — there are no programmatic
+  // scrolls competing with the user's input.
   const onScroll = () => {
     if (!scrollEl) return;
     const cur = scrollEl.scrollTop;
     if (cur < lastScrollTop - 4 && autoScroll()) {
       setAutoScroll(false);
+    } else if (!autoScroll() && cur > lastScrollTop) {
+      const atBottom =
+        cur + scrollEl.clientHeight >= scrollEl.scrollHeight - 4;
+      if (atBottom) {
+        setAutoScroll(true);
+        scheduleFlush();
+      }
     }
     lastScrollTop = cur;
   };
 
   const togglePause = () => setPaused(!paused());
-  const clearAll = () => setEntries([]);
+  const clearAll = () => {
+    pending = [];
+    pendingTotal = 0;
+    setPendingCount(0);
+    setEntries([]);
+  };
 
   /// Serialize the currently-visible entries (after filter + follow-app
   /// constraints) into a plain-text `.log` file. Format mirrors what
@@ -619,9 +626,18 @@ const LogcatView: Component = () => {
   const toggleAutoScroll = () => {
     const next = !autoScroll();
     setAutoScroll(next);
-    if (next && scrollEl) {
-      scrollEl.scrollTop = scrollEl.scrollHeight;
-      lastScrollTop = scrollEl.scrollTop;
+    if (next) {
+      // Re-engaging Follow: drain any batches that piled up while
+      // we were holding them, then snap to the bottom. The drain
+      // commits into entries() on the next rAF and the auto-scroll
+      // createEffect catches the visible() change to scroll to
+      // the new bottom; the explicit scroll here just covers the
+      // case where pending was empty.
+      scheduleFlush();
+      if (scrollEl) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+        lastScrollTop = scrollEl.scrollTop;
+      }
     }
   };
 
@@ -1372,6 +1388,11 @@ const LogcatView: Component = () => {
                 : String(entries().length),
           })}
         </span>
+        <Show when={pendingCount() > 0}>
+          <span class="ml-3 text-accent">
+            {tr("logcat.pending_counter", { n: String(pendingCount()) })}
+          </span>
+        </Show>
       </div>
     </div>
   );
