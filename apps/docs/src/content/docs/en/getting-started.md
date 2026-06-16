@@ -239,9 +239,19 @@ in place, no duplicate row.
 Hairline dividers run between rows; failures (5xx and transport
 errors like pinning / TLS-handshake failure) tint the whole row red.
 Every other status keeps the row default and shows the status code
-itself in a status-appropriate colour. Right-click any row to add it
-to Rules as a stub (see [Response stubs](/docs/rules/) → "Quick path
-from Captures").
+itself in a status-appropriate colour. Right-click any row to open a
+context menu:
+
+- **Copy** — puts the full dump of this exchange on the clipboard
+  (request line → headers → body → blank line → response line →
+  headers → body) in OkHttp `HttpLoggingInterceptor` format. The same
+  layout the Android logger emits, so the dump pastes into a bug
+  report next to the app's own logs without reformatting. Bodies are
+  decoded as UTF-8; binary content is replaced with a
+  `[N-byte binary body]` placeholder so the clipboard doesn't fill up
+  with mojibake. Body cap is 8 MiB; truncation is annotated inline.
+- **Add to rules** — pre-fills a stub rule from this capture (see
+  [Response stubs](/docs/rules/) → "Quick path from Captures").
 
 The **Follow** toggle on the toolbar pins the list to the latest
 entry. Turn it off (or scroll up) and the list freezes — periodic
