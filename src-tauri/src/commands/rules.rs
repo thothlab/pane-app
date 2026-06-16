@@ -63,3 +63,23 @@ pub async fn collection_set_enabled(
         .set_collection_enabled(args)
         .map_err(to_api("db"))
 }
+
+/// Write a text payload to a user-chosen path. Same shape as
+/// `logcat_write_export` — we keep the renderer out of plugin-fs's
+/// per-capability scope rules by routing through a thin Rust command.
+/// Used by the Rules import/export feature to dump the curated set
+/// as a `.pane-rules.json` the user can share.
+#[tauri::command]
+pub async fn rules_export_write(path: String, content: String) -> CmdResult<usize> {
+    let bytes = content.len();
+    std::fs::write(&path, content).map_err(to_api("io"))?;
+    Ok(bytes)
+}
+
+/// Read a text payload from a user-chosen path. Paired with
+/// `rules_export_write` so the import flow can pull the JSON back in
+/// without plugin-fs scope rules.
+#[tauri::command]
+pub async fn rules_import_read(path: String) -> CmdResult<String> {
+    std::fs::read_to_string(&path).map_err(to_api("io"))
+}

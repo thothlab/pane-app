@@ -10,10 +10,22 @@ import {
   ChevronRight,
   ChevronUp,
   FolderPlus,
+  Download,
+  Upload,
 } from "lucide-solid";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import { t, tr } from "@/i18n";
+import {
+  applyImport,
+  buildCollectionExport,
+  buildLibraryExport,
+  buildRuleExport,
+  slugifyForFilename,
+  validatePortFile,
+  type PortFile,
+} from "@/lib/rules-portfile";
 import {
   rulesCollapsed,
   setRulesCollapsed,
@@ -201,6 +213,84 @@ const RulesView: Component = () => {
     await refresh();
   };
 
+  // ── Import / export ──────────────────────────────────────────────
+  //
+  // Three export entry points (one rule, one collection, full
+  // library) share the save-dialog → backend-write boilerplate via
+  // savePortFile. Import is the inverse: open-dialog → backend-read
+  // → validate → applyImport → refresh.
+  const savePortFile = async (file: PortFile, defaultName: string) => {
+    const path = await save({
+      defaultPath: defaultName,
+      filters: [{ name: "Pane rules", extensions: ["json"] }],
+    });
+    if (!path) return;
+    try {
+      await api.rules.exportWrite(path, JSON.stringify(file, null, 2));
+    } catch (e) {
+      alert(
+        tr("rules.export_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+      );
+    }
+  };
+
+  const exportRule = async (r: RuleDto) => {
+    const file = await buildRuleExport(r);
+    await savePortFile(
+      file,
+      `${slugifyForFilename(r.name || "rule")}.pane-rule.json`,
+    );
+  };
+
+  const exportCollection = async (c: RuleCollectionDto) => {
+    const file = await buildCollectionExport(
+      c,
+      rulesByCollection().get(c.id) ?? [],
+    );
+    await savePortFile(
+      file,
+      `${slugifyForFilename(c.name)}.pane-collection.json`,
+    );
+  };
+
+  const exportLibrary = async () => {
+    const file = await buildLibraryExport(collections(), rules());
+    await savePortFile(file, "pane-rules.json");
+  };
+
+  const importFile = async () => {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "Pane rules", extensions: ["json"] }],
+    });
+    if (!path || typeof path !== "string") return;
+    try {
+      const raw = await api.rules.importRead(path);
+      const parsed = JSON.parse(raw) as unknown;
+      const validated = validatePortFile(parsed);
+      if (typeof validated === "string") {
+        alert(tr("rules.import_invalid", { message: validated }));
+        return;
+      }
+      const summary = await applyImport(validated);
+      await refresh();
+      alert(
+        tr("rules.import_success", {
+          collections: String(summary.collections),
+          rules: String(summary.rules),
+        }),
+      );
+    } catch (e) {
+      alert(
+        tr("rules.import_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+      );
+    }
+  };
+
   const startNewRule = (collectionId: string | null) =>
     setEditing({ kind: "rule", collectionId, id: "new" });
   const startEditRule = (r: RuleDto) =>
@@ -244,12 +334,29 @@ const RulesView: Component = () => {
             <HelpButton path="/rules/" title={t()("rules.help_title")} />
           </div>
         </div>
-        <button
-          class="ml-auto inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-border hover:bg-bg-muted"
-          onClick={() => openCreateForm()}
-        >
-          <FolderPlus size={14} /> {t()("rules.new_collection")}
-        </button>
+        <div class="ml-auto flex items-center gap-2">
+          <button
+            class="inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-border hover:bg-bg-muted"
+            onClick={importFile}
+            title={t()("rules.import_title")}
+          >
+            <Upload size={14} /> {t()("rules.import")}
+          </button>
+          <button
+            class="inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-border hover:bg-bg-muted disabled:opacity-40"
+            onClick={exportLibrary}
+            disabled={rules().length === 0 && collections().length === 0}
+            title={t()("rules.export_all_title")}
+          >
+            <Download size={14} /> {t()("rules.export_all")}
+          </button>
+          <button
+            class="inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-border hover:bg-bg-muted"
+            onClick={() => openCreateForm()}
+          >
+            <FolderPlus size={14} /> {t()("rules.new_collection")}
+          </button>
+        </div>
       </header>
 
       <div class="overflow-auto p-4 space-y-4">
@@ -294,6 +401,8 @@ const RulesView: Component = () => {
               onToggleCollapsed={() => toggleSection(c.id)}
               onRename={() => startRename(c)}
               onDelete={() => deleteCollection(c)}
+              onExportCollection={() => exportCollection(c)}
+              onExportRule={exportRule}
               onAddRule={() => startNewRule(c.id)}
               onEditRule={startEditRule}
               onToggleRule={toggleRule}
@@ -323,6 +432,7 @@ const RulesView: Component = () => {
           rules={rulesByCollection().get(UNGROUPED_KEY) ?? []}
           collapsed={isCollapsed(UNGROUPED_KEY)}
           onToggleCollapsed={() => toggleSection(UNGROUPED_KEY)}
+          onExportRule={exportRule}
           onAddRule={() => startNewRule(null)}
           onEditRule={startEditRule}
           onToggleRule={toggleRule}
@@ -371,6 +481,8 @@ const CollectionSection: Component<{
   onSaved: (r: RuleDto) => void;
   onCancel: () => void;
   onStartRename: (c: RuleCollectionDto) => void;
+  onExportCollection?: () => void;
+  onExportRule: (r: RuleDto) => void;
   renamingId: string | null;
   renamingName: string;
   onRenamingNameChange: (s: string) => void;
@@ -474,6 +586,13 @@ const CollectionSection: Component<{
           <Show when={!isUngrouped()}>
             <button
               class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted"
+              title={t()("rules.export_collection_title")}
+              onClick={p.onExportCollection}
+            >
+              <Download size={12} />
+            </button>
+            <button
+              class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted"
               title={t()("rules.rename")}
               onClick={p.onRename}
             >
@@ -515,6 +634,7 @@ const CollectionSection: Component<{
                     isDragging={p.draggingRuleId === rule.id}
                     onToggle={() => p.onToggleRule(rule)}
                     onEdit={() => p.onEditRule(rule)}
+                    onExport={() => p.onExportRule(rule)}
                     onDelete={() => p.onDeleteRule(rule)}
                     onDragStart={() => p.onDragStartRule(rule.id)}
                     onDragEnd={p.onDragEndRule}
@@ -541,6 +661,7 @@ const RuleRow: Component<{
   isDragging: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  onExport: () => void;
   onDelete: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
@@ -591,10 +712,25 @@ const RuleRow: Component<{
         </div>
       </div>
       <div class="flex items-center gap-1 shrink-0">
-        <button class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-fg-muted" onClick={p.onEdit}>
+        <button
+          class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-fg-muted"
+          title={t()("rules.edit")}
+          onClick={p.onEdit}
+        >
           <Pencil size={12} />
         </button>
-        <button class="text-xs px-2 py-1 rounded hover:bg-danger/10 text-danger" onClick={p.onDelete}>
+        <button
+          class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-fg-muted"
+          title={t()("rules.export_rule_title")}
+          onClick={p.onExport}
+        >
+          <Download size={12} />
+        </button>
+        <button
+          class="text-xs px-2 py-1 rounded hover:bg-danger/10 text-danger"
+          title={t()("rules.delete")}
+          onClick={p.onDelete}
+        >
           <Trash2 size={12} />
         </button>
       </div>

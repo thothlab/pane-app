@@ -31,6 +31,26 @@ Rules-tab state now survives both tab switches and full app restarts:
 
 This covers the common "open rule → switch to Captures → copy something → switch back → paste → save" flow — before this, the editor would be closed on return and you had to re-expand every time. The draft is dropped only on Save, Cancel, or the "collapse without saving" arrow (↑ in the editor header).
 
+## Sharing rules: import and export
+
+A curated set of mocks is worth keeping around — and worth handing to a teammate. Rules can be exported to and imported from `.json` files at three granularities.
+
+**Export**:
+
+- **One rule** — Download icon in the rule row (between Edit and Delete). Saves a `<name>.pane-rule.json` containing that rule plus its response body inline.
+- **One collection** — Download icon in the collection header. Saves `<name>.pane-collection.json` with the collection metadata and every rule inside it.
+- **Everything** — *Export all* button in the page header. Saves `pane-rules.json` covering every collection (including Ungrouped) and every rule.
+
+Bodies travel inline as base64, so the file is self-contained — no companion blobs.
+
+**Import**:
+
+The *Import* button in the page header opens a file picker. The file's `kind` field decides what gets created: a single rule, a collection plus its rules, or the full library. The action is additive — existing rules and collections aren't touched.
+
+**Conflict policy**: every imported entity gets a fresh UUID. If a collection or rule with the same name already exists, the import lands beside it as a duplicate (you decide whether to rename or delete after). There's no merge, overwrite, or skip prompt — the same name twice is a deliberate non-event.
+
+**Format**: `{ format: "pane-rules", version: 1, kind, exported_at, collections, rules }`. Hand-editing the JSON is supported but unprotected — invalid fields surface as backend errors at import time, not warnings.
+
 ## Where to configure
 
 Sidebar → **Rules** → collection → rule in `Patch — forward, then mutate` mode.

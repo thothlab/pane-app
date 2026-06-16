@@ -95,6 +95,9 @@ export const api = {
     delete: (id: string) => call<void>("rule_delete", { id }),
     setEnabled: (id: string, enabled: boolean) =>
       call<void>("rule_set_enabled", { args: { id, enabled } }),
+    exportWrite: (path: string, content: string) =>
+      call<number>("rules_export_write", { path, content }),
+    importRead: (path: string) => call<string>("rules_import_read", { path }),
   },
   collections: {
     list: () => call<RuleCollectionDto[]>("collections_list"),

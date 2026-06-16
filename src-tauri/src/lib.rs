@@ -75,6 +75,8 @@ pub fn run() {
             commands::rules::collection_upsert,
             commands::rules::collection_delete,
             commands::rules::collection_set_enabled,
+            commands::rules::rules_export_write,
+            commands::rules::rules_import_read,
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "Pane starting");
