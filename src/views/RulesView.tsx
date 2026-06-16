@@ -1096,7 +1096,24 @@ const RuleEditor: Component<{
               type="number"
               class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm"
               value={d().res_delay_ms}
-              onInput={(e) => patch({ res_delay_ms: Number(e.currentTarget.value) || 0 })}
+              // Allow a transient empty value mid-edit: a fallback in onInput
+              // (`|| 0`) snaps the field back the moment the user erases the
+              // last digit, making it impossible to retype a fresh number.
+              // The blur handler restores the last valid value if the user
+              // leaves the field blank — needs to be imperative because the
+              // underlying signal didn't change so Solid won't repaint
+              // value=.
+              onInput={(e) => {
+                const v = e.currentTarget.value;
+                if (v === "") return;
+                const n = Number(v);
+                if (Number.isFinite(n)) patch({ res_delay_ms: n });
+              }}
+              onBlur={(e) => {
+                if (e.currentTarget.value === "") {
+                  e.currentTarget.value = String(d().res_delay_ms);
+                }
+              }}
             />
           </label>
         </FieldRow>
@@ -1106,7 +1123,22 @@ const RuleEditor: Component<{
             type="number"
             class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm"
             value={d().res_status}
-            onInput={(e) => patch({ res_status: Number(e.currentTarget.value) || 200 })}
+            // Same trick as res_delay_ms above: don't snap back to 200 mid-edit
+            // (e.g. user clears "200" to retype "300" — the fallback would
+            // reset the field every keystroke). Blur restores the last valid
+            // value imperatively because Solid won't re-set value= when the
+            // signal didn't actually change.
+            onInput={(e) => {
+              const v = e.currentTarget.value;
+              if (v === "") return;
+              const n = Number(v);
+              if (Number.isFinite(n)) patch({ res_status: n });
+            }}
+            onBlur={(e) => {
+              if (e.currentTarget.value === "") {
+                e.currentTarget.value = String(d().res_status);
+              }
+            }}
           />
         </FieldRow>
         <FieldRow label={t()("rules.headers_label")}>
