@@ -86,6 +86,11 @@ const en = {
     add_to_rules_default_collection: "From captures",
     add_to_rules_done: "Added rule \"{name}\" to \"{collection}\"",
     add_to_rules_failed: "Failed to add: {message}",
+    copy_dump: "Copy",
+    copy_dump_title:
+      "Copy the full request + response (headers and bodies) to the clipboard in OkHttp-logger format",
+    copy_dump_done: "Copied to clipboard ({bytes} bytes)",
+    copy_dump_failed: "Copy failed: {message}",
     column_idx: "#",
     column_method: "Method",
     column_status: "Status",

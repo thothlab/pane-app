@@ -83,6 +83,11 @@ const ru: Dict = {
     add_to_rules_default_collection: "Из захваченных",
     add_to_rules_done: "Правило «{name}» добавлено в «{collection}»",
     add_to_rules_failed: "Не удалось добавить: {message}",
+    copy_dump: "Копировать",
+    copy_dump_title:
+      "Скопировать в буфер обмена полный запрос + ответ (заголовки и тела) в формате OkHttp-логгера",
+    copy_dump_done: "Скопировано ({bytes} байт)",
+    copy_dump_failed: "Не удалось скопировать: {message}",
     column_idx: "#",
     column_method: "Метод",
     column_status: "Статус",

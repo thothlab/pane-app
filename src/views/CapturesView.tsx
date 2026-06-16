@@ -1,7 +1,7 @@
 import { type Component, createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
-import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Pin, Star, FolderPlus, Shuffle } from "lucide-solid";
+import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle } from "lucide-solid";
 import { api } from "@/ipc/client";
 import { listenToCaptures } from "@/ipc/events";
 import type { CaptureDto, RuleCollectionDto, RuleDto, RuleUpsertArgs } from "@/ipc/types";
@@ -444,6 +444,112 @@ const CapturesView: Component = () => {
     closeAddMenu();
   };
 
+  // ── Copy as OkHttp-style dump ─────────────────────────────────────
+  // Builds a single text blob that contains the full request and
+  // response (start line, every header, body) in the same shape
+  // OkHttp's HttpLoggingInterceptor emits, so a developer can paste
+  // it straight into a bug report alongside their own logs and the
+  // two streams are visually consistent.
+  //
+  // Bodies: we ask the backend for up to 8 MiB. JSON/text/XML/form
+  // bodies are pasted as-is; anything that doesn't decode as UTF-8
+  // is replaced with a "[N-byte binary body]" placeholder so the
+  // user's clipboard doesn't get pages of mojibake.
+  const COPY_BODY_LIMIT = 8 * 1024 * 1024;
+
+  const buildHttpDump = async (captureId: string): Promise<string> => {
+    const cap = await api.captures.get(captureId);
+    const port =
+      (cap.scheme === "http" && cap.server_port === 80) ||
+      (cap.scheme === "https" && cap.server_port === 443)
+        ? ""
+        : `:${cap.server_port}`;
+    const url = `${cap.scheme}://${cap.server_host}${port}${cap.url_path}`;
+
+    const [reqBody, resBody] = await Promise.all([
+      cap.req_body_id ? safeBody(cap.req_body_id) : Promise.resolve(null),
+      cap.res_body_id ? safeBody(cap.res_body_id) : Promise.resolve(null),
+    ]);
+
+    const lines: string[] = [];
+    lines.push(`--> ${cap.method} ${url}`);
+    lines.push("");
+    for (const h of cap.req_headers ?? []) {
+      lines.push(`${h.name}: ${h.value}`);
+    }
+    if (reqBody && reqBody.text !== null) {
+      lines.push("");
+      lines.push(reqBody.text);
+    } else if (reqBody) {
+      lines.push("");
+      lines.push(`[${reqBody.total_size}-byte binary body]`);
+    }
+    lines.push("");
+    lines.push(
+      reqBody
+        ? `--> END ${cap.method} (${reqBody.total_size}-byte body)`
+        : `--> END ${cap.method}`,
+    );
+    lines.push("");
+
+    if (cap.status !== null) {
+      const reason = HTTP_REASON[cap.status] ?? "";
+      const tail = reason ? ` ${reason}` : "";
+      lines.push(`<-- ${cap.status}${tail} ${url}`);
+    } else {
+      lines.push(`<-- (no response) ${url}`);
+    }
+    lines.push("");
+    for (const h of cap.res_headers ?? []) {
+      lines.push(`${h.name}: ${h.value}`);
+    }
+    if (resBody && resBody.text !== null) {
+      lines.push("");
+      lines.push(resBody.text);
+    } else if (resBody) {
+      lines.push("");
+      lines.push(`[${resBody.total_size}-byte binary body]`);
+    }
+    lines.push("");
+    lines.push(
+      resBody
+        ? `<-- END HTTP (${resBody.total_size}-byte body)`
+        : `<-- END HTTP`,
+    );
+
+    return lines.join("\n");
+  };
+
+  const safeBody = async (
+    bodyId: string,
+  ): Promise<{ text: string | null; total_size: number } | null> => {
+    try {
+      const body = await api.captures.body(bodyId, COPY_BODY_LIMIT);
+      return { text: decodeBodyAsText(body), total_size: body.total_size };
+    } catch {
+      return null;
+    }
+  };
+
+  const copyDump = async (captureId: string) => {
+    try {
+      const text = await buildHttpDump(captureId);
+      await navigator.clipboard.writeText(text);
+      setAddToast(
+        tr("captures.copy_dump_done", { bytes: String(text.length) }),
+      );
+      setTimeout(() => setAddToast(null), 2500);
+      closeAddMenu();
+    } catch (e: unknown) {
+      setAddToast(
+        tr("captures.copy_dump_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+      );
+      setTimeout(() => setAddToast(null), 3500);
+    }
+  };
+
   const addToCollection = async (collectionId: string | null) => {
     const pos = addMenuPos();
     if (!pos || addBusy()) return;
@@ -809,6 +915,17 @@ const CapturesView: Component = () => {
           onMouseDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
+          <button
+            type="button"
+            class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
+            disabled={addBusy()}
+            title={t()("captures.copy_dump_title")}
+            onClick={() => void copyDump(addMenuPos()!.captureId)}
+          >
+            <Copy size={12} class="text-fg-muted shrink-0" />
+            <span class="truncate flex-1">{t()("captures.copy_dump")}</span>
+          </button>
+          <div class="border-t border-border my-1" />
           <div class="px-3 py-1 text-fg-muted uppercase tracking-wide text-[10px]">
             {t()("captures.add_to_rules_title")}
           </div>
@@ -909,6 +1026,76 @@ function fmtBytes(n: number) {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
   return `${(n / 1024 / 1024).toFixed(1)}M`;
 }
+
+// Decode a CaptureBodyDto into a plain string suitable for an
+// OkHttp-style dump, or `null` when the bytes don't look like text.
+// We try UTF-8 with `fatal: true` first — if the body is genuinely
+// binary the decode throws and we surface a "[N-byte binary body]"
+// placeholder upstream instead of pasting pages of replacement chars
+// into the user's clipboard. Truncated bodies (server > COPY_BODY_LIMIT)
+// get a trailing note so the user knows they're not seeing the full
+// payload.
+function decodeBodyAsText(body: {
+  mime: string | null;
+  bytes_base64: string;
+  truncated: boolean;
+  total_size: number;
+}): string | null {
+  if (!body.bytes_base64) return body.truncated ? "[body truncated]" : "";
+  let bytes: Uint8Array;
+  try {
+    const bin = atob(body.bytes_base64);
+    bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  } catch {
+    return null;
+  }
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return body.truncated
+      ? `${text}\n[body truncated to ${bytes.length} of ${body.total_size} bytes]`
+      : text;
+  } catch {
+    return null;
+  }
+}
+
+// Minimal HTTP reason-phrase map. Covers the codes a developer is
+// realistically going to see in captured app traffic — anything
+// else falls back to an empty string and the dump shows just the
+// numeric status. We don't pull the full IANA list because the
+// dump is a debugging aid, not an RFC artefact.
+const HTTP_REASON: Record<number, string> = {
+  100: "Continue",
+  101: "Switching Protocols",
+  200: "OK",
+  201: "Created",
+  202: "Accepted",
+  204: "No Content",
+  206: "Partial Content",
+  301: "Moved Permanently",
+  302: "Found",
+  303: "See Other",
+  304: "Not Modified",
+  307: "Temporary Redirect",
+  308: "Permanent Redirect",
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  409: "Conflict",
+  410: "Gone",
+  413: "Payload Too Large",
+  415: "Unsupported Media Type",
+  422: "Unprocessable Entity",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  501: "Not Implemented",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
 
 // Filter DSL keys recognised by the backend (see crates/pane-storage/src/filter_dsl.rs).
 // Used for live key validation in the input.
