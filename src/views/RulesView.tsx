@@ -1094,15 +1094,16 @@ const RuleEditor: Component<{
             {t()("rules.delay_label")}
             <input {...NO_AC}
               type="number"
+              placeholder="0"
               class="w-20 bg-bg border border-border rounded px-2 py-1 text-sm text-fg"
-              value={d().res_delay_ms}
+              value={d().res_delay_ms || ""}
               // Allow a transient empty value mid-edit: a fallback in onInput
               // (`|| 0`) snaps the field back the moment the user erases the
               // last digit, making it impossible to retype a fresh number.
-              // The blur handler restores the last valid value if the user
-              // leaves the field blank — needs to be imperative because the
-              // underlying signal didn't change so Solid won't repaint
-              // value=.
+              // On blur, an empty field means "no delay" → patch to 0; the
+              // value binding (`|| ""`) keeps the box visually blank with
+              // the placeholder "0" hint instead of literally showing "0",
+              // matching the "no delay by default" reading users expect.
               onInput={(e) => {
                 const v = e.currentTarget.value;
                 if (v === "") return;
@@ -1110,9 +1111,7 @@ const RuleEditor: Component<{
                 if (Number.isFinite(n)) patch({ res_delay_ms: n });
               }}
               onBlur={(e) => {
-                if (e.currentTarget.value === "") {
-                  e.currentTarget.value = String(d().res_delay_ms);
-                }
+                if (e.currentTarget.value === "") patch({ res_delay_ms: 0 });
               }}
             />
           </label>
