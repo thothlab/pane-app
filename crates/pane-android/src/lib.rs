@@ -26,6 +26,19 @@ pub(crate) const ADB_NOT_FOUND_MSG: &str = "adb not found. Install Android platf
     (https://developer.android.com/tools/releases/platform-tools) and either add it to PATH, \
     set ANDROID_HOME, or install at the default Android SDK location.";
 
+/// Last six characters of an ADB/USB serial — short enough to read at
+/// a glance, long enough to disambiguate the handful of devices a user
+/// will realistically plug in at once. Used in the device label so
+/// two phones of the same model don't render identically.
+fn serial_tail(serial: &str) -> String {
+    let n = serial.chars().count();
+    if n <= 6 {
+        serial.to_string()
+    } else {
+        serial.chars().skip(n - 6).collect()
+    }
+}
+
 /// Android package identifiers for the Pane companion APK. The helper
 /// runs a tiny Foreground Service that holds a heartbeat socket to
 /// Pane on the laptop (via adb-reverse). When that socket dies — Pane
@@ -79,13 +92,20 @@ impl AndroidPlatform {
             if status != "device" {
                 continue;
             }
+            // `adb devices -l` reports model with underscores in place
+            // of spaces (`Pixel_7_Pro`); flip them back so the name
+            // reads naturally in the row. The trailing serial chunk
+            // disambiguates two phones of the same model — without it
+            // the user sees "Pixel 7" twice and has nothing to tell
+            // them apart at a glance.
             let model = parts
                 .find_map(|p| p.strip_prefix("model:"))
-                .unwrap_or("Android device");
+                .unwrap_or("Android device")
+                .replace('_', " ");
             devices.push(DiscoveredDeviceDto {
                 platform: "android".into(),
                 serial: serial.to_string(),
-                name: model.to_string(),
+                name: format!("{model} · {}", serial_tail(serial)),
             });
         }
         Ok(devices)
@@ -111,6 +131,17 @@ impl AndroidPlatform {
         )
         .await
         .unwrap_or_else(|_| "unknown".into())
+        .trim()
+        .to_string();
+        // Marketing model — `Pixel 7`, `SM-S931B`, etc. Combined with
+        // manufacturer it disambiguates two devices of the same brand
+        // that previously both rendered as just "Google (Android 14)".
+        let model = run(
+            "adb",
+            &["-s", serial, "shell", "getprop", "ro.product.model"],
+        )
+        .await
+        .unwrap_or_default()
         .trim()
         .to_string();
 
@@ -250,18 +281,33 @@ impl AndroidPlatform {
         )
         .await;
 
+        // Compose a label that's unique even with two of the same
+        // phone plugged in: manufacturer + marketing model + Android
+        // version + last 6 chars of the serial. We drop model only
+        // when getprop returned empty (very old devices / privacy
+        // shells); otherwise the duplicate-Pixel case still bites.
+        let head = if model.is_empty() {
+            manufacturer.clone()
+        } else {
+            format!("{manufacturer} {model}")
+        };
+        let display_name = format!(
+            "{head} · Android {android_release} · {}",
+            serial_tail(serial)
+        );
         Ok(DeviceDto {
             id: Uuid::new_v4(),
             platform: "android".into(),
             connection: "usb".into(),
             serial: serial.to_string(),
-            display_name: format!("{manufacturer} (Android {android_release})"),
+            display_name,
             state: "ready".into(),
             ca_installed_at: Some(time::OffsetDateTime::now_utc().to_string()),
             capabilities: serde_json::json!({
                 "rooted": rooted,
                 "android_release": android_release,
                 "manufacturer": manufacturer,
+                "model": model,
                 // Drives the device-row UI on the desktop:
                 "ca_install_state": ca_install_state,
                 "ca_install_path": DEVICE_CA_PATH,
