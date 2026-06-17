@@ -363,6 +363,38 @@ const CapturesView: Component = () => {
 
   const closeAddMenu = () => setAddMenuPos(null);
 
+  // After the menu renders (and re-renders when collections finish
+  // loading), check if it spills past the viewport bottom/right and
+  // flip the anchor up/left if so. Right-click near the bottom of
+  // the captures list used to push the menu below the window so
+  // its items got clipped — measure the actual rect post-layout
+  // and reposition rather than guessing a height upfront.
+  createEffect(() => {
+    const pos = addMenuPos();
+    // Track collections so we re-clamp once the async list arrives
+    // and grows the menu.
+    void addCollections();
+    if (!pos) return;
+    queueMicrotask(() => {
+      if (!addMenuRef) return;
+      const r = addMenuRef.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const margin = 8;
+      let { x, y, captureId } = pos;
+      let changed = false;
+      if (r.bottom > vh - margin) {
+        y = Math.max(margin, vh - r.height - margin);
+        changed = true;
+      }
+      if (r.right > vw - margin) {
+        x = Math.max(margin, vw - r.width - margin);
+        changed = true;
+      }
+      if (changed) setAddMenuPos({ x, y, captureId });
+    });
+  });
+
   // Build a RuleUpsertArgs from a captured request — used by the
   // context menu's "Add to <collection>" path. Fetches the full
   // capture (headers) and response body via the regular APIs.
@@ -534,7 +566,7 @@ const CapturesView: Component = () => {
   const copyDump = async (captureId: string) => {
     try {
       const text = await buildHttpDump(captureId);
-      await navigator.clipboard.writeText(text);
+      await writeToClipboard(text);
       setAddToast(
         tr("captures.copy_dump_done", { bytes: String(text.length) }),
       );
@@ -549,6 +581,40 @@ const CapturesView: Component = () => {
       setTimeout(() => setAddToast(null), 3500);
     }
   };
+
+  // `navigator.clipboard.writeText` is the right API but it throws in
+  // WebKit/Chromium when the document isn't focused, or after the
+  // current user-activation has been consumed by an `await` chain.
+  // copyDump is exactly that case: by the time buildHttpDump's awaits
+  // resolve, the gesture is gone and writeText rejects with "Document
+  // is not focused" / "NotAllowedError" — visible to the user as a
+  // "copy failed" toast (the literal {message} we previously rendered
+  // was a separate i18n bug). The deprecated `execCommand('copy')`
+  // path runs synchronously and ignores focus, so it covers the
+  // post-await case without forcing us to add the Tauri clipboard
+  // plugin just for one copy site.
+  async function writeToClipboard(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (primary) {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      ta.style.top = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      let ok = false;
+      try {
+        ok = document.execCommand("copy");
+      } finally {
+        document.body.removeChild(ta);
+      }
+      if (!ok) throw primary;
+    }
+  }
 
   const addToCollection = async (collectionId: string | null) => {
     const pos = addMenuPos();
