@@ -58,7 +58,11 @@ show a warning — click **More info → Run anyway**.
      Android won't install user CAs without one.
    - **iOS** — trust the laptop the first time you plug in.
 4. **Devices → Add device**. Pane discovers attached phones via `adb`
-   / `libimobiledevice`. Pick yours → **+ Add**. Pane then:
+   / `libimobiledevice`. Each row labels the device as
+   `<vendor> <model> · Android <version> · <serial-tail>` — two of the
+   same phone plugged in at once still read as distinct rows thanks
+   to the last six chars of the USB serial. Pick yours → **+ Add**.
+   Pane then:
    - generates a root CA (ECDSA P-256) and stores it locally;
    - **iOS** — pushes the mobileconfig profile over USB; user confirms
      the install in Settings;
@@ -290,7 +294,11 @@ What's inside:
 - **Pause** (Space) — freezes the buffer, the upstream stream keeps
   running on the backend. **Clear** (⌘K) — wipes the buffer.
   **Follow** — auto-scroll to newest entry; turns off automatically
-  if you scroll up.
+  if you scroll up. While Follow is off, incoming batches are held
+  on the side (no FIFO churn under your viewport — the table stays
+  rock-still) and the status bar shows a **+N new** badge. Toggling
+  Follow back on (or scrolling all the way down) drains them and
+  resumes auto-scroll.
 - **Follow app** — dropdown of installed third-party packages.
   Pick one → backend resolves PID via `adb shell pidof` every 5s,
   the view filters down to that PID. App restart → PID changes → the
