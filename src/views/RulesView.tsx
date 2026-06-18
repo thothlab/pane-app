@@ -12,6 +12,10 @@ import {
   FolderPlus,
   Download,
   Upload,
+  Maximize2,
+  Minimize2,
+  Braces,
+  Minus,
 } from "lucide-solid";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readClipboard } from "@/lib/clipboard";
@@ -176,6 +180,20 @@ const RulesView: Component = () => {
 
   const toggleRule = async (r: RuleDto) => {
     await api.rules.setEnabled(r.id, !r.enabled);
+    await refresh();
+  };
+
+  // Bulk-toggle every rule in `list` to `targetEnabled`. Issues only the
+  // changes that actually differ from the current state, in parallel,
+  // then refreshes once. The backend has no batch endpoint for this, so
+  // we just fan out IPC calls — even for collections of 50 rules the
+  // round-trips finish within a frame on the same machine.
+  const toggleCollection = async (list: RuleDto[], targetEnabled: boolean) => {
+    const toFlip = list.filter((r) => r.enabled !== targetEnabled);
+    if (toFlip.length === 0) return;
+    await Promise.all(
+      toFlip.map((r) => api.rules.setEnabled(r.id, targetEnabled)),
+    );
     await refresh();
   };
 
@@ -407,6 +425,7 @@ const RulesView: Component = () => {
               onAddRule={() => startNewRule(c.id)}
               onEditRule={startEditRule}
               onToggleRule={toggleRule}
+              onToggleCollection={(en) => toggleCollection(rulesByCollection().get(c.id) ?? [], en)}
               onDeleteRule={removeRule}
               editing={editing()}
               onSaved={onRuleSaved}
@@ -437,6 +456,7 @@ const RulesView: Component = () => {
           onAddRule={() => startNewRule(null)}
           onEditRule={startEditRule}
           onToggleRule={toggleRule}
+          onToggleCollection={(en) => toggleCollection(rulesByCollection().get(UNGROUPED_KEY) ?? [], en)}
           onDeleteRule={removeRule}
           editing={editing()}
           onSaved={onRuleSaved}
@@ -477,6 +497,7 @@ const CollectionSection: Component<{
   onAddRule: () => void;
   onEditRule: (r: RuleDto) => void;
   onToggleRule: (r: RuleDto) => void;
+  onToggleCollection: (enable: boolean) => void;
   onDeleteRule: (r: RuleDto) => void;
   editing: Editing;
   onSaved: (r: RuleDto) => void;
@@ -551,6 +572,36 @@ const CollectionSection: Component<{
             <ChevronRight size={14} />
           </Show>
         </button>
+
+        {/*
+          Collection-level toggle. State reflects the aggregate:
+          - all rules enabled  → "on", clicking disables all
+          - all rules disabled → "off", clicking enables all
+          - mixed              → "mixed" (minus sign), clicking enables all
+                                 (most useful default — turning everything
+                                 on tends to be what the user wants when
+                                 they reach for a top-level switch).
+          Hidden for an empty collection: there's nothing to toggle and a
+          standalone unchecked box reads as "this collection is off",
+          which would be misleading.
+        */}
+        <Show when={p.rules.length > 0}>
+          <Checkbox
+            state={
+              p.rules.every((r) => r.enabled)
+                ? "on"
+                : p.rules.every((r) => !r.enabled)
+                ? "off"
+                : "mixed"
+            }
+            title={
+              p.rules.every((r) => r.enabled)
+                ? t()("rules.disable")
+                : t()("rules.enable")
+            }
+            onClick={() => p.onToggleCollection(!p.rules.every((r) => r.enabled))}
+          />
+        </Show>
 
         <Show
           when={isRenaming()}
@@ -692,16 +743,13 @@ const RuleRow: Component<{
       onDragEnd={p.onDragEnd}
       class={`border rounded p-2 flex items-start gap-3 cursor-move ${effectivelyOn() ? "border-border bg-bg" : "border-border/50 bg-bg-subtle/30 opacity-70"} ${p.isDragging ? "opacity-40" : ""}`}
     >
-      <button
-        class={`mt-0.5 w-9 h-5 rounded-full relative transition shrink-0 ${p.rule.enabled ? "bg-accent" : "bg-bg-muted"}`}
-        title={p.rule.enabled ? t()("rules.disable") : t()("rules.enable")}
-        onClick={p.onToggle}
-      >
-        <span
-          class="absolute top-0.5 w-4 h-4 rounded-full bg-white transition"
-          style={{ left: p.rule.enabled ? "1.125rem" : "0.125rem" }}
+      <div class="mt-0.5">
+        <Checkbox
+          state={p.rule.enabled ? "on" : "off"}
+          title={p.rule.enabled ? t()("rules.disable") : t()("rules.enable")}
+          onClick={p.onToggle}
         />
-      </button>
+      </div>
       <div class="flex-1 min-w-0">
         <div class="flex items-baseline gap-2">
           <div class="font-medium text-sm truncate">{p.rule.name || t()("rules.unnamed_rule")}</div>
@@ -876,6 +924,54 @@ const RuleEditor: Component<{
   // pre-fix drafts (the createEffect-on-mount snapshots) would otherwise
   // keep the button perma-red for existing rules.
   const [dirty, setDirty] = createSignal(false);
+  // Toggle for the body textarea size. Big JSON stubs are common —
+  // the default 12rem height isn't enough to navigate them comfortably.
+  // Expanded grows the textarea to most of the viewport so the user
+  // can edit without paging through a tiny scroll window.
+  //
+  // Persisted globally (one preference for every rule editor): after
+  // Save the editor often re-mounts (parent re-fetches rules → <For>
+  // rekeys by new object identity → fresh RuleEditor instance), and
+  // losing the expanded state every save was annoying. Saving it to
+  // localStorage also covers the "switch between rules" case.
+  const BODY_EXPANDED_KEY = "pane.rules.body-expanded";
+  const initialBodyExpanded = (() => {
+    try {
+      return localStorage.getItem(BODY_EXPANDED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  })();
+  const [bodyExpanded, setBodyExpandedRaw] = createSignal(initialBodyExpanded);
+  const setBodyExpanded = (v: boolean) => {
+    setBodyExpandedRaw(v);
+    try {
+      localStorage.setItem(BODY_EXPANDED_KEY, v ? "1" : "0");
+    } catch {
+      // private mode / SSR — just lose persistence, signal still works
+    }
+  };
+  // Flash-message shown next to the Format button when JSON.parse
+  // fails. Null = nothing shown. Cleared after a short timeout so
+  // the user gets feedback without the message lingering on screen.
+  const [bodyFormatErr, setBodyFormatErr] = createSignal<string | null>(null);
+
+  const formatBodyJson = () => {
+    const raw = d().res_body_text;
+    if (!raw.trim()) {
+      setBodyFormatErr("empty");
+      setTimeout(() => setBodyFormatErr(null), 1800);
+      return;
+    }
+    try {
+      const pretty = JSON.stringify(JSON.parse(raw), null, 2);
+      if (pretty !== raw) patch({ res_body_text: pretty });
+      setBodyFormatErr(null);
+    } catch (e) {
+      setBodyFormatErr((e as Error).message ?? "invalid JSON");
+      setTimeout(() => setBodyFormatErr(null), 2500);
+    }
+  };
 
   // Persisting the in-progress draft is tied to actual user edits (one
   // funnel: `patch`). The earlier `createEffect`-based approach fired on
@@ -1242,8 +1338,40 @@ const RuleEditor: Component<{
         </FieldRow>
         <FieldRow label={t()("rules.body_label")}>
           <div class="flex-1">
+            <div class="flex items-center justify-end gap-1 mb-1">
+              <Show when={bodyFormatErr()}>
+                {(msg) => (
+                  <span class="text-xs text-danger truncate max-w-[260px]" title={msg()}>
+                    {msg() === "empty" ? "Body is empty" : `Invalid JSON: ${msg()}`}
+                  </span>
+                )}
+              </Show>
+              <button
+                type="button"
+                class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted disabled:opacity-50"
+                title="Pretty-print body as JSON (2-space indent)"
+                disabled={bodyLoading()}
+                onClick={formatBodyJson}
+              >
+                <Braces size={12} />
+                Format
+              </button>
+              <button
+                type="button"
+                class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted"
+                title={bodyExpanded() ? "Collapse body editor" : "Expand body editor"}
+                onClick={() => setBodyExpanded(!bodyExpanded())}
+              >
+                <Show when={bodyExpanded()} fallback={<Maximize2 size={12} />}>
+                  <Minimize2 size={12} />
+                </Show>
+                {bodyExpanded() ? "Collapse" : "Expand"}
+              </button>
+            </div>
             <textarea {...NO_AC}
-              class="w-full bg-bg border border-border rounded px-2 py-1 text-xs font-mono min-h-32"
+              class={`w-full bg-bg border border-border rounded px-2 py-1 text-xs font-mono resize-y ${
+                bodyExpanded() ? "h-[70vh] min-h-[400px]" : "h-48 min-h-32"
+              }`}
               placeholder={
                 bodyLoading()
                   ? t()("rules.body_loading_placeholder")
@@ -1372,6 +1500,43 @@ const Section: Component<{ title: string; children: any }> = (p) => (
     <div class="text-xs uppercase tracking-wide text-fg-muted mb-2">{p.title}</div>
     <div class="space-y-2">{p.children}</div>
   </div>
+);
+
+/**
+ * Tri-state checkbox used for per-rule and per-collection enable toggles.
+ * - "on"    → filled blue square with a white check.
+ * - "off"   → empty bordered square on the muted background.
+ * - "mixed" → filled blue square with a horizontal bar (collection has
+ *             both enabled and disabled rules).
+ *
+ * Stops click propagation so it doesn't trip drag handlers / collapse
+ * toggles on the surrounding row or section header.
+ */
+const Checkbox: Component<{
+  state: "on" | "off" | "mixed";
+  onClick: () => void;
+  title?: string;
+}> = (p) => (
+  <button
+    type="button"
+    class={`shrink-0 w-[18px] h-[18px] rounded-[3px] border inline-flex items-center justify-center transition ${
+      p.state === "off"
+        ? "bg-transparent border-fg-muted/50 hover:border-fg"
+        : "bg-accent border-transparent ring-1 ring-inset ring-white/10 hover:brightness-110"
+    }`}
+    title={p.title}
+    onClick={(e) => {
+      e.stopPropagation();
+      p.onClick();
+    }}
+  >
+    <Show when={p.state === "on"}>
+      <Check size={12} class="text-white" strokeWidth={3} />
+    </Show>
+    <Show when={p.state === "mixed"}>
+      <Minus size={12} class="text-white" strokeWidth={3} />
+    </Show>
+  </button>
 );
 
 const FieldRow: Component<{ label: string; help?: { path: string; title?: string }; children: any }> = (p) => (
