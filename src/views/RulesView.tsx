@@ -1,4 +1,4 @@
-import { type Component, createEffect, createSignal, createMemo, For, Index, Show, onMount } from "solid-js";
+import { type Component, createSignal, createMemo, For, Index, Show, onMount } from "solid-js";
 import {
   Plus,
   Trash2,
@@ -870,31 +870,28 @@ const RuleEditor: Component<{
   const [bodyLoading, setBodyLoading] = createSignal(false);
   // Goes true on the first user edit and back to false after a successful
   // save. Drives the Save button colour so the user can tell at a glance
-  // whether the open editor has unsaved changes. Restoring an in-progress
-  // draft from localStorage counts as having unsaved changes (it does).
-  const [dirty, setDirty] = createSignal(hadInitialDraft);
+  // whether the open editor has unsaved changes in *this* session — a
+  // restored localStorage draft does NOT start red because the user
+  // hasn't typed anything yet in the current editor instance, and stale
+  // pre-fix drafts (the createEffect-on-mount snapshots) would otherwise
+  // keep the button perma-red for existing rules.
+  const [dirty, setDirty] = createSignal(false);
 
+  // Persisting the in-progress draft is tied to actual user edits (one
+  // funnel: `patch`). The earlier `createEffect`-based approach fired on
+  // every `d()` change — including the post-mount body-load `setD` — and
+  // so wrote a no-edits snapshot to localStorage on first open. Next open
+  // saw "had draft" and started the Save button red without anything to
+  // actually save.
   const patch = (q: Partial<DraftState>) => {
-    setD({ ...d(), ...q });
+    const next = { ...d(), ...q };
+    setD(next);
     setDirty(true);
+    saveRuleDraft(draftKey, next);
   };
 
   const existingBodyId = createMemo(() => p.initial?.res_body_id ?? null);
   const existingBodySize = createMemo(() => p.initial?.res_body_size ?? 0);
-
-  // Persist the in-progress draft on every change. localStorage write
-  // is sync and well under a millisecond for a typical rule, so no
-  // debounce is needed at human typing rates. Skip the very first
-  // run when we just rehydrated FROM the store — pointless rewrite.
-  let skipNextSave = hadInitialDraft;
-  createEffect(() => {
-    const v = d();
-    if (skipNextSave) {
-      skipNextSave = false;
-      return;
-    }
-    saveRuleDraft(draftKey, v);
-  });
 
   // Load the existing response body into the textarea on open so the user
   // sees what's currently stored and can edit it in place. Skipped if
