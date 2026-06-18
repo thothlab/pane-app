@@ -868,8 +868,16 @@ const RuleEditor: Component<{
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
   const [bodyLoading, setBodyLoading] = createSignal(false);
+  // Goes true on the first user edit and back to false after a successful
+  // save. Drives the Save button colour so the user can tell at a glance
+  // whether the open editor has unsaved changes. Restoring an in-progress
+  // draft from localStorage counts as having unsaved changes (it does).
+  const [dirty, setDirty] = createSignal(hadInitialDraft);
 
-  const patch = (q: Partial<DraftState>) => setD({ ...d(), ...q });
+  const patch = (q: Partial<DraftState>) => {
+    setD({ ...d(), ...q });
+    setDirty(true);
+  };
 
   const existingBodyId = createMemo(() => p.initial?.res_body_id ?? null);
   const existingBodySize = createMemo(() => p.initial?.res_body_size ?? 0);
@@ -905,7 +913,9 @@ const RuleEditor: Component<{
       const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
       // Don't clobber if the user already started typing while we were loading.
       if (d().res_body_text.length === 0) {
-        patch({ res_body_text: text });
+        // Bypass `patch` to avoid marking the editor dirty — loading the
+        // existing body on open is not a user edit.
+        setD({ ...d(), res_body_text: text });
       }
     } catch (e) {
       console.warn("failed to load existing body for editing", e);
@@ -957,6 +967,7 @@ const RuleEditor: Component<{
       // Saved state is authoritative now — drop the in-progress draft
       // so the editor doesn't reopen on the stale pre-save snapshot.
       clearRuleDraft(draftKey);
+      setDirty(false);
       p.onSaved(saved);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
@@ -1278,7 +1289,7 @@ const RuleEditor: Component<{
           {t()("rules.cancel")}
         </button>
         <button
-          class="text-sm px-3 py-1.5 rounded bg-accent text-white hover:opacity-90 inline-flex items-center gap-1 disabled:opacity-50"
+          class={`text-sm px-3 py-1.5 rounded text-white hover:opacity-90 inline-flex items-center gap-1 disabled:opacity-50 ${dirty() ? "bg-danger" : "bg-accent"}`}
           onClick={save}
           disabled={busy() || bodyLoading()}
         >
