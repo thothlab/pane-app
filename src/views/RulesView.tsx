@@ -14,6 +14,7 @@ import {
   Upload,
 } from "lucide-solid";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { readClipboard } from "@/lib/clipboard";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import { t, tr } from "@/i18n";
@@ -1208,7 +1209,7 @@ const RuleEditor: Component<{
                 title={t()("rules.paste_header_title")}
                 onClick={async () => {
                   try {
-                    const text = await navigator.clipboard.readText();
+                    const text = await readClipboard();
                     const split = splitHeaderPair(text);
                     if (split) {
                       patch({ res_headers: [...d().res_headers, split] });

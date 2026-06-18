@@ -1,6 +1,7 @@
 import { type Component, createSignal, createMemo, Show, For } from "solid-js";
 import { ChevronRight, ChevronDown, Copy, Check } from "lucide-solid";
 import type { CaptureBodyDto } from "@/ipc/types";
+import { writeClipboard } from "@/lib/clipboard";
 import { t } from "@/i18n";
 
 type Mode = "tree" | "pretty" | "raw";
@@ -66,7 +67,7 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
   const [copied, setCopied] = createSignal(false);
   const copyAll = async () => {
     const t = mode() === "pretty" ? pretty() : (text() ?? "");
-    await navigator.clipboard.writeText(t);
+    await writeClipboard(t);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
@@ -541,7 +542,7 @@ const CopyButton: Component<{ getText: () => string; getPath: () => string }> = 
         title="Copy path"
         onClick={(e) => {
           e.stopPropagation();
-          navigator.clipboard.writeText(p.getPath());
+          void writeClipboard(p.getPath());
           setDone(true);
           setTimeout(() => setDone(false), 800);
         }}
@@ -553,7 +554,7 @@ const CopyButton: Component<{ getText: () => string; getPath: () => string }> = 
         title="Copy value"
         onClick={(e) => {
           e.stopPropagation();
-          navigator.clipboard.writeText(p.getText());
+          void writeClipboard(p.getText());
           setDone(true);
           setTimeout(() => setDone(false), 800);
         }}

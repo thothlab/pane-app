@@ -22,6 +22,7 @@ import {
 } from "@/stores/captures";
 import { filters, refreshFilters, saveFilter } from "@/stores/saved-filters";
 import HelpButton from "@/components/HelpButton";
+import { writeClipboard } from "@/lib/clipboard";
 import { t, tr } from "@/i18n";
 
 const FILTER_PALETTE = [
@@ -566,7 +567,7 @@ const CapturesView: Component = () => {
   const copyDump = async (captureId: string) => {
     try {
       const text = await buildHttpDump(captureId);
-      await writeToClipboard(text);
+      await writeClipboard(text);
       setAddToast(
         tr("captures.copy_dump_done", { bytes: String(text.length) }),
       );
@@ -581,40 +582,6 @@ const CapturesView: Component = () => {
       setTimeout(() => setAddToast(null), 3500);
     }
   };
-
-  // `navigator.clipboard.writeText` is the right API but it throws in
-  // WebKit/Chromium when the document isn't focused, or after the
-  // current user-activation has been consumed by an `await` chain.
-  // copyDump is exactly that case: by the time buildHttpDump's awaits
-  // resolve, the gesture is gone and writeText rejects with "Document
-  // is not focused" / "NotAllowedError" — visible to the user as a
-  // "copy failed" toast (the literal {message} we previously rendered
-  // was a separate i18n bug). The deprecated `execCommand('copy')`
-  // path runs synchronously and ignores focus, so it covers the
-  // post-await case without forcing us to add the Tauri clipboard
-  // plugin just for one copy site.
-  async function writeToClipboard(text: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch (primary) {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
-      ta.style.top = "0";
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
-      let ok = false;
-      try {
-        ok = document.execCommand("copy");
-      } finally {
-        document.body.removeChild(ta);
-      }
-      if (!ok) throw primary;
-    }
-  }
 
   const addToCollection = async (collectionId: string | null) => {
     const pos = addMenuPos();

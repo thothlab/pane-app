@@ -5,6 +5,7 @@ import { api } from "@/ipc/client";
 import type { CaptureBodyDto, CaptureDto } from "@/ipc/types";
 import BodyViewer from "./BodyViewer";
 import { HorizontalResizer } from "./HorizontalResizer";
+import { writeClipboard } from "@/lib/clipboard";
 import { t } from "@/i18n";
 
 type Tab = "overview" | "request" | "response" | "timing" | "tls";
@@ -81,7 +82,7 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
               class="text-xs px-2 py-1 rounded hover:bg-bg-muted"
               onClick={async () => {
                 const r = await api.captures.exportOne(full()!.id, "curl");
-                navigator.clipboard.writeText(r.text);
+                await writeClipboard(r.text);
               }}
             >
               {t()("detail.curl")}
@@ -185,17 +186,17 @@ const HeaderRow: Component<{ header: { name: string; value: string } }> = (p) =>
   };
   const copyName = (e: MouseEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(p.header.name);
+    void writeClipboard(p.header.name);
     flash("name");
   };
   const copyValue = (e: MouseEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(p.header.value);
+    void writeClipboard(p.header.value);
     flash("value");
   };
   const copyPair = (e: MouseEvent) => {
     e.stopPropagation();
-    navigator.clipboard.writeText(`${p.header.name}: ${p.header.value}`);
+    void writeClipboard(`${p.header.name}: ${p.header.value}`);
     flash("pair");
   };
   return (

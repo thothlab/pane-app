@@ -25,6 +25,7 @@ pub fn run() {
         // is verified against the minisign pubkey before install.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(app_state)
         // LogcatSessions tracks one shutdown-sender per open logcat
         // window so a second click on the Logcat button can detect

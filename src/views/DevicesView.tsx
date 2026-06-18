@@ -3,6 +3,7 @@ import { Smartphone, Plus, RefreshCw, RotateCw, Trash2, AlertCircle, CheckCircle
 import { invoke } from "@tauri-apps/api/core";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
+import { writeClipboard } from "@/lib/clipboard";
 import { t, tr } from "@/i18n";
 import type { DeviceDto, DiscoveredDeviceDto } from "@/ipc/types";
 
@@ -286,7 +287,7 @@ const ManualInstallGuide: Component<{ path: string }> = (p) => {
   const [copied, setCopied] = createSignal(false);
   const copyPath = async () => {
     try {
-      await navigator.clipboard.writeText(p.path);
+      await writeClipboard(p.path);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
