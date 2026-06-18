@@ -284,7 +284,7 @@ const en = {
     pause_hotkey: "Space",
     clear: "Clear",
     clear_hotkey: "⌘K",
-    auto_scroll: "Follow",
+    auto_scroll: "Tail",
     auto_scroll_title: "Auto-scroll to newest entry",
     follow_app_none: "Follow app: (off)",
     follow_app_title:

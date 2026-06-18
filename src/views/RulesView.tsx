@@ -21,6 +21,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { readClipboard } from "@/lib/clipboard";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
+import JsonEditor from "@/components/JsonEditor";
 import { t, tr } from "@/i18n";
 import {
   applyImport,
@@ -1368,21 +1369,24 @@ const RuleEditor: Component<{
                 {bodyExpanded() ? "Collapse" : "Expand"}
               </button>
             </div>
-            <textarea {...NO_AC}
-              class={`w-full bg-bg border border-border rounded px-2 py-1 text-xs font-mono resize-y ${
+            <div
+              class={`w-full ${
                 bodyExpanded() ? "h-[70vh] min-h-[400px]" : "h-48 min-h-32"
               }`}
-              placeholder={
-                bodyLoading()
-                  ? t()("rules.body_loading_placeholder")
-                  : existingBodyId()
-                  ? t()("rules.body_existing_placeholder")
-                  : t()("rules.body_new_placeholder")
-              }
-              disabled={bodyLoading()}
-              value={d().res_body_text}
-              onInput={(e) => patch({ res_body_text: e.currentTarget.value })}
-            />
+            >
+              <JsonEditor
+                value={d().res_body_text}
+                onInput={(v) => patch({ res_body_text: v })}
+                placeholder={
+                  bodyLoading()
+                    ? t()("rules.body_loading_placeholder")
+                    : existingBodyId()
+                    ? t()("rules.body_existing_placeholder")
+                    : t()("rules.body_new_placeholder")
+                }
+                disabled={bodyLoading()}
+              />
+            </div>
             <Show when={!!existingBodyId() && !bodyLoading()}>
               <div class="text-xs text-fg-muted mt-1">
                 {tr("rules.body_stored_note", { size: existingBodySize() })}
