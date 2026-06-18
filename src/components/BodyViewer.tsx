@@ -74,7 +74,14 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
 
   return (
     <div>
-      <div class="flex items-center gap-2 mb-2 text-fg-muted">
+      {/*
+        Sticky header so Tree/Pretty/Raw/Copy stay reachable while
+        scrolling long JSON. The parent scroll container is now
+        padding-free (see DetailPanes), so this bar pins flush to
+        the scroll port's top edge with `top: 0` and a solid `bg-bg`
+        background — no negative-margin tricks needed.
+      */}
+      <div class="sticky top-0 z-10 bg-bg px-3 py-2 flex items-center gap-2 text-fg-muted">
         <span>
           Body · {p.body.mime ?? "?"} · {p.body.total_size}B
           <Show when={p.body.truncated}> · truncated</Show>
@@ -103,30 +110,36 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
         </div>
       </div>
 
-      <Show when={p.body.truncated}>
-        <div class="mb-2 px-2 py-1 rounded bg-warn/10 text-warn border border-warn/30 text-xs">
-          Body truncated — showing first part only. Tree/Pretty view may be unavailable until full body is loaded.
-        </div>
-      </Show>
+      {/*
+        Horizontal padding is owned here (not on the parent scroll
+        container) so the sticky bar above can extend edge-to-edge.
+      */}
+      <div class="px-3 pb-2">
+        <Show when={p.body.truncated}>
+          <div class="mb-2 px-2 py-1 rounded bg-warn/10 text-warn border border-warn/30 text-xs">
+            Body truncated — showing first part only. Tree/Pretty view may be unavailable until full body is loaded.
+          </div>
+        </Show>
 
-      <Show when={text() === null}>
-        <div class="text-fg-muted italic">&lt;binary, {p.body.total_size} bytes&gt;</div>
-      </Show>
+        <Show when={text() === null}>
+          <div class="text-fg-muted italic">&lt;binary, {p.body.total_size} bytes&gt;</div>
+        </Show>
 
-      <Show when={text() !== null}>
-        <Show when={mode() === "tree" && kind() === "json"}>
-          <JsonTree raw={text()!} truncated={p.body.truncated} />
+        <Show when={text() !== null}>
+          <Show when={mode() === "tree" && kind() === "json"}>
+            <JsonTree raw={text()!} truncated={p.body.truncated} />
+          </Show>
+          <Show when={mode() === "tree" && kind() === "xml"}>
+            <XmlTree raw={text()!} />
+          </Show>
+          <Show when={mode() === "pretty"}>
+            <pre class="whitespace-pre-wrap break-all leading-snug">{pretty()}</pre>
+          </Show>
+          <Show when={mode() === "raw"}>
+            <pre class="whitespace-pre-wrap break-all leading-snug">{text()!}</pre>
+          </Show>
         </Show>
-        <Show when={mode() === "tree" && kind() === "xml"}>
-          <XmlTree raw={text()!} />
-        </Show>
-        <Show when={mode() === "pretty"}>
-          <pre class="whitespace-pre-wrap break-all leading-snug">{pretty()}</pre>
-        </Show>
-        <Show when={mode() === "raw"}>
-          <pre class="whitespace-pre-wrap break-all leading-snug">{text()!}</pre>
-        </Show>
-      </Show>
+      </div>
     </div>
   );
 };

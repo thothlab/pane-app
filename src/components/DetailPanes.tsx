@@ -320,10 +320,16 @@ const HeadersBodySplit: Component<{
         />
       </Show>
 
-      <div class="min-h-0 overflow-auto px-3 py-2">
+      {/*
+        No padding here — the BodyViewer owns its horizontal padding
+        so its sticky header bar can pin flush to the scroll port's
+        top edge without a visible JSON-text strip leaking through
+        any padding-top region above it.
+      */}
+      <div class="min-h-0 overflow-auto">
         <Show
           when={p.body}
-          fallback={<div class="text-fg-muted italic">No body</div>}
+          fallback={<div class="text-fg-muted italic px-3 py-2">No body</div>}
         >
           <BodyViewer body={p.body!} onLoadFull={p.onLoadFull} />
         </Show>
