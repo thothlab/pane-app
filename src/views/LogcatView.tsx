@@ -539,12 +539,25 @@ const LogcatView: Component = () => {
   // on length alone would freeze auto-scroll at saturation, which was
   // the "logcat stopped updating" bug users hit on long-running
   // sessions.
+  //
+  // We go through virtualizer.scrollToIndex rather than setting
+  // scrollEl.scrollTop directly: a manual scrollTop write fires the
+  // browser scroll event ASYNC, and until that event reaches the
+  // virtualizer's offset observer its internal range is still pinned
+  // at the previous position. For one or two frames the rendered
+  // virtual rows live way above the new (taller) content's bottom and
+  // the viewport paints blank — that was the per-second flicker users
+  // saw in the firehose. scrollToIndex updates the virtualizer's own
+  // offset signal coherently, so getVirtualItems() returns the new
+  // tail range in the same render pass.
   createEffect(() => {
     void visible();
     if (!autoScroll() || !scrollEl) return;
+    const count = visible().length;
+    if (count === 0) return;
     queueMicrotask(() => {
       if (!scrollEl) return;
-      scrollEl.scrollTop = scrollEl.scrollHeight;
+      virtualizer.scrollToIndex(count - 1, { align: "end" });
       lastScrollTop = scrollEl.scrollTop;
     });
   });
@@ -634,8 +647,9 @@ const LogcatView: Component = () => {
       // the new bottom; the explicit scroll here just covers the
       // case where pending was empty.
       scheduleFlush();
-      if (scrollEl) {
-        scrollEl.scrollTop = scrollEl.scrollHeight;
+      const count = visible().length;
+      if (scrollEl && count > 0) {
+        virtualizer.scrollToIndex(count - 1, { align: "end" });
         lastScrollTop = scrollEl.scrollTop;
       }
     }
