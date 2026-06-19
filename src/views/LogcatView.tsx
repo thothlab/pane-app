@@ -163,7 +163,19 @@ const LogcatView: Component = () => {
   // no race between two separate poll cycles, and no chance for an
   // adb hiccup on one of them to flicker the filtered view back to
   // empty.
-  const [pidNames, setPidNames] = createSignal<Map<number, string>>(new Map());
+  // PID → set of every process-name ever seen on that PID. Set rather
+  // than a single string because Android reuses PIDs across process
+  // restarts: a tester's app dies and respawns with the same number
+  // but Linux still cycles through PIDs eventually, so `ps -A` polled
+  // 10s later can return that PID under a different package. The old
+  // "Map<pid, string>" overwrote the previous binding on every poll —
+  // and ALL of that PID's already-buffered entries (from when it was
+  // ru.lewis.dbo, say) would silently drop out of an `app:ru.lewis.dbo`
+  // filter the moment the next poll landed, manifesting as "Pause
+  // empties the list" because pause coincided with the next poll
+  // tick. Accumulating names per PID means once an entry matched the
+  // filter, it keeps matching even after that PID has been recycled.
+  const [pidNames, setPidNames] = createSignal<Map<number, Set<string>>>(new Map());
 
   // Resizable column widths. Persisted in localStorage so a user's
   // preferred layout survives close/reopen of the logcat window.
@@ -355,10 +367,12 @@ const LogcatView: Component = () => {
     const neg = apps.filter((a) => a.negate).map((a) => a.pkg.trim().toLowerCase()).filter(Boolean);
     const include = new Set<number>();
     const exclude = new Set<number>();
-    for (const [pid, name] of pidNames()) {
-      const lower = name.toLowerCase();
-      if (pos.some((n) => lower.includes(n))) include.add(pid);
-      if (neg.some((n) => lower.includes(n))) exclude.add(pid);
+    for (const [pid, names] of pidNames()) {
+      for (const name of names) {
+        const lower = name.toLowerCase();
+        if (pos.some((n) => lower.includes(n))) include.add(pid);
+        if (neg.some((n) => lower.includes(n))) exclude.add(pid);
+      }
     }
     return { include, exclude, hasPositive: pos.length > 0 };
   });
@@ -368,14 +382,18 @@ const LogcatView: Component = () => {
   // numeric pid is also matched as a string so `search:1234` finds
   // entries from that pid even when the App column is empty.
   const searchLower = createMemo(() => search().trim().toLowerCase());
-  const matchesSearch = (e: LogEntry, term: string, names: Map<number, string>): boolean => {
+  const matchesSearch = (e: LogEntry, term: string, names: Map<number, Set<string>>): boolean => {
     if (!term) return true;
     if (e.tag.toLowerCase().includes(term)) return true;
     if (e.message.toLowerCase().includes(term)) return true;
     if (String(e.pid).includes(term)) return true;
     if (e.timestamp.toLowerCase().includes(term)) return true;
-    const name = names.get(e.pid);
-    if (name && name.toLowerCase().includes(term)) return true;
+    const set = names.get(e.pid);
+    if (set) {
+      for (const name of set) {
+        if (name.toLowerCase().includes(term)) return true;
+      }
+    }
     return false;
   };
 
@@ -414,7 +432,20 @@ const LogcatView: Component = () => {
         setPidNames((prev) => {
           const next = new Map(prev);
           for (const [k, v] of Object.entries(raw)) {
-            next.set(Number(k), v);
+            const pid = Number(k);
+            const existing = next.get(pid);
+            if (existing) {
+              if (!existing.has(v)) {
+                // Clone before mutating so any consumer holding the
+                // previous set reference still sees the value it was
+                // handed (memo identity invariant).
+                const merged = new Set(existing);
+                merged.add(v);
+                next.set(pid, merged);
+              }
+            } else {
+              next.set(pid, new Set([v]));
+            }
           }
           return next;
         });
@@ -1327,7 +1358,17 @@ const LogcatView: Component = () => {
                 return (
                   <Show when={e()}>
                     {(entry) => {
-                      const appName = () => pidNames().get(entry().pid) ?? "";
+                      // Show the most-recently-seen name for this PID.
+                      // Set preserves insertion order, so the last
+                      // value is the latest name learned from the
+                      // 10s poll.
+                      const appName = () => {
+                        const set = pidNames().get(entry().pid);
+                        if (!set || set.size === 0) return "";
+                        let last = "";
+                        for (const n of set) last = n;
+                        return last;
+                      };
                       const pidStr = () =>
                         entry().pid > 0 ? String(entry().pid) : "";
                       return (
