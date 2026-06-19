@@ -257,9 +257,9 @@ context menu:
 - **Add to rules** — pre-fills a stub rule from this capture (see
   [Response stubs](/docs/rules/) → "Quick path from Captures").
 
-The **Follow** toggle on the toolbar pins the list to the latest
+The **Tail** toggle on the toolbar pins the list to the latest
 entry. Turn it off (or scroll up) and the list freezes — periodic
-fetches pause until you click Follow again or scroll to the bottom,
+fetches pause until you click Tail again or scroll to the bottom,
 so you can read older entries without the table reflowing under
 your eye. Filter changes still take effect immediately.
 
@@ -293,11 +293,11 @@ What's inside:
   soft red row background.
 - **Pause** (Space) — freezes the buffer, the upstream stream keeps
   running on the backend. **Clear** (⌘K) — wipes the buffer.
-  **Follow** — auto-scroll to newest entry; turns off automatically
-  if you scroll up. While Follow is off, incoming batches are held
+  **Tail** — auto-scroll to newest entry; turns off automatically
+  if you scroll up. While Tail is off, incoming batches are held
   on the side (no FIFO churn under your viewport — the table stays
   rock-still) and the status bar shows a **+N new** badge. Toggling
-  Follow back on (or scrolling all the way down) drains them and
+  Tail back on (or scrolling all the way down) drains them and
   resumes auto-scroll.
 - **Follow app** — dropdown of installed third-party packages.
   Pick one → backend resolves PID via `adb shell pidof` every 5s,

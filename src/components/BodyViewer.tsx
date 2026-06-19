@@ -2,6 +2,7 @@ import { type Component, createSignal, createMemo, Show, For } from "solid-js";
 import { ChevronRight, ChevronDown, Copy, Check } from "lucide-solid";
 import type { CaptureBodyDto } from "@/ipc/types";
 import { writeClipboard } from "@/lib/clipboard";
+import { highlightJson } from "@/lib/json-highlight";
 import { t } from "@/i18n";
 
 type Mode = "tree" | "pretty" | "raw";
@@ -133,7 +134,20 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
             <XmlTree raw={text()!} />
           </Show>
           <Show when={mode() === "pretty"}>
-            <pre class="whitespace-pre-wrap break-all leading-snug">{pretty()}</pre>
+            {/*
+              Same tokenizer as the rules JsonEditor — XML/text bodies
+              stay plain since the regex would only catch noise. JSON
+              with a parse error falls back to the raw `pretty()`
+              string (which equals the source text in that case), so
+              the user still sees their content uncoloured rather
+              than blank.
+            */}
+            <Show
+              when={kind() === "json"}
+              fallback={<pre class="whitespace-pre-wrap break-all leading-snug">{pretty()}</pre>}
+            >
+              <pre class="whitespace-pre-wrap break-all leading-snug">{highlightJson(pretty())}</pre>
+            </Show>
           </Show>
           <Show when={mode() === "raw"}>
             <pre class="whitespace-pre-wrap break-all leading-snug">{text()!}</pre>

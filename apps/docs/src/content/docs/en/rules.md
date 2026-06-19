@@ -21,6 +21,29 @@ When you pick one, Pane creates a stub rule pre-filled from the captured request
 
 The Rules tab is also pre-aimed at this new rule's editor — switch tabs and you can tweak name, body, headers and hit Save.
 
+## Response body editor
+
+The response body lives in a JSON-aware textarea: object keys, strings, numbers, `true`/`false`/`null` are colour-coded inline against the Pane theme. Highlighting is done by a transparent textarea sitting on top of a `<pre>` with a small regex tokenizer — no external editor libraries, no install hit.
+
+Two buttons sit next to the field label:
+
+- **Format** (`{ }`) — runs `JSON.parse → JSON.stringify(..., null, 2)` (2-space indent). Invalid JSON flashes an inline "Invalid JSON: …" message for 2.5 s without touching the content. Empty body shows "Body is empty". Format counts as an edit — Save will turn red.
+- **Expand / Collapse** — toggles the textarea height between compact (~12 rem ≈ 12 rows) and tall (70vh, 400 px minimum). State is persisted to `localStorage` — open a big JSON once, every editor afterwards opens already expanded.
+
+## Unsaved-changes indicator
+
+The **Save** button turns red as soon as the user edits any field (name, host glob, method, status, headers, body, patches, …) and goes back to blue after a successful save. On a save error it stays red so you can see the work hasn't shipped. The flag is local to the current editor instance: rehydrating an in-progress draft from `localStorage` does NOT light Save red, because nothing was typed in this session yet.
+
+## Checkbox toggles
+
+Each rule row has a small checkbox on the left (enabled/disabled, replacing the previous pill switch). The collection header has the same checkbox next to its chevron:
+
+- every rule enabled → check, clicking disables everything;
+- every rule disabled → empty box, clicking enables everything;
+- mixed → minus (`−`) inside the box, clicking enables everything.
+
+A single click only flips the rules whose current state differs from the target — the rest are left alone.
+
 ## Editor state is preserved
 
 Rules-tab state now survives both tab switches and full app restarts:
