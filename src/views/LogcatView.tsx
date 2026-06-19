@@ -610,7 +610,15 @@ const LogcatView: Component = () => {
   const onScroll = () => {
     if (!scrollEl) return;
     const cur = scrollEl.scrollTop;
-    if (cur < lastScrollTop - 4 && autoScroll()) {
+    // Don't read a scroll event as "user scrolled up" when the
+    // content just collapsed under them — e.g. Clear empties
+    // entries(), the inner div height drops to 0, the browser snaps
+    // scrollTop from its previous high value down to 0, and the OFF
+    // transition below would interpret that as the user fleeing the
+    // bottom and silently turn Tail off. Gate the OFF flip on there
+    // being something to scroll through; with zero rows there is no
+    // "scrolled up" state, only emptiness.
+    if (cur < lastScrollTop - 4 && autoScroll() && visible().length > 0) {
       setAutoScroll(false);
     } else if (!autoScroll() && cur > lastScrollTop) {
       const atBottom =
@@ -629,6 +637,14 @@ const LogcatView: Component = () => {
     pendingTotal = 0;
     setPendingCount(0);
     setEntries([]);
+    // The scroll port is about to collapse to 0 height; reset the
+    // baseline now so the post-collapse scroll event compares a
+    // 0 against a 0 instead of a 0 against the old (huge) value.
+    // Belt-and-braces with the visible().length > 0 guard in
+    // onScroll — that one already blocks the OFF flip, this one
+    // keeps lastScrollTop coherent for whatever scroll happens
+    // next.
+    lastScrollTop = 0;
   };
 
   /// Serialize the currently-visible entries (after filter + follow-app
