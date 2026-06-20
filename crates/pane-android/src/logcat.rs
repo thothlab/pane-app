@@ -13,12 +13,17 @@
 //!   - on EOF / read-error / parse panic the task reconnects with
 //!     exponential backoff (0.5s → 10s, capped at 5 tries) so a
 //!     `adb` daemon restart or USB reseat doesn't break the window,
-//!   - the `BufReader` swallows broken UTF-8 cleanly because
-//!     `lines()` is built on a `String`-replacing `read_until` chain
-//!     in tokio — invalid bytes get replaced with U+FFFD rather than
-//!     killing the stream (verified empirically on Samsung devices
-//!     that emit chunked JSON payloads that occasionally split a
-//!     codepoint).
+//!   - broken UTF-8 is handled by reading raw bytes with
+//!     `read_until(b'\n')` and decoding each line via
+//!     `String::from_utf8_lossy` (invalid bytes → U+FFFD). We do NOT
+//!     use `BufReader::lines()`: tokio's `next_line()` returns an
+//!     `InvalidData` error ("stream did not contain valid UTF-8") the
+//!     instant the stream carries a non-UTF-8 byte, and Android
+//!     devices routinely emit Latin-1 / binary fragments inside log
+//!     messages. That error used to break the read loop and force a
+//!     reconnect — which re-dumps the whole ring buffer — so a single
+//!     bad byte per second put the window into a permanent reconnect
+//!     storm that replayed stale history as fresh batches.
 //!
 //! Why batching at this layer: logcat on a busy device runs 1000+
 //! lines/sec. Emitting one Tauri IPC event per line saturates the
@@ -250,11 +255,18 @@ pub fn spawn(
                     continue;
                 }
             };
-            let mut reader = BufReader::new(stdout).lines();
+            let mut reader = BufReader::new(stdout);
             // On successful connect, reset the attempt counter.
             attempt = 0;
             let mut batch: Vec<LogEntry> = Vec::with_capacity(cfg.batch_size);
             let mut last_flush = Instant::now();
+            // Reused per-line byte buffer. We read raw bytes and
+            // lossily decode (see module docs) instead of going through
+            // `BufReader::lines()`, which errors out on the first
+            // non-UTF-8 byte. A `\n` byte never appears inside a
+            // multi-byte UTF-8 sequence, so decoding one line at a time
+            // can't split a codepoint.
+            let mut line_buf: Vec<u8> = Vec::with_capacity(1024);
 
             'stream: loop {
                 let deadline = last_flush + cfg.flush_interval;
@@ -266,19 +278,9 @@ pub fn spawn(
                         let _ = child.kill().await;
                         return;
                     }
-                    line = reader.next_line() => {
-                        match line {
-                            Ok(Some(l)) => {
-                                if let Some(entry) = parse_logcat_line(&l) {
-                                    batch.push(entry);
-                                    if batch.len() >= cfg.batch_size {
-                                        on_event(LogcatEvent::Batch(std::mem::take(&mut batch)));
-                                        batch.reserve(cfg.batch_size);
-                                        last_flush = Instant::now();
-                                    }
-                                }
-                            }
-                            Ok(None) => {
+                    read = reader.read_until(b'\n', &mut line_buf) => {
+                        match read {
+                            Ok(0) => {
                                 // EOF — usually means adb-server hiccup
                                 // or device disconnected. Flush, drop
                                 // child, reconnect with backoff.
@@ -289,6 +291,20 @@ pub fn spawn(
                                 attempt += 1;
                                 tracing::info!(serial = %cfg.serial, "logcat: stream EOF, will retry");
                                 break 'stream;
+                            }
+                            Ok(_) => {
+                                // `read_until` keeps the trailing `\n`;
+                                // `parse_logcat_line` trims it.
+                                let line = String::from_utf8_lossy(&line_buf);
+                                if let Some(entry) = parse_logcat_line(&line) {
+                                    batch.push(entry);
+                                    if batch.len() >= cfg.batch_size {
+                                        on_event(LogcatEvent::Batch(std::mem::take(&mut batch)));
+                                        batch.reserve(cfg.batch_size);
+                                        last_flush = Instant::now();
+                                    }
+                                }
+                                line_buf.clear();
                             }
                             Err(e) => {
                                 tracing::warn!(error = %e, "logcat: read error");
@@ -366,6 +382,24 @@ mod tests {
         let e = parse_logcat_line("\tat com.example.Foo.bar(Foo.java:42)").unwrap();
         assert_eq!(e.timestamp, "");
         assert!(e.message.contains("Foo.java:42"));
+    }
+
+    #[test]
+    fn invalid_utf8_line_decodes_lossily_and_parses() {
+        // A threadtime line with a stray Latin-1 byte (0xE9 = 'é' in
+        // Latin-1, invalid as standalone UTF-8) must not kill the
+        // stream: we lossy-decode the raw bytes the same way the read
+        // loop does and the line still parses into an entry.
+        let mut bytes: Vec<u8> =
+            b"04-13 12:34:56.789  1234  5678 E Tag: caf".to_vec();
+        bytes.push(0xE9); // invalid UTF-8 here
+        bytes.extend_from_slice(b" done\n");
+        let line = String::from_utf8_lossy(&bytes);
+        let e = parse_logcat_line(&line).expect("should parse");
+        assert_eq!(e.level, LogLevel::Error);
+        assert_eq!(e.tag, "Tag");
+        assert!(e.message.contains("done"));
+        assert!(e.message.contains('\u{FFFD}')); // replacement char
     }
 
     #[test]
