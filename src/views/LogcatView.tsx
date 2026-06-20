@@ -397,26 +397,32 @@ const LogcatView: Component = () => {
     return false;
   };
 
-  const visible = createMemo(() => {
+  // The single source of truth for "does this entry pass the current
+  // filter?" — DSL predicate + app:<pkg> PID gate + substring search,
+  // combined. Shared by visible() (the rendered table) and the "+N new"
+  // badge's pending count, so the badge reflects how many *filtered*
+  // rows will appear on Tail rather than the raw firehose total. A
+  // positive `app:X` whose package isn't running leaves `include` empty
+  // → every entry fails the `!include.has(e.pid)` gate → empty result,
+  // which surfaces the "app not running" state (same as the old
+  // explicit early-return).
+  const filterPredicate = createMemo(() => {
     const { predicate, appPackages } = matcher();
     const { include, exclude, hasPositive } = appPids();
     const term = searchLower();
     const names = pidNames();
-    const all = entries();
-    const filterByDsl = (e: LogEntry) => {
+    return (e: LogEntry): boolean => {
       if (appPackages.length > 0) {
         if (hasPositive && !include.has(e.pid)) return false;
         if (exclude.has(e.pid)) return false;
       }
-      return predicate(e);
+      if (!predicate(e)) return false;
+      if (term && !matchesSearch(e, term, names)) return false;
+      return true;
     };
-    // Positive app:X is in the filter but the package isn't currently
-    // running → include is empty → nothing matches, surfacing the
-    // "app not running" state via an empty list.
-    if (appPackages.length > 0 && hasPositive && include.size === 0) return [];
-    if (!term) return all.filter(filterByDsl);
-    return all.filter((e) => filterByDsl(e) && matchesSearch(e, term, names));
   });
+
+  const visible = createMemo(() => entries().filter(filterPredicate()));
 
   // Poll PID → process-name snapshot. 10s cadence is enough — process
   // launches/exits are infrequent on a Logcat-watch timescale, and
@@ -470,11 +476,36 @@ const LogcatView: Component = () => {
   let flushScheduled = false;
   let rafHandle: number | undefined;
   // Surfaced in the status bar as a "+N new" badge so the user can
-  // see the stream is still alive while their view is frozen.
-  // Only updated while !autoScroll(); under Follow ON, pending
-  // drains within one rAF tick and a transient setter would flash
-  // the badge on every batch.
+  // see the stream is still alive while their view is frozen. Counts
+  // only entries that pass the active filter — i.e. the number of rows
+  // that will actually appear in the table when Tail re-engages, not
+  // the raw firehose total. Only updated while !autoScroll(); under
+  // Follow ON, pending drains within one rAF tick and a transient
+  // setter would flash the badge on every batch.
   const [pendingCount, setPendingCount] = createSignal(0);
+
+  // Re-derive the filtered pending count from scratch over the whole
+  // `pending` buffer. Used for the cases where the running incremental
+  // total can't be patched cheaply: a FIFO drop from the front, the
+  // filter/search changing, or Tail being switched off (establishes the
+  // baseline). No-op under Follow ON — the badge is hidden then.
+  const recountPending = () => {
+    if (autoScroll()) return;
+    const pred = filterPredicate();
+    let n = 0;
+    for (const batch of pending) {
+      for (const e of batch) if (pred(e)) n++;
+    }
+    setPendingCount(n);
+  };
+
+  // When the filter/search changes (or Tail flips off) while frozen,
+  // recompute the badge so it tracks the active filter over everything
+  // already held in `pending`.
+  createEffect(() => {
+    filterPredicate();
+    if (!autoScroll()) recountPending();
+  });
 
   // Coalesce incoming batches through requestAnimationFrame: when
   // adb logcat is first attached, the ring buffer dumps thousands
@@ -535,11 +566,26 @@ const LogcatView: Component = () => {
       // Cap pending at MAX_ENTRIES so a user who scrolls up and
       // walks away doesn't blow out memory. FIFO drop from the
       // front — same as the entries() ring buffer.
+      let didDrop = false;
       while (pendingTotal > MAX_ENTRIES && pending.length > 0) {
         const dropped = pending.shift()!;
         pendingTotal -= dropped.length;
+        didDrop = true;
       }
-      if (!autoScroll()) setPendingCount(pendingTotal);
+      // Update the filtered "+N new" badge while frozen. A drop
+      // invalidates the running total (we don't track how many of the
+      // dropped batch matched), so recount fully on that rare path;
+      // otherwise just add this batch's matches.
+      if (!autoScroll()) {
+        if (didDrop) {
+          recountPending();
+        } else {
+          const pred = filterPredicate();
+          let add = 0;
+          for (const en of e.payload) if (pred(en)) add++;
+          if (add > 0) setPendingCount(pendingCount() + add);
+        }
+      }
       scheduleFlush();
     }).then((u) => (unlistenBatch = u));
 
