@@ -211,10 +211,11 @@ const DeviceRow: Component<{
 }> = (p) => {
   const state = () => caState(p.device);
   const isFullyReady = () => p.device.state === "ready" && state() === "auto_succeeded";
-  // Expand the manual-install guide by default for fresh manual_required
-  // devices — the user just clicked Add and needs to see what to do next.
-  // Once they've installed and there's no warning to surface, collapse it.
-  const [guideOpen, setGuideOpen] = createSignal(state() === "manual_required");
+  // The manual-install guide is collapsed by default — it's a tall block
+  // and distracts from the device list. The "Almost there…" warning line
+  // already signals that action is needed; the chevron next to "How to
+  // install the CA certificate" expands the steps on demand.
+  const [guideOpen, setGuideOpen] = createSignal(false);
 
   return (
     <li class="rounded border border-border bg-bg-subtle">
