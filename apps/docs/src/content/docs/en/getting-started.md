@@ -82,7 +82,10 @@ show a warning — click **More info → Run anyway**.
      watchdog that clears the proxy when you unplug USB (see "Helper
      APK" below).
 5. On Android without root — follow the manual-install guide in the
-   Devices row (collapsible "How to install the CA certificate" block).
+   Devices row. The "How to install the CA certificate" block is
+   collapsed by default (it's tall and distracts from the device list);
+   click the header to expand the step-by-step guide and the
+   `pane-ca.pem` path.
 6. On iOS — confirm the profile in Settings → Profile Downloaded.
 
 The next request your app makes is a capture in the list. Click a row
@@ -296,8 +299,11 @@ What's inside:
   **Tail** — auto-scroll to newest entry; turns off automatically
   if you scroll up. While Tail is off, incoming batches are held
   on the side (no FIFO churn under your viewport — the table stays
-  rock-still) and the status bar shows a **+N new** badge. Toggling
-  Tail back on (or scrolling all the way down) drains them and
+  rock-still) and the status bar shows a **+N new** badge counting
+  only rows that pass the active filter (exactly how many will land
+  in the table when you re-enable Tail; if nothing matches the filter
+  there's no badge — no more empty "+N" from the background firehose).
+  Toggling Tail back on (or scrolling all the way down) drains them and
   resumes auto-scroll.
 - **Follow app** — dropdown of installed third-party packages.
   Pick one → backend resolves PID via `adb shell pidof` every 5s,
@@ -353,6 +359,12 @@ Safety bits:
   `WindowEvent::Destroyed` + `kill_on_drop`).
 - EOF / stream break (USB reseat, adb-server restart) → automatic
   reconnect with backoff 0.5s → 10s, capped at 5 attempts.
+- The stream is **byte-safe**: lines are read as raw bytes and decoded
+  with `from_utf8_lossy` (bad bytes → `�`). Android devices routinely
+  emit non-UTF-8 (Latin-1/binary) inside log messages; previously a
+  single such byte broke the read loop into an endless reconnect that
+  re-dumped the whole ring buffer — the table "repainted" while
+  timestamps stood still. One bad byte no longer breaks the stream.
 - Entries are emitted in **batches** (50 lines or 100ms, whichever
   comes first) so a 1000+ lines/sec firehose doesn't lock the
   Solid reactor.

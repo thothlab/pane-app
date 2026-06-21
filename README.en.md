@@ -4,7 +4,7 @@
 
 A modern HTTPS network debugger focused on one thing: making mobile-device setup take 30 seconds instead of 15 minutes. Plug your iPhone or Android in over USB, click **Add**, and start inspecting traffic — no Settings dance, no certificate trust spelunking, no Wi-Fi proxy editing.
 
-> **Status:** under active development, shipping regular tagged releases with in-app auto-update via GitHub Releases. Cross-platform shell, proxy engine (HTTP/1.1 with TLS MITM), capture/replay storage, response stubs and patches, device-setup pipelines, JSON-highlighted rule editor, sticky body-panel header, collection-level checkbox toggles — all in. CI/release builds signed bundles for macOS / Linux / Windows on every tag. See the [documentation](https://pane.thothlab.tech/docs/) for user-facing features and setup.
+> **Status:** under active development, shipping regular tagged releases with in-app auto-update via GitHub Releases. Cross-platform shell, proxy engine (HTTP/1.1 with TLS MITM), capture/replay storage, response stubs and patches, device-setup pipelines, JSON-highlighted rule editor, sticky body-panel header, collection-level checkbox toggles, a standalone per-device Logcat window (filter DSL + search, byte-safe stream that tolerates non-UTF-8 device output) — all in. CI/release builds signed bundles for macOS / Linux / Windows on every tag. See the [documentation](https://pane.thothlab.tech/docs/) for user-facing features and setup.
 
 ## What's inside
 
@@ -30,7 +30,7 @@ pnpm install
 pnpm tauri:dev
 ```
 
-Click **Start proxy** in the lower-left. Then **Devices → Add device** — Pane installs the root CA over USB (fully auto on iOS and rooted Android; on non-root Android it pushes the file and shows an inline manual-install walkthrough), wires up `adb reverse`, and sets both `http_proxy` (primary, for OkHttp/native stacks) and `http_proxy_pac` (bonus for Chromium) on Android. On Android, Pane also installs a tiny companion APK (~4 MB) — a heartbeat watchdog that automatically clears the proxy when you unplug USB so the device keeps its internet. Traffic starts populating the **Captures** view.
+Click **Start proxy** in the lower-left. Then **Devices → Add device** — Pane installs the root CA over USB (fully auto on iOS and rooted Android; on non-root Android it pushes the file and shows an inline manual-install walkthrough in a collapsible block), wires up `adb reverse`, and sets both `http_proxy` (primary, for OkHttp/native stacks) and `http_proxy_pac` (bonus for Chromium) on Android. On Android, Pane also installs a tiny companion APK (~4 MB) — a heartbeat watchdog that automatically clears the proxy when you unplug USB so the device keeps its internet. Traffic starts populating the **Captures** view.
 
 ## How it compares
 

@@ -4,7 +4,7 @@
 
 Современный HTTPS-отладчик сетевых запросов, заточенный под одну вещь: настройка мобильного устройства за 30 секунд вместо 15 минут. Подключи iPhone или Android по USB, нажми **Add**, и начни смотреть трафик — без танцев в Settings, без ручной возни с trust store, без редактирования Wi-Fi-прокси.
 
-> **Статус:** активная разработка, регулярные релизы с авто-обновлением через GitHub Releases. На месте кроссплатформенный shell, proxy engine (HTTP/1.1 с TLS MITM), capture/replay storage, подмена и патчинг ответов, USB-настройка устройств, JSON-подсветка в редакторе правил, sticky-шапка body-панели, чекбокс-тогглеры коллекций. CI/release-пайплайн собирает signed-бандлы для macOS / Linux / Windows на каждый tag. Пользовательская документация — на [pane.thothlab.tech/docs](https://pane.thothlab.tech/docs/).
+> **Статус:** активная разработка, регулярные релизы с авто-обновлением через GitHub Releases. На месте кроссплатформенный shell, proxy engine (HTTP/1.1 с TLS MITM), capture/replay storage, подмена и патчинг ответов, USB-настройка устройств, JSON-подсветка в редакторе правил, sticky-шапка body-панели, чекбокс-тогглеры коллекций, отдельное окно Logcat на устройство (фильтр-DSL + поиск, байт-безопасный поток, устойчивый к не-UTF-8 выводу устройства). CI/release-пайплайн собирает signed-бандлы для macOS / Linux / Windows на каждый tag. Пользовательская документация — на [pane.thothlab.tech/docs](https://pane.thothlab.tech/docs/).
 
 ## Что внутри
 
@@ -30,7 +30,7 @@ pnpm install
 pnpm tauri:dev
 ```
 
-Нажми **Start proxy** в нижнем левом углу. Дальше **Devices → Add device** — Pane через USB поставит root CA (полный авто на iOS и рутованном Android; на non-root Android — пушит файл и показывает inline-инструкцию для one-time manual install), пробросит порты через `adb reverse` и выставит на Android **оба** `http_proxy` (для OkHttp/нативных стеков) и `http_proxy_pac` (для Chromium). На Android также автоматически ставится companion APK (~4 MB) — heartbeat-watchdog, который автоматически снимает прокси с устройства при выдёргивании USB, чтобы интернет не пропадал. После этого трафик начнёт попадать в **Captures**.
+Нажми **Start proxy** в нижнем левом углу. Дальше **Devices → Add device** — Pane через USB поставит root CA (полный авто на iOS и рутованном Android; на non-root Android — пушит файл и показывает inline-инструкцию для one-time manual install в сворачиваемом блоке), пробросит порты через `adb reverse` и выставит на Android **оба** `http_proxy` (для OkHttp/нативных стеков) и `http_proxy_pac` (для Chromium). На Android также автоматически ставится companion APK (~4 MB) — heartbeat-watchdog, который автоматически снимает прокси с устройства при выдёргивании USB, чтобы интернет не пропадал. После этого трафик начнёт попадать в **Captures**.
 
 ## Чем отличается от других
 
