@@ -39,6 +39,53 @@ fn serial_tail(serial: &str) -> String {
     }
 }
 
+/// Manufacturer / marketing-model / Android-release for a device, in one
+/// `adb shell` round-trip (three `getprop`s chained with `;` so the
+/// attached-list refresh stays one call per device). Missing props come
+/// back as empty strings — `getprop` prints a blank line for an unset
+/// key, so the line count is stable.
+async fn probe_device_props(serial: &str) -> (String, String, String) {
+    let out = run(
+        "adb",
+        &[
+            "-s",
+            serial,
+            "shell",
+            "getprop ro.product.manufacturer; getprop ro.product.model; \
+             getprop ro.build.version.release",
+        ],
+    )
+    .await
+    .unwrap_or_default();
+    let mut lines = out.lines();
+    let manufacturer = lines.next().unwrap_or("").trim().to_string();
+    let model = lines.next().unwrap_or("").trim().to_string();
+    let android_release = lines.next().unwrap_or("").trim().to_string();
+    (manufacturer, model, android_release)
+}
+
+/// The device-row label, shared by the attached-over-USB list
+/// (`discover`) and the paired list (`add_usb`) so the same device reads
+/// identically in both: `"<manufacturer> <model> · Android <release> ·
+/// <serial-tail>"`. The serial tail disambiguates two devices of the
+/// same model. We drop the model only when getprop returned empty (very
+/// old devices / privacy shells); manufacturer-only is the last resort.
+fn format_device_name(
+    manufacturer: &str,
+    model: &str,
+    android_release: &str,
+    serial: &str,
+) -> String {
+    let head = if model.is_empty() {
+        manufacturer.to_string()
+    } else if manufacturer.is_empty() {
+        model.to_string()
+    } else {
+        format!("{manufacturer} {model}")
+    };
+    format!("{head} · Android {android_release} · {}", serial_tail(serial))
+}
+
 /// Android package identifiers for the Pane companion APK. The helper
 /// runs a tiny Foreground Service that holds a heartbeat socket to
 /// Pane on the laptop (via adb-reverse). When that socket dies — Pane
@@ -92,20 +139,26 @@ impl AndroidPlatform {
             if status != "device" {
                 continue;
             }
-            // `adb devices -l` reports model with underscores in place
-            // of spaces (`Pixel_7_Pro`); flip them back so the name
-            // reads naturally in the row. The trailing serial chunk
-            // disambiguates two phones of the same model — without it
-            // the user sees "Pixel 7" twice and has nothing to tell
-            // them apart at a glance.
-            let model = parts
-                .find_map(|p| p.strip_prefix("model:"))
-                .unwrap_or("Android device")
-                .replace('_', " ");
+            // Probe the same props add_usb() uses so the attached row
+            // reads identically to the paired row for the same device
+            // ("vivo V2036 · Android 13 · 300A30"), instead of the bare
+            // `adb devices -l` model (`V2036 · 300A30`). Falls back to
+            // the -l model when getprop comes back empty (offline /
+            // unauthorized shells).
+            let (manufacturer, mut model, android_release) =
+                probe_device_props(serial).await;
+            if model.is_empty() {
+                // `adb devices -l` reports model with underscores in
+                // place of spaces (`Pixel_7_Pro`); flip them back.
+                model = parts
+                    .find_map(|p| p.strip_prefix("model:"))
+                    .unwrap_or("Android device")
+                    .replace('_', " ");
+            }
             devices.push(DiscoveredDeviceDto {
                 platform: "android".into(),
                 serial: serial.to_string(),
-                name: format!("{model} · {}", serial_tail(serial)),
+                name: format_device_name(&manufacturer, &model, &android_release, serial),
             });
         }
         Ok(devices)
@@ -117,33 +170,10 @@ impl AndroidPlatform {
             .await
             .map(|s| !s.trim().is_empty())
             .unwrap_or(false);
-        let android_release = run(
-            "adb",
-            &["-s", serial, "shell", "getprop", "ro.build.version.release"],
-        )
-        .await
-        .unwrap_or_else(|_| "unknown".into())
-        .trim()
-        .to_string();
-        let manufacturer = run(
-            "adb",
-            &["-s", serial, "shell", "getprop", "ro.product.manufacturer"],
-        )
-        .await
-        .unwrap_or_else(|_| "unknown".into())
-        .trim()
-        .to_string();
-        // Marketing model — `Pixel 7`, `SM-S931B`, etc. Combined with
-        // manufacturer it disambiguates two devices of the same brand
-        // that previously both rendered as just "Google (Android 14)".
-        let model = run(
-            "adb",
-            &["-s", serial, "shell", "getprop", "ro.product.model"],
-        )
-        .await
-        .unwrap_or_default()
-        .trim()
-        .to_string();
+        // Manufacturer + marketing model (`Pixel 7`, `SM-S931B`) +
+        // Android release, in one round-trip. Same source the attached
+        // list uses, so a device reads identically in both lists.
+        let (manufacturer, model, android_release) = probe_device_props(serial).await;
 
         let mut last_error: Option<String> = None;
         // Drives the device-row UI: which CA-install state we're in.
@@ -281,20 +311,9 @@ impl AndroidPlatform {
         )
         .await;
 
-        // Compose a label that's unique even with two of the same
-        // phone plugged in: manufacturer + marketing model + Android
-        // version + last 6 chars of the serial. We drop model only
-        // when getprop returned empty (very old devices / privacy
-        // shells); otherwise the duplicate-Pixel case still bites.
-        let head = if model.is_empty() {
-            manufacturer.clone()
-        } else {
-            format!("{manufacturer} {model}")
-        };
-        let display_name = format!(
-            "{head} · Android {android_release} · {}",
-            serial_tail(serial)
-        );
+        // Label unique even with two of the same phone plugged in.
+        // Shared with the attached-over-USB list (see format_device_name).
+        let display_name = format_device_name(&manufacturer, &model, &android_release, serial);
         Ok(DeviceDto {
             id: Uuid::new_v4(),
             platform: "android".into(),
