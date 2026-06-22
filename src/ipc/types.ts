@@ -168,6 +168,9 @@ export interface RuleDto {
   match_method: string | null;
   match_path_glob: string | null;
   match_params: RuleParamDto[];
+  /** Optional JSON deep-subset-matched against the request body (nested-
+   * capable). null/blank = don't match on the body. */
+  match_req_body: string | null;
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_id: string | null;
@@ -190,6 +193,7 @@ export interface RuleUpsertArgs {
   match_method: string | null;
   match_path_glob: string | null;
   match_params: RuleParamDto[];
+  match_req_body?: string | null;
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_id?: string | null;

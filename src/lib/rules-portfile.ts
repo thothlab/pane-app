@@ -45,6 +45,7 @@ export interface ExportedRule {
   match_method: string | null;
   match_path_glob: string | null;
   match_params: RuleDto["match_params"];
+  match_req_body: string | null;
   res_status: number;
   res_headers: RuleDto["res_headers"];
   res_body_mime: string | null;
@@ -112,6 +113,7 @@ function ruleToExported(
     match_method: rule.match_method,
     match_path_glob: rule.match_path_glob,
     match_params: rule.match_params,
+    match_req_body: rule.match_req_body,
     res_status: rule.res_status,
     res_headers: rule.res_headers,
     res_body_mime: rule.res_body_mime,
@@ -264,6 +266,7 @@ export async function applyImport(file: PortFile): Promise<ImportSummary> {
       match_method: r.match_method,
       match_path_glob: r.match_path_glob,
       match_params: r.match_params,
+      match_req_body: r.match_req_body ?? null,
       res_status: r.res_status,
       res_headers: r.res_headers,
       res_body_base64: r.res_body_base64 ?? null,

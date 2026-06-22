@@ -65,6 +65,9 @@ pub struct ActiveRule {
     /// name=value pairs matched against either query string OR top-level JSON
     /// body of the request, depending on which side has the field.
     pub params: Vec<(String, String)>,
+    /// Parsed JSON template the engine deep-subset-matches against the
+    /// request body (nested-capable). `None` = don't match on the body.
+    pub req_body_match: Option<serde_json::Value>,
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
@@ -667,7 +670,8 @@ impl Storage {
                 "SELECT id, name, enabled, priority,
                         match_host_glob, match_method, match_path_glob, match_query,
                         res_status, res_headers, res_body_id, res_delay_ms,
-                        created_at, updated_at, collection_id, mode, patches
+                        created_at, updated_at, collection_id, mode, patches,
+                        match_req_body
                  FROM rule
                  ORDER BY priority ASC, created_at ASC",
             )?;
@@ -697,7 +701,8 @@ impl Storage {
             "SELECT id, name, enabled, priority,
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
-                    created_at, updated_at, collection_id, mode, patches
+                    created_at, updated_at, collection_id, mode, patches,
+                    match_req_body
              FROM rule WHERE id=?1",
             params![id.to_string()],
             Self::map_rule_row,
@@ -736,6 +741,14 @@ impl Storage {
         let id = args.id.unwrap_or_else(Uuid::new_v4);
         let now = OffsetDateTime::now_utc().unix_timestamp();
         let match_params = serde_json::to_string(&args.match_params)?;
+        // Blank/whitespace → NULL so "no body matching" is one canonical
+        // state (the matcher and the editor both treat NULL as "skip").
+        let match_req_body = args
+            .match_req_body
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
         let res_headers = serde_json::to_string(&args.res_headers)?;
         let patches_json = serde_json::to_string(&args.patches)?;
         let mode = match args.mode.as_str() {
@@ -756,8 +769,8 @@ impl Storage {
             "INSERT INTO rule (id, name, enabled, priority,
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
-                    created_at, updated_at, collection_id, mode, patches)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                    created_at, updated_at, collection_id, mode, patches, match_req_body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, enabled=excluded.enabled, priority=excluded.priority,
                 match_host_glob=excluded.match_host_glob, match_method=excluded.match_method,
@@ -765,7 +778,8 @@ impl Storage {
                 res_status=excluded.res_status, res_headers=excluded.res_headers,
                 res_body_id=excluded.res_body_id, res_delay_ms=excluded.res_delay_ms,
                 collection_id=excluded.collection_id, mode=excluded.mode,
-                patches=excluded.patches, updated_at=excluded.updated_at",
+                patches=excluded.patches, match_req_body=excluded.match_req_body,
+                updated_at=excluded.updated_at",
             params![
                 id.to_string(),
                 &args.name,
@@ -784,6 +798,7 @@ impl Storage {
                 args.collection_id.map(|u| u.to_string()),
                 mode,
                 patches_json,
+                match_req_body,
             ],
         )?;
         drop(conn);
@@ -817,7 +832,8 @@ impl Storage {
                 "SELECT r.id, r.name, r.enabled, r.priority,
                         r.match_host_glob, r.match_method, r.match_path_glob, r.match_query,
                         r.res_status, r.res_headers, r.res_body_id, r.res_delay_ms,
-                        r.created_at, r.updated_at, r.collection_id, r.mode, r.patches
+                        r.created_at, r.updated_at, r.collection_id, r.mode, r.patches,
+                        r.match_req_body
                  FROM rule r
                  LEFT JOIN rule_collection c ON c.id = r.collection_id
                  WHERE r.enabled=1
@@ -875,6 +891,13 @@ impl Storage {
                     .into_iter()
                     .map(|q| (q.name, q.value))
                     .collect(),
+                // Parse the JSON template once at load. A malformed
+                // template degrades to "no body matching" rather than
+                // blocking the rule.
+                req_body_match: dto
+                    .match_req_body
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
                 status: dto.res_status,
                 headers: dto
                     .res_headers
@@ -899,6 +922,7 @@ impl Storage {
         let collection_id: Option<String> = r.get(14)?;
         let mode: String = r.get(15)?;
         let patches_json: String = r.get(16)?;
+        let match_req_body: Option<String> = r.get(17)?;
         Ok(RuleDto {
             id: Uuid::parse_str(&id).unwrap(),
             name: r.get(1)?,
@@ -912,6 +936,7 @@ impl Storage {
             match_path_glob: r.get(6)?,
             match_params: serde_json::from_str::<Vec<RuleParamDto>>(&match_params_json)
                 .unwrap_or_default(),
+            match_req_body,
             res_status: r.get::<_, i64>(8)? as u16,
             res_headers: serde_json::from_str::<Vec<RuleHeaderDto>>(&res_headers)
                 .unwrap_or_default(),

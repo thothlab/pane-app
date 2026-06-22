@@ -1,0 +1,16 @@
+-- Schema v6: match the request BODY as a JSON subset.
+--
+-- match_req_body holds a JSON value (normally an object) that the engine
+-- deep-subset-matches against the parsed request body: every key/value
+-- in the template must be present in the actual body — recursively for
+-- objects, positionally (prefix) for arrays, by equality for scalars.
+--
+-- This is the nested-capable complement to match_query, which only sees
+-- top-level scalar fields of the query string / JSON body. Use it to pin
+-- a stub on fields buried inside a multi-level request body.
+--
+-- NULL (or a blank/whitespace string) means "don't match on the body" —
+-- the common case, and what every existing rule keeps. A literal `{}`
+-- vacuously matches any JSON object body. Additive + nullable, so rows
+-- written before this migration are unaffected.
+ALTER TABLE rule ADD COLUMN match_req_body TEXT;

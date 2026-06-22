@@ -57,7 +57,49 @@ fn rule_matches(rule: &ActiveRule, req: &RequestSummary<'_>) -> bool {
             }
         }
     }
+    // Optional nested JSON body matcher. Only engaged when the rule sets a
+    // template (NULL/blank already collapsed to None upstream); a request
+    // whose body isn't JSON, or doesn't contain the template, fails closed.
+    if let Some(template) = &rule.req_body_match {
+        let is_json = req
+            .content_type
+            .map(|ct| ct.contains("json"))
+            .unwrap_or(false);
+        if !is_json {
+            return false;
+        }
+        let actual: serde_json::Value = match serde_json::from_slice(req.body) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        if !json_subset(template, &actual) {
+            return false;
+        }
+    }
     true
+}
+
+/// Deep "is `template` a subset of `actual`?" used by the request-body
+/// matcher. Objects: every key in `template` must exist in `actual` and
+/// recurse (extra keys in `actual` are fine). Arrays: positional prefix —
+/// `actual` must be at least as long and each `template[i]` subset-matches
+/// `actual[i]`. Scalars (and type mismatches): exact equality.
+///
+/// Note: `serde_json` treats integer `0` and float `0.0` as unequal
+/// Numbers. Template and request are serialized by the same client, so
+/// the numeric form is consistent in practice; this is a known edge, not
+/// a bug to paper over here.
+fn json_subset(template: &serde_json::Value, actual: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (template, actual) {
+        (Value::Object(t), Value::Object(a)) => t
+            .iter()
+            .all(|(k, tv)| a.get(k).is_some_and(|av| json_subset(tv, av))),
+        (Value::Array(t), Value::Array(a)) => {
+            t.len() <= a.len() && t.iter().zip(a.iter()).all(|(tv, av)| json_subset(tv, av))
+        }
+        (t, a) => t == a,
+    }
 }
 
 /// Parse the request body as JSON and flatten its top-level object into
@@ -219,6 +261,7 @@ mod tests {
                 .into_iter()
                 .map(|(n, v)| (n.to_string(), v.to_string()))
                 .collect(),
+            req_body_match: None,
             status: 200,
             headers: vec![],
             body: vec![],
@@ -238,6 +281,65 @@ mod tests {
             content_type: None,
         };
         assert!(rule_matches(&r, &req));
+    }
+
+    fn rule_body(template: &str) -> ActiveRule {
+        let mut r = rule(vec![]);
+        r.req_body_match = Some(serde_json::from_str(template).unwrap());
+        r
+    }
+
+    fn json_post<'a>(body: &'a [u8]) -> RequestSummary<'a> {
+        RequestSummary {
+            host: "x",
+            method: "POST",
+            path: "/x",
+            body,
+            content_type: Some("application/json"),
+        }
+    }
+
+    #[test]
+    fn body_subset_matches_nested_with_extras() {
+        let r = rule_body(r#"{"a":{"b":1}}"#);
+        assert!(rule_matches(
+            &r,
+            &json_post(br#"{"a":{"b":1,"c":2},"d":3}"#)
+        ));
+    }
+
+    #[test]
+    fn body_subset_missing_nested_key_fails() {
+        let r = rule_body(r#"{"a":{"b":1}}"#);
+        assert!(!rule_matches(&r, &json_post(br#"{"a":{"c":2}}"#)));
+    }
+
+    #[test]
+    fn body_array_positional_prefix() {
+        let r = rule_body(r#"{"ids":[1,2]}"#);
+        assert!(rule_matches(&r, &json_post(br#"{"ids":[1,2,3]}"#)));
+        // Template longer than actual → no match.
+        let r2 = rule_body(r#"{"ids":[1,2,3]}"#);
+        assert!(!rule_matches(&r2, &json_post(br#"{"ids":[1,2]}"#)));
+    }
+
+    #[test]
+    fn body_empty_object_matches_any_object() {
+        let r = rule_body("{}");
+        assert!(rule_matches(&r, &json_post(br#"{"anything":true}"#)));
+    }
+
+    #[test]
+    fn body_match_fails_closed_on_non_json() {
+        let r = rule_body(r#"{"a":1}"#);
+        let req = RequestSummary {
+            host: "x",
+            method: "POST",
+            path: "/x",
+            body: b"not json",
+            content_type: Some("text/plain"),
+        };
+        assert!(!rule_matches(&r, &req));
     }
 
     #[test]

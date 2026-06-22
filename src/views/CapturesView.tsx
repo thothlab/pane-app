@@ -8,7 +8,6 @@ import type {
   CaptureDto,
   RuleCollectionDto,
   RuleDto,
-  RuleParamDto,
   RuleUpsertArgs,
 } from "@/ipc/types";
 import {
@@ -421,24 +420,28 @@ const CapturesView: Component = () => {
         /* body fetch failed — leave empty, user can fill in editor */
       }
     }
-    // Carry the captured request body into the rule's match params.
-    // The engine matches each param against the top-level fields of a
-    // JSON request body (pane-engine-mitm rules.rs::parse_json_top_level),
-    // so flattening the body's top-level scalars here reproduces the
-    // captured request as the rule's match condition — previously the
-    // request body was dropped and only the response body survived.
-    // Query params stay out of this (the path glob keeps the query
-    // wildcard); the user prunes volatile body fields in the editor.
-    let matchParams: RuleParamDto[] = [];
+    // Carry the captured request body into the rule as a JSON match
+    // template. The engine deep-subset-matches it against the request
+    // body (nested objects/arrays included), so the full structure is
+    // preserved — unlike the old top-level-only flattening into params.
+    // Pretty-printed so the user can read and prune it (e.g. drop the
+    // per-request requestId) in the editor; the editor flags UUIDs.
+    let matchReqBody: string | null = null;
     if (cap.req_body_id) {
       try {
         const rb = await api.captures.body(cap.req_body_id, 8 * 1024 * 1024);
         if ((rb.mime ?? "").includes("json")) {
           const text = decodeBodyAsText(rb);
-          if (text !== null) matchParams = jsonTopLevelParams(text);
+          if (text !== null) {
+            try {
+              matchReqBody = JSON.stringify(JSON.parse(text), null, 2);
+            } catch {
+              matchReqBody = text;
+            }
+          }
         }
       } catch {
-        /* body fetch failed — leave params empty, user can add them */
+        /* body fetch failed — leave it empty, user can fill the editor */
       }
     }
     // Strip query string from the path glob; match_params is the
@@ -465,7 +468,8 @@ const CapturesView: Component = () => {
       match_method: cap.method || null,
       match_host_glob: cap.server_host || null,
       match_path_glob: pathGlob || null,
-      match_params: matchParams,
+      match_params: [],
+      match_req_body: matchReqBody,
       res_status: cap.status ?? 200,
       res_headers: (cap.res_headers ?? []).map((h) => ({
         name: h.name,
@@ -1111,32 +1115,6 @@ function captureStamp(startedAt: string): string {
   if (Number.isNaN(d.getTime())) return startedAt;
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
-// Flatten a JSON object's top-level scalar fields into rule match
-// params, mirroring the engine's matcher (pane-engine-mitm
-// rules.rs::parse_json_top_level): strings as-is, numbers/booleans/null
-// stringified, arrays/objects skipped (they have no name=value form the
-// matcher understands). Returns [] for non-object roots or invalid JSON.
-function jsonTopLevelParams(text: string): RuleParamDto[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return [];
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return [];
-  }
-  const out: RuleParamDto[] = [];
-  for (const [name, v] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof v === "string") out.push({ name, value: v });
-    else if (typeof v === "number") out.push({ name, value: String(v) });
-    else if (typeof v === "boolean") out.push({ name, value: v ? "true" : "false" });
-    else if (v === null) out.push({ name, value: "null" });
-    // arrays/objects: no scalar name=value form — skipped
-  }
-  return out;
 }
 
 function decodeBodyAsText(body: {

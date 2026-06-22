@@ -246,6 +246,12 @@ const en = {
       "Each row must be found either in the URL query, or at the top level of a JSON request body.",
     param_volatile_hint:
       "Looks like a per-request value (UUID). The rule matches it exactly, so it will only fire for this one request — remove this row unless you mean to pin it.",
+    req_body_label: "Request body (JSON)",
+    req_body_placeholder: '{ "field": "value" }  — leave empty to ignore the body',
+    req_body_note:
+      "Optional. The request body (parsed as JSON) must contain this as a subset — nested objects and arrays are matched recursively, extra fields are allowed.",
+    req_body_volatile_hint:
+      "Contains a per-request value (UUID, e.g. requestId). The body match is exact, so the rule won't fire on future requests — delete that field from the JSON.",
     response_section: "Response",
     status_label: "Status",
     headers_label: "Headers",

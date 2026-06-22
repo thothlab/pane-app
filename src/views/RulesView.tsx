@@ -79,6 +79,16 @@ function looksVolatile(value: string): boolean {
   return UUID_RE.test(value.trim());
 }
 
+// Same UUID shape, but un-anchored — for spotting a per-request token
+// buried anywhere inside the JSON request-body matcher. The body editor
+// is free text, so we can't flag a single field; we warn on the whole
+// blob instead (the anti-silent-match cue that the per-row highlight in
+// Params would otherwise provide).
+const UUID_ANYWHERE_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+function bodyHasVolatile(text: string): boolean {
+  return UUID_ANYWHERE_RE.test(text);
+}
+
 type Editing = RulesEditing;
 
 const RulesView: Component = () => {
@@ -814,6 +824,7 @@ type DraftState = {
   match_method: string;
   match_path_glob: string;
   match_params: RuleParamDto[];
+  match_req_body: string;
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_text: string;
@@ -833,6 +844,7 @@ const emptyDraft = (collectionId: string | null): DraftState => ({
   match_method: "ANY",
   match_path_glob: "",
   match_params: [],
+  match_req_body: "",
   res_status: 200,
   res_headers: [{ name: "Content-Type", value: "application/json; charset=UTF-8" }],
   res_body_text: "",
@@ -915,6 +927,7 @@ const RuleEditor: Component<{
       match_method: r.match_method ?? "ANY",
       match_path_glob: r.match_path_glob ?? "",
       match_params: r.match_params.slice(),
+      match_req_body: r.match_req_body ?? "",
       res_status: r.res_status,
       res_headers:
         r.res_headers.length > 0
@@ -1059,6 +1072,8 @@ const RuleEditor: Component<{
         match_method: draft.match_method === "ANY" ? null : draft.match_method,
         match_path_glob: draft.match_path_glob.trim() ? draft.match_path_glob.trim() : null,
         match_params: draft.match_params.filter((q) => q.name.length > 0),
+        // Blank → null (no body matching). Storage trims and re-checks.
+        match_req_body: draft.match_req_body.trim() ? draft.match_req_body : null,
         res_status: draft.res_status,
         res_headers: draft.res_headers.filter((h) => h.name.length > 0),
         // The textarea is pre-filled from existing body on open, so we always
@@ -1207,6 +1222,24 @@ const RuleEditor: Component<{
               {t()("rules.add_param")}
             </button>
             <div class="text-xs text-fg-muted italic">{t()("rules.params_note")}</div>
+          </div>
+        </FieldRow>
+        <FieldRow label={t()("rules.req_body_label")}>
+          <div class="flex-1 space-y-1">
+            <textarea
+              {...NO_AC}
+              class="w-full h-32 bg-bg border border-border rounded px-2 py-1 text-xs font-mono resize-y"
+              placeholder={t()("rules.req_body_placeholder")}
+              value={d().match_req_body}
+              onInput={(e) => patch({ match_req_body: e.currentTarget.value })}
+            />
+            <Show when={bodyHasVolatile(d().match_req_body)}>
+              <div class="text-warn text-xs flex items-start gap-1">
+                <AlertTriangle size={12} class="shrink-0 mt-0.5" />
+                <span>{t()("rules.req_body_volatile_hint")}</span>
+              </div>
+            </Show>
+            <div class="text-xs text-fg-muted italic">{t()("rules.req_body_note")}</div>
           </div>
         </FieldRow>
       </Section>

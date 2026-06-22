@@ -300,6 +300,10 @@ pub struct RuleDto {
     pub match_method: Option<String>,
     pub match_path_glob: Option<String>,
     pub match_params: Vec<RuleParamDto>,
+    /// Optional JSON the engine deep-subset-matches against the request
+    /// body (nested-capable, unlike `match_params` which only sees
+    /// top-level scalars). `None`/blank = don't match on the body.
+    pub match_req_body: Option<String>,
 
     pub res_status: u16,
     pub res_headers: Vec<RuleHeaderDto>,
@@ -330,6 +334,10 @@ pub struct RuleUpsertArgs {
     pub match_method: Option<String>,
     pub match_path_glob: Option<String>,
     pub match_params: Vec<RuleParamDto>,
+    /// Optional JSON deep-subset-matched against the request body. A
+    /// blank/whitespace string is treated as `None` (no body matching).
+    #[serde(default)]
+    pub match_req_body: Option<String>,
 
     pub res_status: u16,
     pub res_headers: Vec<RuleHeaderDto>,
