@@ -175,6 +175,14 @@ fn install_app_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
         .build()?;
 
     app.set_menu(menu)?;
+
+    // Designate the Window submenu as the macOS application Windows menu.
+    // AppKit then auto-appends an entry per open window (main + each
+    // Logcat window) and handles switching between them — without this
+    // the menu is just Minimize/Zoom/Close and lists no windows.
+    #[cfg(target_os = "macos")]
+    window_submenu.set_as_windows_menu_for_nsapp()?;
+
     Ok(())
 }
 
