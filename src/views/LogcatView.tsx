@@ -228,9 +228,10 @@ const LogcatView: Component = () => {
   const openDetail = (rows: LogEntry[]) => {
     if (rows.length === 0) return;
     setDetailFormatErr(null);
-    setDetailText(
-      rows.length === 1 ? rows[0]!.message : rows.map(formatEntryLine).join("\n"),
-    );
+    // Just the Message column of the selected rows — when a big JSON was
+    // logged line-by-line, joining the messages reconstructs it (and
+    // Format can then pretty-print it).
+    setDetailText(rows.map((e) => e.message).join("\n"));
     setDetail(rows);
   };
   const formatDetail = () => {
