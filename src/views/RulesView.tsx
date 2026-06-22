@@ -868,6 +868,96 @@ function normalisePatch(p: RulePatchOpDto): RulePatchOpDto {
   return { op: p.op, path: p.path, value };
 }
 
+/// JSON editor field: the syntax-highlighted `JsonEditor` plus the Format
+/// (pretty-print) and Expand/Collapse controls and a format-error flash.
+/// Shared by the response-body and request-body-match fields so the two
+/// stay in lockstep — `expandKey` namespaces the persisted expand flag
+/// per field.
+const JsonFieldEditor: Component<{
+  value: string;
+  onInput: (v: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  expandKey: string;
+}> = (p) => {
+  const [expanded, setExpandedRaw] = createSignal(
+    (() => {
+      try {
+        return localStorage.getItem(p.expandKey) === "1";
+      } catch {
+        return false;
+      }
+    })(),
+  );
+  const setExpanded = (v: boolean) => {
+    setExpandedRaw(v);
+    try {
+      localStorage.setItem(p.expandKey, v ? "1" : "0");
+    } catch {
+      /* private mode — signal still works, just no persistence */
+    }
+  };
+  const [formatErr, setFormatErr] = createSignal<string | null>(null);
+  const format = () => {
+    const raw = p.value;
+    if (!raw.trim()) {
+      setFormatErr("empty");
+      setTimeout(() => setFormatErr(null), 1800);
+      return;
+    }
+    try {
+      const pretty = JSON.stringify(JSON.parse(raw), null, 2);
+      if (pretty !== raw) p.onInput(pretty);
+      setFormatErr(null);
+    } catch (e) {
+      setFormatErr((e as Error).message ?? "invalid JSON");
+      setTimeout(() => setFormatErr(null), 2500);
+    }
+  };
+  return (
+    <div class="flex-1">
+      <div class="flex items-center justify-end gap-1 mb-1">
+        <Show when={formatErr()}>
+          {(msg) => (
+            <span class="text-xs text-danger truncate max-w-[260px]" title={msg()}>
+              {msg() === "empty" ? "Body is empty" : `Invalid JSON: ${msg()}`}
+            </span>
+          )}
+        </Show>
+        <button
+          type="button"
+          class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted disabled:opacity-50"
+          title="Pretty-print as JSON (2-space indent)"
+          disabled={p.disabled}
+          onClick={format}
+        >
+          <Braces size={12} />
+          Format
+        </button>
+        <button
+          type="button"
+          class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted"
+          title={expanded() ? "Collapse editor" : "Expand editor"}
+          onClick={() => setExpanded(!expanded())}
+        >
+          <Show when={expanded()} fallback={<Maximize2 size={12} />}>
+            <Minimize2 size={12} />
+          </Show>
+          {expanded() ? "Collapse" : "Expand"}
+        </button>
+      </div>
+      <div class={`w-full ${expanded() ? "h-[70vh] min-h-[400px]" : "h-48 min-h-32"}`}>
+        <JsonEditor
+          value={p.value}
+          onInput={p.onInput}
+          placeholder={p.placeholder}
+          disabled={p.disabled}
+        />
+      </div>
+    </div>
+  );
+};
+
 /// Parse a single "Name: value" line into a header pair. Returns null if the
 /// input doesn't look like a header line (no `:`, or empty name). Used by
 /// the header editor's paste handler so users can copy a header from the
@@ -950,54 +1040,6 @@ const RuleEditor: Component<{
   // pre-fix drafts (the createEffect-on-mount snapshots) would otherwise
   // keep the button perma-red for existing rules.
   const [dirty, setDirty] = createSignal(false);
-  // Toggle for the body textarea size. Big JSON stubs are common —
-  // the default 12rem height isn't enough to navigate them comfortably.
-  // Expanded grows the textarea to most of the viewport so the user
-  // can edit without paging through a tiny scroll window.
-  //
-  // Persisted globally (one preference for every rule editor): after
-  // Save the editor often re-mounts (parent re-fetches rules → <For>
-  // rekeys by new object identity → fresh RuleEditor instance), and
-  // losing the expanded state every save was annoying. Saving it to
-  // localStorage also covers the "switch between rules" case.
-  const BODY_EXPANDED_KEY = "pane.rules.body-expanded";
-  const initialBodyExpanded = (() => {
-    try {
-      return localStorage.getItem(BODY_EXPANDED_KEY) === "1";
-    } catch {
-      return false;
-    }
-  })();
-  const [bodyExpanded, setBodyExpandedRaw] = createSignal(initialBodyExpanded);
-  const setBodyExpanded = (v: boolean) => {
-    setBodyExpandedRaw(v);
-    try {
-      localStorage.setItem(BODY_EXPANDED_KEY, v ? "1" : "0");
-    } catch {
-      // private mode / SSR — just lose persistence, signal still works
-    }
-  };
-  // Flash-message shown next to the Format button when JSON.parse
-  // fails. Null = nothing shown. Cleared after a short timeout so
-  // the user gets feedback without the message lingering on screen.
-  const [bodyFormatErr, setBodyFormatErr] = createSignal<string | null>(null);
-
-  const formatBodyJson = () => {
-    const raw = d().res_body_text;
-    if (!raw.trim()) {
-      setBodyFormatErr("empty");
-      setTimeout(() => setBodyFormatErr(null), 1800);
-      return;
-    }
-    try {
-      const pretty = JSON.stringify(JSON.parse(raw), null, 2);
-      if (pretty !== raw) patch({ res_body_text: pretty });
-      setBodyFormatErr(null);
-    } catch (e) {
-      setBodyFormatErr((e as Error).message ?? "invalid JSON");
-      setTimeout(() => setBodyFormatErr(null), 2500);
-    }
-  };
 
   // Persisting the in-progress draft is tied to actual user edits (one
   // funnel: `patch`). The earlier `createEffect`-based approach fired on
@@ -1226,12 +1268,11 @@ const RuleEditor: Component<{
         </FieldRow>
         <FieldRow label={t()("rules.req_body_label")}>
           <div class="flex-1 space-y-1">
-            <textarea
-              {...NO_AC}
-              class="w-full h-32 bg-bg border border-border rounded px-2 py-1 text-xs font-mono resize-y"
-              placeholder={t()("rules.req_body_placeholder")}
+            <JsonFieldEditor
               value={d().match_req_body}
-              onInput={(e) => patch({ match_req_body: e.currentTarget.value })}
+              onInput={(v) => patch({ match_req_body: v })}
+              placeholder={t()("rules.req_body_placeholder")}
+              expandKey="pane.rules.reqbody-expanded"
             />
             <Show when={bodyHasVolatile(d().match_req_body)}>
               <div class="text-warn text-xs flex items-start gap-1">
@@ -1397,54 +1438,19 @@ const RuleEditor: Component<{
         </FieldRow>
         <FieldRow label={t()("rules.body_label")}>
           <div class="flex-1">
-            <div class="flex items-center justify-end gap-1 mb-1">
-              <Show when={bodyFormatErr()}>
-                {(msg) => (
-                  <span class="text-xs text-danger truncate max-w-[260px]" title={msg()}>
-                    {msg() === "empty" ? "Body is empty" : `Invalid JSON: ${msg()}`}
-                  </span>
-                )}
-              </Show>
-              <button
-                type="button"
-                class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted disabled:opacity-50"
-                title="Pretty-print body as JSON (2-space indent)"
-                disabled={bodyLoading()}
-                onClick={formatBodyJson}
-              >
-                <Braces size={12} />
-                Format
-              </button>
-              <button
-                type="button"
-                class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted"
-                title={bodyExpanded() ? "Collapse body editor" : "Expand body editor"}
-                onClick={() => setBodyExpanded(!bodyExpanded())}
-              >
-                <Show when={bodyExpanded()} fallback={<Maximize2 size={12} />}>
-                  <Minimize2 size={12} />
-                </Show>
-                {bodyExpanded() ? "Collapse" : "Expand"}
-              </button>
-            </div>
-            <div
-              class={`w-full ${
-                bodyExpanded() ? "h-[70vh] min-h-[400px]" : "h-48 min-h-32"
-              }`}
-            >
-              <JsonEditor
-                value={d().res_body_text}
-                onInput={(v) => patch({ res_body_text: v })}
-                placeholder={
-                  bodyLoading()
-                    ? t()("rules.body_loading_placeholder")
-                    : existingBodyId()
-                    ? t()("rules.body_existing_placeholder")
-                    : t()("rules.body_new_placeholder")
-                }
-                disabled={bodyLoading()}
-              />
-            </div>
+            <JsonFieldEditor
+              value={d().res_body_text}
+              onInput={(v) => patch({ res_body_text: v })}
+              placeholder={
+                bodyLoading()
+                  ? t()("rules.body_loading_placeholder")
+                  : existingBodyId()
+                  ? t()("rules.body_existing_placeholder")
+                  : t()("rules.body_new_placeholder")
+              }
+              disabled={bodyLoading()}
+              expandKey="pane.rules.body-expanded"
+            />
             <Show when={!!existingBodyId() && !bodyLoading()}>
               <div class="text-xs text-fg-muted mt-1">
                 {tr("rules.body_stored_note", { size: existingBodySize() })}
