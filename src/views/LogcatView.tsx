@@ -187,6 +187,12 @@ const LogcatView: Component = () => {
   const [selected, setSelected] = createSignal<Set<LogEntry>>(new Set());
   // Anchor index (into visible()) for Shift-range selection.
   let selectAnchor = -1;
+  // Right-click row menu (Copy / Copy message / View message). Copy
+  // actions operate on the whole selection; View targets the row the
+  // menu was opened on.
+  const [rowMenu, setRowMenu] = createSignal<{ x: number; y: number } | null>(null);
+  let rowMenuRef: HTMLDivElement | undefined;
+  let menuViewEntry: LogEntry | null = null;
   // Brief "copied N" confirmation shown in the status bar.
   const [copyHint, setCopyHint] = createSignal<string | null>(null);
 
@@ -791,10 +797,39 @@ const LogcatView: Component = () => {
     setSelected(rangeSet(selectAnchor, index));
   };
 
+  // Right-click opens the row menu. If the clicked row isn't already in
+  // the selection, make it the selection — so Copy acts on something
+  // predictable; if it IS selected, the whole multi-selection is kept.
+  const onRowContextMenu = (ev: MouseEvent, index: number) => {
+    ev.preventDefault();
+    rowDragging = false;
+    const entry = visible()[index];
+    if (!entry) return;
+    if (!selected().has(entry)) {
+      setSelected(new Set([entry]));
+      selectAnchor = index;
+    }
+    menuViewEntry = entry;
+    setRowMenu({ x: ev.clientX, y: ev.clientY });
+  };
+
+  const closeRowMenu = () => setRowMenu(null);
+  const menuCopy = (messageOnly: boolean) => {
+    copySelected(messageOnly);
+    closeRowMenu();
+  };
+  const menuView = () => {
+    if (menuViewEntry) setDetail(menuViewEntry);
+    closeRowMenu();
+  };
+
   // Copy the selected rows to the clipboard, in visible() order.
   // `messageOnly` (⇧⌘C) emits just the message field; otherwise (⌘C) the
   // full threadtime line. Returns false when nothing is selected so the
-  // key handler can fall through to default behaviour.
+  // key handler can fall through. The clipboard write is AWAITED and the
+  // "copied N" hint only shows on success — earlier it fired-and-forgot,
+  // so a permission denial in the logcat window claimed success while the
+  // clipboard kept its old contents.
   const copySelected = (messageOnly: boolean): boolean => {
     const sel = selected();
     if (sel.size === 0) return false;
@@ -803,9 +838,19 @@ const LogcatView: Component = () => {
     const text = ordered
       .map((en) => (messageOnly ? en.message : formatEntryLine(en)))
       .join("\n");
-    void writeClipboard(text);
-    setCopyHint(tr("logcat.copied", { n: String(ordered.length) }));
-    setTimeout(() => setCopyHint(null), 2000);
+    void writeClipboard(text)
+      .then(() => {
+        setCopyHint(tr("logcat.copied", { n: String(ordered.length) }));
+        setTimeout(() => setCopyHint(null), 2000);
+      })
+      .catch((e: unknown) => {
+        setCopyHint(
+          tr("logcat.copy_failed", {
+            message: (e as { message?: string })?.message ?? String(e),
+          }),
+        );
+        setTimeout(() => setCopyHint(null), 4000);
+      });
     return true;
   };
 
@@ -879,6 +924,11 @@ const LogcatView: Component = () => {
   // recurring bug.
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && rowMenu()) {
+        e.preventDefault();
+        setRowMenu(null);
+        return;
+      }
       if (e.key === "Escape" && detail()) {
         e.preventDefault();
         setDetail(null);
@@ -1012,6 +1062,9 @@ const LogcatView: Component = () => {
         !headerMenuRef.contains(target)
       ) {
         setHeaderMenuPos(null);
+      }
+      if (rowMenu() && rowMenuRef && !rowMenuRef.contains(target)) {
+        setRowMenu(null);
       }
     };
     document.addEventListener("mousedown", onDoc);
@@ -1624,6 +1677,7 @@ const LogcatView: Component = () => {
                           }}
                           onMouseDown={(ev) => onRowMouseDown(ev, vi.index)}
                           onMouseEnter={() => onRowMouseEnter(vi.index)}
+                          onContextMenu={(ev) => onRowContextMenu(ev, vi.index)}
                           onDblClick={() => setDetail(entry())}
                           title={t()("logcat.row_open_detail")}
                         >
@@ -1706,6 +1760,42 @@ const LogcatView: Component = () => {
           <span class="ml-3 text-success">{copyHint()}</span>
         </Show>
       </div>
+
+      {/* Row right-click menu. Copy / Copy message act on the whole
+          selection; View message opens the row the menu was invoked on. */}
+      <Show when={rowMenu()}>
+        {(pos) => (
+          <div
+            ref={(el) => (rowMenuRef = el)}
+            class="fixed z-50 bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs select-none min-w-[180px]"
+            style={{ left: `${pos().x}px`, top: `${pos().y}px` }}
+          >
+            <button
+              type="button"
+              class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center justify-between gap-6"
+              onClick={() => menuCopy(false)}
+            >
+              <span>{t()("logcat.menu_copy")}</span>
+              <span class="text-fg-muted">{IS_MAC_PLATFORM ? "⌘C" : "Ctrl+C"}</span>
+            </button>
+            <button
+              type="button"
+              class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center justify-between gap-6"
+              onClick={() => menuCopy(true)}
+            >
+              <span>{t()("logcat.menu_copy_message")}</span>
+              <span class="text-fg-muted">{IS_MAC_PLATFORM ? "⇧⌘C" : "Ctrl+Shift+C"}</span>
+            </button>
+            <button
+              type="button"
+              class="w-full text-left px-3 py-1.5 hover:bg-bg-muted"
+              onClick={menuView}
+            >
+              {t()("logcat.menu_view_message")}
+            </button>
+          </div>
+        )}
+      </Show>
 
       {/* Row detail overlay. Click a row to read its full message —
           wrapped, selectable, copyable — without fighting the

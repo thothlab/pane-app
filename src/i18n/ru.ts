@@ -316,6 +316,10 @@ const ru: Dict = {
     row_open_detail: "Клик — выделить · двойной клик — полный текст",
     detail_copy: "Копировать",
     detail_close: "Закрыть",
+    copy_failed: "Не скопировалось: {{message}}",
+    menu_copy: "Копировать",
+    menu_copy_message: "Копировать message",
+    menu_view_message: "Показать message",
     text_view: "Текст",
     text_view_title:
       "Текстовый режим — свободно выделять, скроллить и копировать (снимок отфильтрованных строк)",

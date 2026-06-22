@@ -317,6 +317,10 @@ const en = {
     row_open_detail: "Click to select · double-click for the full message",
     detail_copy: "Copy",
     detail_close: "Close",
+    copy_failed: "Copy failed: {{message}}",
+    menu_copy: "Copy",
+    menu_copy_message: "Copy message",
+    menu_view_message: "View message",
     text_view: "Text",
     text_view_title:
       "Plain-text view — select, scroll and copy freely (snapshot of the filtered lines)",
