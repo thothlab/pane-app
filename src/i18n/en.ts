@@ -267,7 +267,7 @@ const en = {
     body_loading_placeholder: "Loading existing body…",
     body_existing_placeholder: "Body is empty — type to set a response body",
     body_new_placeholder: "Paste response body here",
-    body_stored_note: "Stored body: {{size}}B. Edits replace it on save.",
+    body_stored_note: "Stored body: {{size}}. Edits replace it on save.",
     patches_section: "Patches",
     patches_help_title: "Path syntax, ops, examples",
     add_patch: "+ add patch",

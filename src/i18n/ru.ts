@@ -265,7 +265,7 @@ const ru: Dict = {
     body_loading_placeholder: "Загружаю существующее тело…",
     body_existing_placeholder: "Тело пустое — введите чтобы задать ответ",
     body_new_placeholder: "Вставьте тело ответа сюда",
-    body_stored_note: "Сохранённое тело: {{size}} байт. При сохранении заменится.",
+    body_stored_note: "Сохранённое тело: {{size}}. При сохранении заменится.",
     patches_section: "Патчи",
     patches_help_title: "Синтаксис path, операции, примеры",
     add_patch: "+ добавить патч",

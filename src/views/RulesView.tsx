@@ -79,6 +79,13 @@ function looksVolatile(value: string): boolean {
   return UUID_RE.test(value.trim());
 }
 
+// Human-readable byte size: B under 1 KiB, then KB / MB with one decimal.
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
 // Same UUID shape, but un-anchored — for spotting a per-request token
 // buried anywhere inside the JSON request-body matcher. The body editor
 // is free text, so we can't flag a single field; we warn on the whole
@@ -1453,7 +1460,7 @@ const RuleEditor: Component<{
             />
             <Show when={!!existingBodyId() && !bodyLoading()}>
               <div class="text-xs text-fg-muted mt-1">
-                {tr("rules.body_stored_note", { size: existingBodySize() })}
+                {tr("rules.body_stored_note", { size: formatBytes(existingBodySize()) })}
               </div>
             </Show>
           </div>
