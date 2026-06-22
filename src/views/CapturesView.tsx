@@ -447,9 +447,17 @@ const CapturesView: Component = () => {
     // and the user can pin specific params in the Rules editor.
     const qIdx = cap.url_path.indexOf("?");
     const pathGlob = qIdx >= 0 ? cap.url_path.slice(0, qIdx) : cap.url_path;
+    // Append the capture's local timestamp so repeated "Add to rules"
+    // of the same endpoint produce distinguishable names instead of N
+    // identical "POST host/path" rows — the stamp also tells the user
+    // which capture each rule came from. Reserve the suffix length so
+    // the 120-char cap trims the path, never the timestamp.
+    const stamp = captureStamp(cap.started_at);
+    const suffix = ` · ${stamp}`;
+    const base = `${cap.method} ${cap.server_host}${pathGlob}`;
     return {
       collection_id: collectionId,
-      name: `${cap.method} ${cap.server_host}${pathGlob}`.slice(0, 120),
+      name: `${base.slice(0, 120 - suffix.length)}${suffix}`,
       enabled: true,
       priority: 0,
       mode: "stub",
@@ -1094,6 +1102,17 @@ function fmtBytes(n: number) {
 // into the user's clipboard. Truncated bodies (server > COPY_BODY_LIMIT)
 // get a trailing note so the user knows they're not seeing the full
 // payload.
+// Compact local timestamp (MM-DD HH:MM:SS) for disambiguating
+// auto-generated rule names. Local time so it matches what the captures
+// list shows; seconds included so two captures a moment apart still
+// differ. Falls back to the raw string if started_at doesn't parse.
+function captureStamp(startedAt: string): string {
+  const d = new Date(startedAt);
+  if (Number.isNaN(d.getTime())) return startedAt;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 // Flatten a JSON object's top-level scalar fields into rule match
 // params, mirroring the engine's matcher (pane-engine-mitm
 // rules.rs::parse_json_top_level): strings as-is, numbers/booleans/null
