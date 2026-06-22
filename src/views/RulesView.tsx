@@ -16,6 +16,7 @@ import {
   Minimize2,
   Braces,
   Minus,
+  AlertTriangle,
 } from "lucide-solid";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readClipboard } from "@/lib/clipboard";
@@ -66,6 +67,17 @@ const NO_AC = {
   autocapitalize: "off",
   spellcheck: false,
 } as const;
+
+/// A param value that's a canonical UUID is almost always a per-request
+/// token (requestId, traceId, correlationId…) that changes on every call.
+/// The matcher compares param values exactly, so pinning one makes the
+/// rule fire for that single captured request only. We flag these in the
+/// editor so the user removes them. Stable identifiers like a numeric
+/// userId aren't UUID-shaped, so they're left alone.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function looksVolatile(value: string): boolean {
+  return UUID_RE.test(value.trim());
+}
 
 type Editing = RulesEditing;
 
@@ -1140,38 +1152,51 @@ const RuleEditor: Component<{
         <FieldRow label={t()("rules.params_label")}>
           <div class="flex-1 space-y-1">
             <Index each={d().match_params}>
-              {(q, i) => (
-                <div class="flex items-center gap-2">
-                  <input {...NO_AC}
-                    class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
-                    placeholder={t()("rules.param_name_placeholder")}
-                    value={q().name}
-                    onInput={(e) => {
-                      const arr = d().match_params.slice();
-                      arr[i] = { ...arr[i], name: e.currentTarget.value };
-                      patch({ match_params: arr });
-                    }}
-                  />
-                  <input {...NO_AC}
-                    class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
-                    placeholder={t()("rules.param_value_placeholder")}
-                    value={q().value}
-                    onInput={(e) => {
-                      const arr = d().match_params.slice();
-                      arr[i] = { ...arr[i], value: e.currentTarget.value };
-                      patch({ match_params: arr });
-                    }}
-                  />
-                  <button
-                    class="text-fg-muted hover:text-danger"
-                    onClick={() =>
-                      patch({ match_params: d().match_params.filter((_, j) => j !== i) })
-                    }
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
+              {(q, i) => {
+                const volatileValue = () => looksVolatile(q().value);
+                return (
+                  <div class="flex items-center gap-2">
+                    <input {...NO_AC}
+                      class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
+                      placeholder={t()("rules.param_name_placeholder")}
+                      value={q().name}
+                      onInput={(e) => {
+                        const arr = d().match_params.slice();
+                        arr[i] = { ...arr[i], name: e.currentTarget.value };
+                        patch({ match_params: arr });
+                      }}
+                    />
+                    <input {...NO_AC}
+                      class={`flex-1 bg-bg border rounded px-2 py-1 text-xs font-mono ${
+                        volatileValue()
+                          ? "border-warn ring-1 ring-warn/40"
+                          : "border-border"
+                      }`}
+                      placeholder={t()("rules.param_value_placeholder")}
+                      value={q().value}
+                      title={volatileValue() ? t()("rules.param_volatile_hint") : undefined}
+                      onInput={(e) => {
+                        const arr = d().match_params.slice();
+                        arr[i] = { ...arr[i], value: e.currentTarget.value };
+                        patch({ match_params: arr });
+                      }}
+                    />
+                    <Show when={volatileValue()}>
+                      <span class="text-warn shrink-0" title={t()("rules.param_volatile_hint")}>
+                        <AlertTriangle size={12} />
+                      </span>
+                    </Show>
+                    <button
+                      class="text-fg-muted hover:text-danger"
+                      onClick={() =>
+                        patch({ match_params: d().match_params.filter((_, j) => j !== i) })
+                      }
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                );
+              }}
             </Index>
             <button
               class="text-xs text-accent hover:underline"
