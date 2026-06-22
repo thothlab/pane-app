@@ -742,25 +742,35 @@ const LogcatView: Component = () => {
     selectAnchor = -1;
   };
 
-  // Select a row. Click replaces the selection, Shift-click extends a
-  // range from the anchor, ⌘/Ctrl-click toggles one. A live text
-  // selection (drag-select) wins — if the user is mid-select, the click
-  // that ends the drag must not clobber it.
-  const onRowClick = (ev: MouseEvent, index: number) => {
-    const tsel = window.getSelection();
-    if (tsel && !tsel.isCollapsed && tsel.toString().length > 0) return;
+  // LogRabbit-style WHOLE-ROW selection (not text selection — rows are
+  // `select-none`; for free-form substring/copy use the Text view). Rows
+  // are translateY'd, so native cross-row text selection is janky and
+  // copies cell-by-cell; a row model sidesteps that entirely.
+  //
+  // The visible() entries within [a, b] (inclusive), by identity.
+  const rangeSet = (a: number, b: number): Set<LogEntry> => {
     const list = visible();
-    const entry = list[index];
+    const lo = Math.min(a, b);
+    const hi = Math.max(a, b);
+    const out = new Set<LogEntry>();
+    for (let i = lo; i <= hi; i++) {
+      const en = list[i];
+      if (en) out.add(en);
+    }
+    return out;
+  };
+
+  // True while the mouse is held down after starting a drag-select.
+  let rowDragging = false;
+
+  // mousedown begins selection: Shift extends a range from the anchor,
+  // ⌘/Ctrl toggles one row, a plain press selects one and arms a drag.
+  const onRowMouseDown = (ev: MouseEvent, index: number) => {
+    if (ev.button !== 0) return; // left button only
+    const entry = visible()[index];
     if (!entry) return;
     if (ev.shiftKey && selectAnchor >= 0) {
-      const lo = Math.min(selectAnchor, index);
-      const hi = Math.max(selectAnchor, index);
-      const next = new Set<LogEntry>();
-      for (let i = lo; i <= hi; i++) {
-        const en = list[i];
-        if (en) next.add(en);
-      }
-      setSelected(next);
+      setSelected(rangeSet(selectAnchor, index));
     } else if (ev.metaKey || ev.ctrlKey) {
       const next = new Set(selected());
       if (next.has(entry)) next.delete(entry);
@@ -770,7 +780,15 @@ const LogcatView: Component = () => {
     } else {
       setSelected(new Set([entry]));
       selectAnchor = index;
+      rowDragging = true;
     }
+  };
+
+  // While dragging, hovering a row extends the range from the anchor —
+  // gives the click-and-drag-down full-row sweep LogRabbit has.
+  const onRowMouseEnter = (index: number) => {
+    if (!rowDragging || selectAnchor < 0) return;
+    setSelected(rangeSet(selectAnchor, index));
   };
 
   // Copy the selected rows to the clipboard, in visible() order.
@@ -898,7 +916,15 @@ const LogcatView: Component = () => {
       }
     };
     window.addEventListener("keydown", onKey);
-    onCleanup(() => window.removeEventListener("keydown", onKey));
+    // End a row drag-select wherever the mouse is released.
+    const onUp = () => {
+      rowDragging = false;
+    };
+    window.addEventListener("mouseup", onUp);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mouseup", onUp);
+    });
   });
 
   let filterInputRef: HTMLInputElement | undefined;
@@ -1587,7 +1613,7 @@ const LogcatView: Component = () => {
                         entry().pid > 0 ? String(entry().pid) : "";
                       return (
                         <div
-                          class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 select-text ${
+                          class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 select-none cursor-default ${
                             selected().has(entry())
                               ? "bg-accent/25"
                               : "hover:bg-bg-muted/40"
@@ -1596,7 +1622,8 @@ const LogcatView: Component = () => {
                             transform: `translateY(${vi.start}px)`,
                             "grid-template-columns": gridTemplate(),
                           }}
-                          onClick={(ev) => onRowClick(ev, vi.index)}
+                          onMouseDown={(ev) => onRowMouseDown(ev, vi.index)}
+                          onMouseEnter={() => onRowMouseEnter(vi.index)}
                           onDblClick={() => setDetail(entry())}
                           title={t()("logcat.row_open_detail")}
                         >
