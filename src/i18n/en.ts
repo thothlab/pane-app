@@ -244,6 +244,8 @@ const en = {
     add_param: "+ add param",
     params_note:
       "Each row must be found either in the URL query, or at the top level of a JSON request body.",
+    param_volatile_hint:
+      "Looks like a per-request value (UUID). The rule matches it exactly, so it will only fire for this one request — remove this row unless you mean to pin it.",
     response_section: "Response",
     status_label: "Status",
     headers_label: "Headers",
@@ -306,6 +308,9 @@ const en = {
       "Bare word — substring in tag or message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:<package> — substring match against running process names; auto-tracks app restarts. Type `app:ru.` to match every running package starting with `ru.`.\n~pattern — regex (matches tag or message).\nlevel:W..F — range, all warnings and above.\nComma in value combines alternatives: positives OR (`tag:A,B` = A or B), each value can be negated with `!` (`tag:!Spam,!Noise,SSH` = not Spam AND not Noise AND contains SSH). `!tag:foo` flips the whole term.\nMultiple tokens are ANDed.\n⌘K clears the buffer. ⌘F focuses this input.",
     counter: "Viewing {{shown}} of {{total}}",
     pending_counter: "+{{n}} new",
+    row_open_detail: "Click to view the full message",
+    detail_copy: "Copy",
+    detail_close: "Close",
     empty_waiting: "Waiting for log entries…",
     empty_filtered: "No entries match the current filter.",
     col_time: "Time",
