@@ -15,7 +15,6 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import {
   ArrowDown,
-  ChevronDown,
   Copy,
   Download,
   Filter as FilterIcon,
@@ -997,9 +996,7 @@ const LogcatView: Component = () => {
   const [saveColor, setSaveColor] = createSignal(FILTER_PALETTE[0]!);
   const [savePinned, setSavePinned] = createSignal(false);
   const [saveBusy, setSaveBusy] = createSignal(false);
-  const [savedListOpen, setSavedListOpen] = createSignal(false);
   let savePopoverRef: HTMLDivElement | undefined;
-  let savedListRef: HTMLDivElement | undefined;
 
   const existingMatch = () => {
     const n = saveName().trim().toLowerCase();
@@ -1009,7 +1006,6 @@ const LogcatView: Component = () => {
 
   const openSave = () => {
     if (!filter().trim()) return;
-    setSavedListOpen(false);
     setSaveName("");
     setSaveColor(FILTER_PALETTE[0]!);
     setSavePinned(false);
@@ -1052,9 +1048,6 @@ const LogcatView: Component = () => {
       const target = e.target as Node;
       if (saveOpen() && savePopoverRef && !savePopoverRef.contains(target)) {
         setSaveOpen(false);
-      }
-      if (savedListOpen() && savedListRef && !savedListRef.contains(target)) {
-        setSavedListOpen(false);
       }
       if (
         headerMenuPos() &&
@@ -1151,7 +1144,46 @@ const LogcatView: Component = () => {
 
 
   return (
-    <div class="flex flex-col h-screen bg-bg text-fg text-xs">
+    <div class="flex h-screen bg-bg text-fg text-xs">
+      {/* Saved-filters sidebar — mirrors the main window's FILTERS list.
+          Click applies the query, hover reveals delete. Hidden while
+          empty so the table keeps full width until the user stars a
+          filter; replaces the old toolbar chevron dropdown. */}
+      <Show when={savedFilters().length > 0}>
+        <aside class="w-48 shrink-0 flex flex-col overflow-auto border-r border-border bg-bg-subtle/40 p-2">
+          <div class="px-2 pt-1 pb-2 text-xs uppercase tracking-wide text-fg-muted">
+            {t()("nav.filters")}
+          </div>
+          <For each={savedFilters()}>
+            {(f) => (
+              <div
+                class="group px-2 py-1 rounded text-sm hover:bg-bg-muted cursor-pointer flex items-center gap-2"
+                title={tr("logcat.apply_filter", { query: f.query })}
+                onClick={() => setFilter(f.query)}
+              >
+                <FilterIcon size={14} style={{ color: f.color }} />
+                <span class="truncate flex-1">{f.name}</span>
+                <button
+                  type="button"
+                  class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0"
+                  title={t()("logcat.delete_filter")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (
+                      confirm(tr("logcat.delete_filter_confirm", { name: f.name }))
+                    ) {
+                      void savedStore.remove(f.id);
+                    }
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+          </For>
+        </aside>
+      </Show>
+      <div class="flex flex-col flex-1 min-w-0 min-h-0">
       {/* Toolbar */}
       <div class="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-subtle">
         <button
@@ -1259,34 +1291,10 @@ const LogcatView: Component = () => {
             autocorrect="off"
             spellcheck={false}
           />
-          {/* Right-aligned action cluster: chevron (saved-filter
-              dropdown — only when something to show), star (save
-              current — only when filter is non-empty). Sits on top
-              of the input via z-10. Stacked icons are spaced by
-              gap-0.5; mr-1 keeps them off the rounded corner. */}
+          {/* Right-aligned action cluster: star (save current filter —
+              only when the filter is non-empty). The saved list itself
+              now lives in the left sidebar, not a dropdown. */}
           <div class="absolute right-1 inset-y-0 flex items-center gap-0.5 z-10">
-            <Show when={savedFilters().length > 0}>
-              <button
-                type="button"
-                class={`p-1 rounded hover:bg-bg-subtle ${
-                  savedListOpen() ? "text-accent" : "text-fg-muted"
-                }`}
-                title={t()("logcat.saved_filters_title")}
-                aria-label={t()("logcat.saved_filters_title")}
-                // stopPropagation on mousedown so the document-level
-                // outside-click handler doesn't fire BEFORE the click
-                // toggle below, which would close-then-reopen the
-                // popover and visually do nothing.
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSaveOpen(false);
-                  setSavedListOpen((v) => !v);
-                }}
-              >
-                <ChevronDown size={14} />
-              </button>
-            </Show>
             <Show when={filter().trim()}>
               <button
                 type="button"
@@ -1389,59 +1397,6 @@ const LogcatView: Component = () => {
             </div>
           </Show>
 
-          {/* Saved-filters dropdown. Lists logcat-scoped entries with
-              colour dot + name. Click applies (writes to `filter`),
-              hover reveals delete. Pinned first, then alphabetical —
-              ordering comes from the backend. */}
-          <Show when={savedListOpen()}>
-            <div
-              ref={(el) => (savedListRef = el)}
-              class="absolute right-0 top-full mt-1 w-64 z-30 bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs max-h-80 overflow-auto"
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <Show
-                when={savedFilters().length > 0}
-                fallback={
-                  <div class="px-3 py-2 text-fg-muted italic">
-                    {t()("logcat.saved_filters_empty")}
-                  </div>
-                }
-              >
-                <For each={savedFilters()}>
-                  {(f) => (
-                    <div
-                      class="group px-3 py-1.5 hover:bg-bg-muted cursor-pointer flex items-center gap-2"
-                      title={tr("logcat.apply_filter", { query: f.query })}
-                      onClick={() => {
-                        setFilter(f.query);
-                        setSavedListOpen(false);
-                      }}
-                    >
-                      <FilterIcon size={12} style={{ color: f.color }} />
-                      <span class="truncate flex-1">{f.name}</span>
-                      <button
-                        type="button"
-                        class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0 p-0.5"
-                        title={t()("logcat.delete_filter")}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (
-                            confirm(
-                              tr("logcat.delete_filter_confirm", { name: f.name }),
-                            )
-                          ) {
-                            void savedStore.remove(f.id);
-                          }
-                        }}
-                      >
-                        <X size={11} />
-                      </button>
-                    </div>
-                  )}
-                </For>
-              </Show>
-            </div>
-          </Show>
         </div>
         {/* Substring search — sits next to the DSL filter so the two are
             visually paired. Narrower than the filter (max-w-xs) since
@@ -1846,6 +1801,7 @@ const LogcatView: Component = () => {
           </div>
         )}
       </Show>
+      </div>
     </div>
   );
 };
