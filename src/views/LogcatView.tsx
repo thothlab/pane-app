@@ -25,6 +25,7 @@ import {
   Search as SearchIcon,
   Star,
   Trash2,
+  Type,
   X,
 } from "lucide-solid";
 import { t, tr } from "@/i18n";
@@ -113,6 +114,23 @@ const LEVEL_CHAR: Record<LogLevel, string> = {
   silent: "S",
 };
 
+// One log entry as a `threadtime`-format line — the same shape
+// `adb logcat -v threadtime` emits and what Export writes. Shared by
+// Export, the "Copy selected" command (⌘C) and the plain-text view so
+// all three produce identical, paste-anywhere output.
+function formatEntryLine(e: LogEntry): string {
+  const ts = e.timestamp || "";
+  const pid = String(e.pid).padStart(5);
+  const tid = String(e.tid).padStart(5);
+  const lvl = LEVEL_CHAR[e.level];
+  return `${ts} ${pid} ${tid} ${lvl} ${e.tag}: ${e.message}`;
+}
+
+// Cap the plain-text snapshot so a 100k-line firehose doesn't build a
+// pathologically large string / textarea value. The tail is what
+// matters; narrow with a filter to see less.
+const TEXT_VIEW_CAP = 5000;
+
 /// Column header with a thin draggable right-edge handle. The handle
 /// is a 1-px vertical line at the cell's right edge — it works as
 /// both the visual column divider and the resize affordance.
@@ -158,6 +176,28 @@ const LogcatView: Component = () => {
   // dynamic row heights), so the only way to read a long message in full
   // is this modal: full text, wrapped, selectable, copyable.
   const [detail, setDetail] = createSignal<LogEntry | null>(null);
+
+  // ── Row selection (LogRabbit-style) ───────────────────────────────
+  // Selected entries, keyed by object identity (LogEntry has no id, but
+  // the same object stays in the buffer until it FIFO-drops, so the Set
+  // survives Tail churn — far safer than indices, which shift under
+  // saturation). Click selects a row, Shift-click extends a range from
+  // the anchor, ⌘/Ctrl-click toggles one. ⌘C copies the selected rows as
+  // full threadtime lines; ⇧⌘C copies just their messages.
+  const [selected, setSelected] = createSignal<Set<LogEntry>>(new Set());
+  // Anchor index (into visible()) for Shift-range selection.
+  let selectAnchor = -1;
+  // Brief "copied N" confirmation shown in the status bar.
+  const [copyHint, setCopyHint] = createSignal<string | null>(null);
+
+  // ── Plain-text view (free-form select / scroll / copy) ────────────
+  // A read-only textarea is the right tool for "grab arbitrary text":
+  // native substring + multi-line selection, horizontal scroll to the
+  // end of any long line, and copy — none of which a virtualized grid
+  // can offer. Snapshotted on toggle (not live) so the content doesn't
+  // shift under a selection while the firehose runs.
+  const [textMode, setTextMode] = createSignal(false);
+  const [textSnapshot, setTextSnapshot] = createSignal("");
   // PID → process name snapshot. Polled every 10s via
   // `android_pid_names` so the App column in the table can label
   // each entry with the package it came from. Accumulates across
@@ -698,6 +738,70 @@ const LogcatView: Component = () => {
     // keeps lastScrollTop coherent for whatever scroll happens
     // next.
     lastScrollTop = 0;
+    setSelected(new Set<LogEntry>());
+    selectAnchor = -1;
+  };
+
+  // Select a row. Click replaces the selection, Shift-click extends a
+  // range from the anchor, ⌘/Ctrl-click toggles one. A live text
+  // selection (drag-select) wins — if the user is mid-select, the click
+  // that ends the drag must not clobber it.
+  const onRowClick = (ev: MouseEvent, index: number) => {
+    const tsel = window.getSelection();
+    if (tsel && !tsel.isCollapsed && tsel.toString().length > 0) return;
+    const list = visible();
+    const entry = list[index];
+    if (!entry) return;
+    if (ev.shiftKey && selectAnchor >= 0) {
+      const lo = Math.min(selectAnchor, index);
+      const hi = Math.max(selectAnchor, index);
+      const next = new Set<LogEntry>();
+      for (let i = lo; i <= hi; i++) {
+        const en = list[i];
+        if (en) next.add(en);
+      }
+      setSelected(next);
+    } else if (ev.metaKey || ev.ctrlKey) {
+      const next = new Set(selected());
+      if (next.has(entry)) next.delete(entry);
+      else next.add(entry);
+      setSelected(next);
+      selectAnchor = index;
+    } else {
+      setSelected(new Set([entry]));
+      selectAnchor = index;
+    }
+  };
+
+  // Copy the selected rows to the clipboard, in visible() order.
+  // `messageOnly` (⇧⌘C) emits just the message field; otherwise (⌘C) the
+  // full threadtime line. Returns false when nothing is selected so the
+  // key handler can fall through to default behaviour.
+  const copySelected = (messageOnly: boolean): boolean => {
+    const sel = selected();
+    if (sel.size === 0) return false;
+    const ordered = visible().filter((en) => sel.has(en));
+    if (ordered.length === 0) return false;
+    const text = ordered
+      .map((en) => (messageOnly ? en.message : formatEntryLine(en)))
+      .join("\n");
+    void writeClipboard(text);
+    setCopyHint(tr("logcat.copied", { n: String(ordered.length) }));
+    setTimeout(() => setCopyHint(null), 2000);
+    return true;
+  };
+
+  // Toggle the plain-text view. Snapshots the (filter-narrowed, tail-
+  // capped) lines on enter so the content stays put for selecting and
+  // scrolling while the firehose keeps running underneath.
+  const toggleTextMode = () => {
+    const next = !textMode();
+    if (next) {
+      const v = visible();
+      const slice = v.length > TEXT_VIEW_CAP ? v.slice(v.length - TEXT_VIEW_CAP) : v;
+      setTextSnapshot(slice.map(formatEntryLine).join("\n"));
+    }
+    setTextMode(next);
   };
 
   /// Serialize the currently-visible entries (after filter + follow-app
@@ -705,14 +809,7 @@ const LogcatView: Component = () => {
   /// `adb logcat -v threadtime` emits so the result drops into any
   /// log viewer (Android Studio, logbook, grep) unmodified.
   const exportLog = async () => {
-    const lines = visible().map((e) => {
-      // "MM-DD HH:MM:SS.mmm  PID  TID L Tag: Message"
-      const ts = e.timestamp || "";
-      const pid = String(e.pid).padStart(5);
-      const tid = String(e.tid).padStart(5);
-      const lvl = LEVEL_CHAR[e.level];
-      return `${ts} ${pid} ${tid} ${lvl} ${e.tag}: ${e.message}`;
-    });
+    const lines = visible().map(formatEntryLine);
     const defaultName = appLabel
       ? `${appLabel}-${Date.now()}.log`
       : `logcat-${serial}-${Date.now()}.log`;
@@ -767,6 +864,22 @@ const LogcatView: Component = () => {
       if (e.key === "Escape" && detail()) {
         e.preventDefault();
         setDetail(null);
+        return;
+      }
+      if (e.key === "Escape" && selected().size > 0) {
+        e.preventDefault();
+        setSelected(new Set<LogEntry>());
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
+        // Let inputs and the text-view textarea keep native copy, and
+        // let any live text selection win; only fall back to copying
+        // the selected rows. ⇧⌘C copies messages only, ⌘C full lines.
+        const tag = (document.activeElement?.tagName || "").toLowerCase();
+        if (tag === "textarea" || tag === "input") return;
+        const tsel = window.getSelection();
+        if (tsel && !tsel.isCollapsed && tsel.toString().length > 0) return;
+        if (copySelected(e.shiftKey)) e.preventDefault();
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -996,6 +1109,16 @@ const LogcatView: Component = () => {
         >
           <ArrowDown size={12} />
           {t()("logcat.auto_scroll")}
+        </button>
+        <button
+          class={`inline-flex items-center gap-1 px-2 py-1 rounded ${
+            textMode() ? "bg-accent/15 text-accent" : "hover:bg-bg-muted text-fg-muted"
+          }`}
+          onClick={toggleTextMode}
+          title={t()("logcat.text_view_title")}
+        >
+          <Type size={12} />
+          {t()("logcat.text_view")}
         </button>
 
         {/* Token-highlight overlay over a transparent input. The
@@ -1295,7 +1418,8 @@ const LogcatView: Component = () => {
           their right edge; Level is fixed (1 char) and Message
           takes the remainder (1fr). Vertical hairlines via
           per-cell border-r — no grid gap so the borders are
-          column-edge aligned. */}
+          column-edge aligned. Hidden in plain-text mode. */}
+      <Show when={!textMode()}>
       <div
         class="grid font-mono text-fg-muted tracking-wide text-xs px-3 py-1 border-b border-border bg-bg-subtle/60"
         style={{ "grid-template-columns": gridTemplate() }}
@@ -1347,6 +1471,21 @@ const LogcatView: Component = () => {
           <span class="px-2">{t()("logcat.col_message")}</span>
         </Show>
       </div>
+      </Show>
+
+      {/* Plain-text view. A read-only textarea (wrap off → horizontal
+          scroll) of the snapshotted filtered lines: native selection,
+          scroll-to-end, and copy that the virtualized grid can't give.
+          Swaps in for the header + table while active. */}
+      <Show when={textMode()}>
+        <textarea
+          class="flex-1 w-full bg-bg text-fg text-xs font-mono p-3 outline-none resize-none select-text"
+          readOnly
+          wrap="off"
+          spellcheck={false}
+          value={textSnapshot()}
+        />
+      </Show>
 
       {/* Column show/hide menu. Anchored to the right-click position
           via `fixed` + inline `left/top`. We don't bother flipping
@@ -1390,7 +1529,8 @@ const LogcatView: Component = () => {
 
       {/* Virtualized table. <For> over the reactive virtual-items
           accessor keeps row identity stable across the firehose;
-          .map would rebuild DOM nodes each batch. */}
+          .map would rebuild DOM nodes each batch. Hidden in text mode. */}
+      <Show when={!textMode()}>
       <div
         ref={(el) => (scrollEl = el)}
         class="flex-1 overflow-auto"
@@ -1447,12 +1587,17 @@ const LogcatView: Component = () => {
                         entry().pid > 0 ? String(entry().pid) : "";
                       return (
                         <div
-                          class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 cursor-pointer hover:bg-bg-muted/40 ${LEVEL_ROW_COLOR[entry().level]}`}
+                          class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 select-text ${
+                            selected().has(entry())
+                              ? "bg-accent/25"
+                              : "hover:bg-bg-muted/40"
+                          } ${LEVEL_ROW_COLOR[entry().level]}`}
                           style={{
                             transform: `translateY(${vi.start}px)`,
                             "grid-template-columns": gridTemplate(),
                           }}
-                          onClick={() => setDetail(entry())}
+                          onClick={(ev) => onRowClick(ev, vi.index)}
+                          onDblClick={() => setDetail(entry())}
                           title={t()("logcat.row_open_detail")}
                         >
                           <Show when={colVisible().time}>
@@ -1500,6 +1645,7 @@ const LogcatView: Component = () => {
           </div>
         </Show>
       </div>
+      </Show>
 
       {/* Status bar. LogRabbit-style row at the foot of the window
           carrying the counter on the left — keeps the toolbar uncluttered
@@ -1523,6 +1669,14 @@ const LogcatView: Component = () => {
           <span class="ml-3 text-accent">
             {tr("logcat.pending_counter", { n: String(pendingCount()) })}
           </span>
+        </Show>
+        <Show when={selected().size > 0}>
+          <span class="ml-3">
+            {tr("logcat.selected_count", { n: String(selected().size) })}
+          </span>
+        </Show>
+        <Show when={copyHint()}>
+          <span class="ml-3 text-success">{copyHint()}</span>
         </Show>
       </div>
 
