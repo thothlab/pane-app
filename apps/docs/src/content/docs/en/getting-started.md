@@ -305,11 +305,10 @@ What's inside:
   there's no badge — no more empty "+N" from the background firehose).
   Toggling Tail back on (or scrolling all the way down) drains them and
   resumes auto-scroll.
-- **Follow app** — dropdown of installed third-party packages.
-  Pick one → backend resolves PID via `adb shell pidof` every 5s,
-  the view filters down to that PID. App restart → PID changes → the
-  filter transparently picks up the new process. No stale `pid:1234`
-  literals to update.
+- **FILTERS sidebar (left)** — your saved filters. The star ⭐ in the
+  filter field saves the current query; in the sidebar a click applies a
+  filter, hover reveals rename (pencil, inline edit) and delete (✕). Drag
+  the divider to resize the sidebar (double-click it to reset).
 - **Filter DSL** — in-memory (the buffer is already in renderer
   memory, no need to go through SQL):
   ```text
@@ -353,6 +352,24 @@ What's inside:
   file in `threadtime` format (drop-in for Android Studio / any
   grep pipeline).
 - **⌘F** focuses the filter input. **⌘⇧F** focuses the search input.
+- **Row selection & copy** (LogRabbit-style): click selects a row,
+  Shift-click extends a range, ⌘-click toggles one, click-and-drag
+  selects several. **⌘C** copies the selected rows in full (threadtime:
+  time · pid · tid · level · tag: message), **⇧⌘C** copies just the
+  message field. Right-click → **Copy / Copy message / View message**;
+  the copy actions operate on the whole selection. (Free-form text
+  selection lives in the text view, below.)
+- **View a row** — double-click a row, or **View message** from the
+  menu. The overlay is **resizable** (drag the bottom-right corner) and
+  scrollable. A single row lists its fields (Time/App/PID/TID/Level/Tag),
+  each copyable on its own; below is the content (the message, or the
+  messages of the selected rows). JSON-looking content gets **syntax
+  highlighting** and a **Format** button that pretty-prints even
+  broken/truncated JSON by structure (like LogRabbit).
+- **Text view** (the **Text** button) — swaps the table for a flat,
+  snapshotted text of the filtered lines: native selection of any
+  substring, horizontal scroll for long lines, and copy — what the
+  virtualized grid can't offer.
 
 Safety bits:
 - Closing the window kills the `adb logcat` subprocess (via
