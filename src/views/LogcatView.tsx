@@ -244,6 +244,19 @@ const LogcatView: Component = () => {
       setTimeout(() => setDetailFormatErr(null), 2500);
     }
   };
+  // Only syntax-highlight when the content actually parses as JSON — on
+  // plain log lines the JSON tokenizer paints numbers/keywords at random
+  // and reads as noise. Plain text falls back to an un-highlighted view.
+  const detailIsJson = createMemo(() => {
+    const s = detailText().trim();
+    if (!s || (s[0] !== "{" && s[0] !== "[")) return false;
+    try {
+      JSON.parse(s);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
   // ── Row selection (LogRabbit-style) ───────────────────────────────
   // Selected entries, keyed by object identity (LogEntry has no id, but
@@ -2025,7 +2038,19 @@ const LogcatView: Component = () => {
                   )}
                 </Show>
                 <div class="flex-1 min-h-0 p-2">
-                  <JsonEditor value={detailText()} onInput={setDetailText} />
+                  <Show
+                    when={detailIsJson()}
+                    fallback={
+                      <textarea
+                        class="w-full h-full bg-bg border border-border rounded px-2 py-1 text-xs font-mono leading-snug whitespace-pre-wrap break-words resize-none overflow-auto text-fg outline-none focus:border-accent"
+                        spellcheck={false}
+                        value={detailText()}
+                        onInput={(e) => setDetailText(e.currentTarget.value)}
+                      />
+                    }
+                  >
+                    <JsonEditor value={detailText()} onInput={setDetailText} />
+                  </Show>
                 </div>
               </div>
             </div>
