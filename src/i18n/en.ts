@@ -352,6 +352,7 @@ const en = {
     saved_filters_title: "Saved filters",
     saved_filters_empty: "No saved filters",
     apply_filter: "Apply «{{query}}»",
+    rename_filter: "Rename",
     delete_filter: "Delete filter",
     delete_filter_confirm: "Delete filter «{{name}}»?",
   },

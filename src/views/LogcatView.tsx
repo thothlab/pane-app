@@ -19,6 +19,7 @@ import {
   Download,
   Filter as FilterIcon,
   Pause,
+  Pencil,
   Pin,
   Play,
   Search as SearchIcon,
@@ -988,6 +989,31 @@ const LogcatView: Component = () => {
   const savedStore = savedFiltersFor("logcat");
   const savedFilters = savedStore.filters;
 
+  // Inline rename of a sidebar filter. `editingId` is the row being
+  // edited; `editName` the in-progress text. Commit on Enter/blur, cancel
+  // on Esc — a rename is just an upsert with the same id and a new name.
+  const [editingId, setEditingId] = createSignal<string | null>(null);
+  const [editName, setEditName] = createSignal("");
+  const startRename = (f: { id: string; name: string }) => {
+    setEditName(f.name);
+    setEditingId(f.id);
+  };
+  const commitRename = (f: {
+    id: string;
+    name: string;
+    query: string;
+    color: string;
+    pinned: boolean;
+  }) => {
+    if (editingId() !== f.id) return; // already committed or cancelled
+    const name = editName().trim();
+    setEditingId(null);
+    if (!name || name === f.name) return;
+    void savedStore
+      .save({ id: f.id, name, query: f.query, color: f.color, pinned: f.pinned })
+      .catch((e) => setErrorMsg((e as { message?: string })?.message ?? String(e)));
+  };
+
   // Save-popover state. Mirrors CapturesView: name + colour + pin,
   // plus an "update vs save" decision based on a case-insensitive
   // exact name match against the existing list.
@@ -1156,28 +1182,76 @@ const LogcatView: Component = () => {
           </div>
           <For each={savedFilters()}>
             {(f) => (
-              <div
-                class="group px-2 py-1 rounded text-sm hover:bg-bg-muted cursor-pointer flex items-center gap-2"
-                title={tr("logcat.apply_filter", { query: f.query })}
-                onClick={() => setFilter(f.query)}
-              >
-                <FilterIcon size={14} style={{ color: f.color }} />
-                <span class="truncate flex-1">{f.name}</span>
-                <button
-                  type="button"
-                  class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0"
-                  title={t()("logcat.delete_filter")}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (
-                      confirm(tr("logcat.delete_filter_confirm", { name: f.name }))
-                    ) {
-                      void savedStore.remove(f.id);
-                    }
-                  }}
+              <div class="group px-2 py-1 rounded text-sm hover:bg-bg-muted flex items-center gap-2">
+                <FilterIcon size={14} style={{ color: f.color }} class="shrink-0" />
+                <Show
+                  when={editingId() === f.id}
+                  fallback={
+                    <span
+                      class="truncate flex-1 cursor-pointer"
+                      title={tr("logcat.apply_filter", { query: f.query })}
+                      onClick={() => setFilter(f.query)}
+                    >
+                      {f.name}
+                    </span>
+                  }
                 >
-                  <X size={12} />
-                </button>
+                  <input
+                    type="text"
+                    autocapitalize="off"
+                    autocomplete="off"
+                    autocorrect="off"
+                    spellcheck={false}
+                    class="flex-1 min-w-0 bg-bg border border-border rounded px-1 py-0.5 text-sm"
+                    value={editName()}
+                    ref={(el) =>
+                      queueMicrotask(() => {
+                        el.focus();
+                        el.select();
+                      })
+                    }
+                    onInput={(e) => setEditName(e.currentTarget.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitRename(f);
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingId(null);
+                      }
+                    }}
+                    onBlur={() => commitRename(f)}
+                  />
+                </Show>
+                <Show when={editingId() !== f.id}>
+                  <button
+                    type="button"
+                    class="opacity-0 group-hover:opacity-100 hover:text-accent shrink-0"
+                    title={t()("logcat.rename_filter")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startRename(f);
+                    }}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0"
+                    title={t()("logcat.delete_filter")}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (
+                        confirm(tr("logcat.delete_filter_confirm", { name: f.name }))
+                      ) {
+                        void savedStore.remove(f.id);
+                      }
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                </Show>
               </div>
             )}
           </For>

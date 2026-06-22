@@ -351,6 +351,7 @@ const ru: Dict = {
     saved_filters_title: "Сохранённые фильтры",
     saved_filters_empty: "Сохранённых фильтров нет",
     apply_filter: "Применить «{{query}}»",
+    rename_filter: "Переименовать",
     delete_filter: "Удалить фильтр",
     delete_filter_confirm: "Удалить фильтр «{{name}}»?",
   },
