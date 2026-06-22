@@ -300,7 +300,7 @@ const LogcatView: Component = () => {
       /* fall through to best-effort */
     }
     // JSON-ish but broken/truncated → re-indent structurally anyway
-    // (LogRabbit-style). Stays un-highlighted since it won't parse.
+    // (LogRabbit-style); it still highlights (the tokenizer is tolerant).
     if (trimmed[0] === "{" || trimmed[0] === "[") {
       const loose = formatJsonLoose(trimmed);
       if (loose !== raw) setDetailText(loose);
@@ -311,18 +311,14 @@ const LogcatView: Component = () => {
     setDetailFormatErr(t()("logcat.detail_not_json"));
     setTimeout(() => setDetailFormatErr(null), 2000);
   };
-  // Only syntax-highlight when the content actually parses as JSON — on
-  // plain log lines the JSON tokenizer paints numbers/keywords at random
-  // and reads as noise. Plain text falls back to an un-highlighted view.
-  const detailIsJson = createMemo(() => {
+  // Highlight when the content LOOKS like JSON (starts with { or [),
+  // valid or not — the highlighter is a tolerant regex tokenizer, so
+  // broken/truncated JSON still colours correctly. We only gate out
+  // plain log lines (which start with a date), where the tokenizer would
+  // paint stray numbers/keywords as noise.
+  const detailLooksJson = createMemo(() => {
     const s = detailText().trim();
-    if (!s || (s[0] !== "{" && s[0] !== "[")) return false;
-    try {
-      JSON.parse(s);
-      return true;
-    } catch {
-      return false;
-    }
+    return s.length > 0 && (s[0] === "{" || s[0] === "[");
   });
 
   // ── Row selection (LogRabbit-style) ───────────────────────────────
@@ -2106,7 +2102,7 @@ const LogcatView: Component = () => {
                 </Show>
                 <div class="flex-1 min-h-0 p-2">
                   <Show
-                    when={detailIsJson()}
+                    when={detailLooksJson()}
                     fallback={
                       <textarea
                         class="w-full h-full bg-bg border border-border rounded px-2 py-1 text-xs font-mono leading-snug whitespace-pre-wrap break-words resize-none overflow-auto text-fg outline-none focus:border-accent"
