@@ -316,6 +316,7 @@ const ru: Dict = {
     row_open_detail: "Клик — выделить · двойной клик — полный текст",
     detail_copy: "Копировать",
     detail_close: "Закрыть",
+    detail_title: "Запись лога",
     detail_rows: "Строк: {{n}}",
     copy_failed: "Не скопировалось: {{message}}",
     menu_copy: "Копировать",

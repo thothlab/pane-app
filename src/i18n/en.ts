@@ -317,6 +317,7 @@ const en = {
     row_open_detail: "Click to select · double-click for the full message",
     detail_copy: "Copy",
     detail_close: "Close",
+    detail_title: "Log entry",
     detail_rows: "{{n}} rows",
     copy_failed: "Copy failed: {{message}}",
     menu_copy: "Copy",
