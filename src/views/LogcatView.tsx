@@ -16,6 +16,7 @@ import { createVirtualizer } from "@tanstack/solid-virtual";
 import {
   ArrowDown,
   ChevronDown,
+  Copy,
   Download,
   Filter as FilterIcon,
   Pause,
@@ -30,6 +31,7 @@ import { t, tr } from "@/i18n";
 import { compileLogcatFilter } from "@/lib/logcat-filter";
 import { savedFiltersFor } from "@/stores/saved-filters";
 import { fontScale, ROOT_PX } from "@/stores/font-scale";
+import { writeClipboard } from "@/lib/clipboard";
 
 // Same palette as CapturesView's save popover so the colour dots in the
 // two scopes look identical. Kept local rather than shared because there's
@@ -151,6 +153,11 @@ const LogcatView: Component = () => {
   // "I know what I'm looking for, get me there" pass over the result.
   const [search, setSearch] = createSignal("");
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
+  // Row clicked open in the detail overlay. Cells are single-line and
+  // `truncate`d (wrap mode was reverted — it fought the virtualizer's
+  // dynamic row heights), so the only way to read a long message in full
+  // is this modal: full text, wrapped, selectable, copyable.
+  const [detail, setDetail] = createSignal<LogEntry | null>(null);
   // PID → process name snapshot. Polled every 10s via
   // `android_pid_names` so the App column in the table can label
   // each entry with the package it came from. Accumulates across
@@ -757,6 +764,11 @@ const LogcatView: Component = () => {
   // recurring bug.
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && detail()) {
+        e.preventDefault();
+        setDetail(null);
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         clearAll();
@@ -1285,7 +1297,7 @@ const LogcatView: Component = () => {
           per-cell border-r — no grid gap so the borders are
           column-edge aligned. */}
       <div
-        class="grid font-mono text-fg-muted tracking-wide text-[10px] px-3 py-1 border-b border-border bg-bg-subtle/60"
+        class="grid font-mono text-fg-muted tracking-wide text-xs px-3 py-1 border-b border-border bg-bg-subtle/60"
         style={{ "grid-template-columns": gridTemplate() }}
         onContextMenu={openHeaderMenu}
         title={t()("logcat.col_menu_hint")}
@@ -1435,11 +1447,13 @@ const LogcatView: Component = () => {
                         entry().pid > 0 ? String(entry().pid) : "";
                       return (
                         <div
-                          class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 ${LEVEL_ROW_COLOR[entry().level]}`}
+                          class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 cursor-pointer hover:bg-bg-muted/40 ${LEVEL_ROW_COLOR[entry().level]}`}
                           style={{
                             transform: `translateY(${vi.start}px)`,
                             "grid-template-columns": gridTemplate(),
                           }}
+                          onClick={() => setDetail(entry())}
+                          title={t()("logcat.row_open_detail")}
                         >
                           <Show when={colVisible().time}>
                             <span class="truncate px-2 border-r border-border/30">
@@ -1495,7 +1509,7 @@ const LogcatView: Component = () => {
           when the in-memory ring buffer has hit MAX_ENTRIES, signalling
           that older entries have been dropped FIFO and the visible
           total is the cap, not the actual log volume since attach. */}
-      <div class="flex items-center pl-5 pr-3 py-1 border-t border-border bg-bg-subtle text-fg-muted text-[11px] tabular-nums">
+      <div class="flex items-center pl-5 pr-3 py-1 border-t border-border bg-bg-subtle text-fg-muted text-xs tabular-nums">
         <span>
           {tr("logcat.counter", {
             shown: String(visible().length),
@@ -1511,6 +1525,56 @@ const LogcatView: Component = () => {
           </span>
         </Show>
       </div>
+
+      {/* Row detail overlay. Click a row to read its full message —
+          wrapped, selectable, copyable — without fighting the
+          virtualizer (single-line truncated cells stay; this is the
+          read-the-overflow escape hatch). Backdrop or Esc closes. */}
+      <Show when={detail()}>
+        {(d) => (
+          <div
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+            onClick={() => setDetail(null)}
+          >
+            <div
+              class="w-full max-w-3xl max-h-[80vh] flex flex-col bg-bg border border-border rounded-lg shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div class="flex items-center gap-2 px-4 py-2 border-b border-border text-xs font-mono text-fg-muted">
+                <span class={`font-bold ${LEVEL_COLOR[d().level]}`}>
+                  {LEVEL_CHAR[d().level]}
+                </span>
+                <span>{d().timestamp}</span>
+                <Show when={d().pid > 0}>
+                  <span>pid {d().pid}</span>
+                </Show>
+                <span class="truncate">{d().tag}</span>
+                <div class="ml-auto flex items-center gap-1">
+                  <button
+                    class="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-muted"
+                    onClick={() => void writeClipboard(d().message)}
+                    title={t()("logcat.detail_copy")}
+                  >
+                    <Copy size={12} />
+                    {t()("logcat.detail_copy")}
+                  </button>
+                  <button
+                    class="p-1 rounded hover:bg-bg-muted"
+                    onClick={() => setDetail(null)}
+                    title={t()("logcat.detail_close")}
+                    aria-label={t()("logcat.detail_close")}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+              <pre class="flex-1 overflow-auto px-4 py-3 text-xs font-mono whitespace-pre-wrap break-all select-text">
+                {d().message}
+              </pre>
+            </div>
+          </div>
+        )}
+      </Show>
     </div>
   );
 };
