@@ -171,11 +171,11 @@ const LogcatView: Component = () => {
   // "I know what I'm looking for, get me there" pass over the result.
   const [search, setSearch] = createSignal("");
   const [errorMsg, setErrorMsg] = createSignal<string | null>(null);
-  // Row clicked open in the detail overlay. Cells are single-line and
-  // `truncate`d (wrap mode was reverted — it fought the virtualizer's
-  // dynamic row heights), so the only way to read a long message in full
-  // is this modal: full text, wrapped, selectable, copyable.
-  const [detail, setDetail] = createSignal<LogEntry | null>(null);
+  // Rows open in the detail overlay (the only way to read a long,
+  // single-line `truncate`d message in full — wrap mode fought the
+  // virtualizer). One entry → metadata header + its message; multiple
+  // (View message over a selection) → all the selected rows as text.
+  const [detail, setDetail] = createSignal<LogEntry[] | null>(null);
 
   // ── Row selection (LogRabbit-style) ───────────────────────────────
   // Selected entries, keyed by object identity (LogEntry has no id, but
@@ -819,7 +819,12 @@ const LogcatView: Component = () => {
     closeRowMenu();
   };
   const menuView = () => {
-    if (menuViewEntry) setDetail(menuViewEntry);
+    // View the whole selection (the right-clicked row was folded into it
+    // by onRowContextMenu), in visible() order; fall back to the clicked
+    // row if somehow nothing is selected.
+    const rows = visible().filter((en) => selected().has(en));
+    if (rows.length > 0) setDetail(rows);
+    else if (menuViewEntry) setDetail([menuViewEntry]);
     closeRowMenu();
   };
 
@@ -1707,7 +1712,7 @@ const LogcatView: Component = () => {
                           onMouseDown={(ev) => onRowMouseDown(ev, vi.index)}
                           onMouseEnter={() => onRowMouseEnter(vi.index)}
                           onContextMenu={(ev) => onRowContextMenu(ev, vi.index)}
-                          onDblClick={() => setDetail(entry())}
+                          onDblClick={() => setDetail([entry()])}
                           title={t()("logcat.row_open_detail")}
                         >
                           <Show when={colVisible().time}>
@@ -1831,49 +1836,69 @@ const LogcatView: Component = () => {
           virtualizer (single-line truncated cells stay; this is the
           read-the-overflow escape hatch). Backdrop or Esc closes. */}
       <Show when={detail()}>
-        {(d) => (
-          <div
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
-            onClick={() => setDetail(null)}
-          >
+        {(d) => {
+          const rows = () => d();
+          const single = () => (rows().length === 1 ? rows()[0]! : null);
+          // One row → just its message (metadata is in the header).
+          // Multiple → each as a full threadtime line so they're
+          // distinguishable; Copy yields the same text.
+          const bodyText = () =>
+            single() ? single()!.message : rows().map(formatEntryLine).join("\n");
+          return (
             <div
-              class="w-full max-w-3xl max-h-[80vh] flex flex-col bg-bg border border-border rounded-lg shadow-xl"
-              onClick={(e) => e.stopPropagation()}
+              class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+              onClick={() => setDetail(null)}
             >
-              <div class="flex items-center gap-2 px-4 py-2 border-b border-border text-xs font-mono text-fg-muted">
-                <span class={`font-bold ${LEVEL_COLOR[d().level]}`}>
-                  {LEVEL_CHAR[d().level]}
-                </span>
-                <span>{d().timestamp}</span>
-                <Show when={d().pid > 0}>
-                  <span>pid {d().pid}</span>
-                </Show>
-                <span class="truncate">{d().tag}</span>
-                <div class="ml-auto flex items-center gap-1">
-                  <button
-                    class="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-muted"
-                    onClick={() => void writeClipboard(d().message)}
-                    title={t()("logcat.detail_copy")}
+              <div
+                class="w-full max-w-3xl max-h-[80vh] flex flex-col bg-bg border border-border rounded-lg shadow-xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div class="flex items-center gap-2 px-4 py-2 border-b border-border text-xs font-mono text-fg-muted">
+                  <Show
+                    when={single()}
+                    fallback={
+                      <span>{tr("logcat.detail_rows", { n: String(rows().length) })}</span>
+                    }
                   >
-                    <Copy size={12} />
-                    {t()("logcat.detail_copy")}
-                  </button>
-                  <button
-                    class="p-1 rounded hover:bg-bg-muted"
-                    onClick={() => setDetail(null)}
-                    title={t()("logcat.detail_close")}
-                    aria-label={t()("logcat.detail_close")}
-                  >
-                    <X size={14} />
-                  </button>
+                    {(e) => (
+                      <>
+                        <span class={`font-bold ${LEVEL_COLOR[e().level]}`}>
+                          {LEVEL_CHAR[e().level]}
+                        </span>
+                        <span>{e().timestamp}</span>
+                        <Show when={e().pid > 0}>
+                          <span>pid {e().pid}</span>
+                        </Show>
+                        <span class="truncate">{e().tag}</span>
+                      </>
+                    )}
+                  </Show>
+                  <div class="ml-auto flex items-center gap-1">
+                    <button
+                      class="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-muted"
+                      onClick={() => void writeClipboard(bodyText())}
+                      title={t()("logcat.detail_copy")}
+                    >
+                      <Copy size={12} />
+                      {t()("logcat.detail_copy")}
+                    </button>
+                    <button
+                      class="p-1 rounded hover:bg-bg-muted"
+                      onClick={() => setDetail(null)}
+                      title={t()("logcat.detail_close")}
+                      aria-label={t()("logcat.detail_close")}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
                 </div>
+                <pre class="flex-1 overflow-auto px-4 py-3 text-xs font-mono whitespace-pre-wrap break-all select-text">
+                  {bodyText()}
+                </pre>
               </div>
-              <pre class="flex-1 overflow-auto px-4 py-3 text-xs font-mono whitespace-pre-wrap break-all select-text">
-                {d().message}
-              </pre>
             </div>
-          </div>
-        )}
+          );
+        }}
       </Show>
       </div>
     </div>
