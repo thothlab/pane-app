@@ -321,6 +321,7 @@ const en = {
     detail_format: "Format",
     detail_format_title: "Pretty-print the content as JSON (2-space indent)",
     detail_invalid_json: "Invalid JSON: {{message}}",
+    detail_not_json: "Not JSON",
     detail_rows: "{{n}} rows",
     copy_failed: "Copy failed: {{message}}",
     menu_copy: "Copy",

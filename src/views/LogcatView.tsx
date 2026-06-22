@@ -170,6 +170,59 @@ const DetailField: Component<{ label: string; value: string }> = (p) => {
   );
 };
 
+// Best-effort JSON pretty-printer that doesn't require valid input — it
+// re-indents purely by structure (braces/brackets/commas), tracking
+// strings so punctuation inside them is left alone. Used when JSON.parse
+// fails (broken / truncated logs) so the readable part still formats,
+// the way LogRabbit does. Strings keep their escapes; structural
+// whitespace is collapsed and re-added by indent level.
+function formatJsonLoose(src: string): string {
+  let out = "";
+  let indent = 0;
+  let inStr = false;
+  let esc = false;
+  const pad = () => "  ".repeat(Math.max(0, indent));
+  for (const c of src) {
+    if (inStr) {
+      out += c;
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    switch (c) {
+      case '"':
+        inStr = true;
+        out += c;
+        break;
+      case "{":
+      case "[":
+        indent++;
+        out += `${c}\n${pad()}`;
+        break;
+      case "}":
+      case "]":
+        indent--;
+        out += `\n${pad()}${c}`;
+        break;
+      case ",":
+        out += `,\n${pad()}`;
+        break;
+      case ":":
+        out += ": ";
+        break;
+      case " ":
+      case "\t":
+      case "\n":
+      case "\r":
+        break; // collapse — indentation is recomputed
+      default:
+        out += c;
+    }
+  }
+  return out;
+}
+
 // Cap the plain-text snapshot so a 100k-line firehose doesn't build a
 // pathologically large string / textarea value. The tail is what
 // matters; narrow with a filter to see less.
@@ -236,14 +289,27 @@ const LogcatView: Component = () => {
   };
   const formatDetail = () => {
     const raw = detailText();
+    const trimmed = raw.trim();
+    // Strictly valid → canonical pretty-print (and stays highlighted).
     try {
       const pretty = JSON.stringify(JSON.parse(raw), null, 2);
       if (pretty !== raw) setDetailText(pretty);
       setDetailFormatErr(null);
-    } catch (e) {
-      setDetailFormatErr((e as Error).message ?? "invalid JSON");
-      setTimeout(() => setDetailFormatErr(null), 2500);
+      return;
+    } catch {
+      /* fall through to best-effort */
     }
+    // JSON-ish but broken/truncated → re-indent structurally anyway
+    // (LogRabbit-style). Stays un-highlighted since it won't parse.
+    if (trimmed[0] === "{" || trimmed[0] === "[") {
+      const loose = formatJsonLoose(trimmed);
+      if (loose !== raw) setDetailText(loose);
+      setDetailFormatErr(null);
+      return;
+    }
+    // Not JSON at all (plain log lines) — nothing to format.
+    setDetailFormatErr(t()("logcat.detail_not_json"));
+    setTimeout(() => setDetailFormatErr(null), 2000);
   };
   // Only syntax-highlight when the content actually parses as JSON — on
   // plain log lines the JSON tokenizer paints numbers/keywords at random
@@ -1988,8 +2054,8 @@ const LogcatView: Component = () => {
                   </span>
                   <Show when={detailFormatErr()}>
                     {(msg) => (
-                      <span class="text-danger truncate max-w-[200px]" title={msg()}>
-                        {tr("logcat.detail_invalid_json", { message: msg() })}
+                      <span class="text-fg-muted truncate max-w-[220px]" title={msg()}>
+                        {msg()}
                       </span>
                     )}
                   </Show>

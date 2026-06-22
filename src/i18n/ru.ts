@@ -320,6 +320,7 @@ const ru: Dict = {
     detail_format: "Форматировать",
     detail_format_title: "Отформатировать содержимое как JSON (отступ 2 пробела)",
     detail_invalid_json: "Невалидный JSON: {{message}}",
+    detail_not_json: "Не похоже на JSON",
     detail_rows: "Строк: {{n}}",
     copy_failed: "Не скопировалось: {{message}}",
     menu_copy: "Копировать",
