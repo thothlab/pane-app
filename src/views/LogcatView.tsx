@@ -15,6 +15,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import {
   ArrowDown,
+  Braces,
   Check,
   Copy,
   Download,
@@ -35,6 +36,7 @@ import { savedFiltersFor } from "@/stores/saved-filters";
 import { fontScale, ROOT_PX } from "@/stores/font-scale";
 import { writeClipboard } from "@/lib/clipboard";
 import { VerticalResizer } from "@/components/VerticalResizer";
+import JsonEditor from "@/components/JsonEditor";
 
 // Filters sidebar width, drag-resizable + persisted (px, independent of
 // the font scale — same as the main window's sidebar).
@@ -218,6 +220,30 @@ const LogcatView: Component = () => {
   // virtualizer). One entry → metadata header + its message; multiple
   // (View message over a selection) → all the selected rows as text.
   const [detail, setDetail] = createSignal<LogEntry[] | null>(null);
+  // Editable scratch text shown in the overlay's highlighted JSON editor:
+  // a single row's message, or the selected rows as threadtime lines.
+  // Format pretty-prints it when it parses as JSON.
+  const [detailText, setDetailText] = createSignal("");
+  const [detailFormatErr, setDetailFormatErr] = createSignal<string | null>(null);
+  const openDetail = (rows: LogEntry[]) => {
+    if (rows.length === 0) return;
+    setDetailFormatErr(null);
+    setDetailText(
+      rows.length === 1 ? rows[0]!.message : rows.map(formatEntryLine).join("\n"),
+    );
+    setDetail(rows);
+  };
+  const formatDetail = () => {
+    const raw = detailText();
+    try {
+      const pretty = JSON.stringify(JSON.parse(raw), null, 2);
+      if (pretty !== raw) setDetailText(pretty);
+      setDetailFormatErr(null);
+    } catch (e) {
+      setDetailFormatErr((e as Error).message ?? "invalid JSON");
+      setTimeout(() => setDetailFormatErr(null), 2500);
+    }
+  };
 
   // ── Row selection (LogRabbit-style) ───────────────────────────────
   // Selected entries, keyed by object identity (LogEntry has no id, but
@@ -876,8 +902,8 @@ const LogcatView: Component = () => {
     // by onRowContextMenu), in visible() order; fall back to the clicked
     // row if somehow nothing is selected.
     const rows = visible().filter((en) => selected().has(en));
-    if (rows.length > 0) setDetail(rows);
-    else if (menuViewEntry) setDetail([menuViewEntry]);
+    if (rows.length > 0) openDetail(rows);
+    else if (menuViewEntry) openDetail([menuViewEntry]);
     closeRowMenu();
   };
 
@@ -1794,7 +1820,7 @@ const LogcatView: Component = () => {
                           onMouseDown={(ev) => onRowMouseDown(ev, vi.index)}
                           onMouseEnter={() => onRowMouseEnter(vi.index)}
                           onContextMenu={(ev) => onRowContextMenu(ev, vi.index)}
-                          onDblClick={() => setDetail([entry()])}
+                          onDblClick={() => openDetail([entry()])}
                           title={t()("logcat.row_open_detail")}
                         >
                           <Show when={colVisible().time}>
@@ -1913,39 +1939,58 @@ const LogcatView: Component = () => {
         )}
       </Show>
 
-      {/* Row detail overlay. Click a row to read its full message —
-          wrapped, selectable, copyable — without fighting the
-          virtualizer (single-line truncated cells stay; this is the
-          read-the-overflow escape hatch). Backdrop or Esc closes. */}
+      {/* Row detail overlay. Resizable (drag the bottom-right corner) and
+          scrollable. The content is a syntax-highlighted JSON editor with
+          a Format button — a single row's message, or the selected rows
+          as threadtime lines. Single row also lists its fields above the
+          editor so each can be copied on its own. Backdrop or Esc closes. */}
       <Show when={detail()}>
         {(d) => {
           const rows = () => d();
           const single = () => (rows().length === 1 ? rows()[0]! : null);
-          // "Copy" (top-right) grabs the whole row(s) as threadtime
-          // line(s); per-field copy lives on each DetailField.
-          const copyAllText = () => {
-            const s = single();
-            return s ? formatEntryLine(s) : rows().map(formatEntryLine).join("\n");
-          };
           return (
             <div
               class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
               onClick={() => setDetail(null)}
             >
               <div
-                class="w-full max-w-3xl max-h-[80vh] flex flex-col bg-bg border border-border rounded-lg shadow-xl"
+                class="flex flex-col bg-bg border border-border rounded-lg shadow-xl overflow-hidden"
+                style={{
+                  width: "760px",
+                  height: "560px",
+                  "min-width": "360px",
+                  "min-height": "240px",
+                  "max-width": "95vw",
+                  "max-height": "92vh",
+                  resize: "both",
+                }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div class="flex items-center gap-2 px-4 py-2 border-b border-border text-xs font-mono text-fg-muted">
+                <div class="flex items-center gap-2 px-4 py-2 border-b border-border text-xs font-mono text-fg-muted shrink-0">
                   <span>
                     {single()
                       ? t()("logcat.detail_title")
                       : tr("logcat.detail_rows", { n: String(rows().length) })}
                   </span>
+                  <Show when={detailFormatErr()}>
+                    {(msg) => (
+                      <span class="text-danger truncate max-w-[200px]" title={msg()}>
+                        {tr("logcat.detail_invalid_json", { message: msg() })}
+                      </span>
+                    )}
+                  </Show>
                   <div class="ml-auto flex items-center gap-1">
                     <button
                       class="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-muted"
-                      onClick={() => void writeClipboard(copyAllText())}
+                      onClick={formatDetail}
+                      title={t()("logcat.detail_format_title")}
+                    >
+                      <Braces size={12} />
+                      {t()("logcat.detail_format")}
+                    </button>
+                    <button
+                      class="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-muted"
+                      onClick={() => void writeClipboard(detailText())}
                       title={t()("logcat.detail_copy")}
                     >
                       <Copy size={12} />
@@ -1961,16 +2006,9 @@ const LogcatView: Component = () => {
                     </button>
                   </div>
                 </div>
-                <Show
-                  when={single()}
-                  fallback={
-                    <pre class="flex-1 overflow-auto px-4 py-3 text-xs font-mono whitespace-pre-wrap break-all select-text">
-                      {rows().map(formatEntryLine).join("\n")}
-                    </pre>
-                  }
-                >
+                <Show when={single()}>
                   {(e) => (
-                    <div class="flex-1 overflow-auto py-1 text-xs font-mono divide-y divide-border/30">
+                    <div class="shrink-0 max-h-[45%] overflow-auto py-1 text-xs font-mono divide-y divide-border/30 border-b border-border">
                       <DetailField label={t()("logcat.col_time")} value={e().timestamp} />
                       <DetailField label={t()("logcat.col_app")} value={appNameForPid(e().pid)} />
                       <DetailField
@@ -1983,10 +2021,12 @@ const LogcatView: Component = () => {
                         value={`${LEVEL_CHAR[e().level]} · ${e().level}`}
                       />
                       <DetailField label={t()("logcat.col_tag")} value={e().tag} />
-                      <DetailField label={t()("logcat.col_message")} value={e().message} />
                     </div>
                   )}
                 </Show>
+                <div class="flex-1 min-h-0 p-2">
+                  <JsonEditor value={detailText()} onInput={setDetailText} />
+                </div>
               </div>
             </div>
           );
