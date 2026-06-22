@@ -34,6 +34,14 @@ import { compileLogcatFilter } from "@/lib/logcat-filter";
 import { savedFiltersFor } from "@/stores/saved-filters";
 import { fontScale, ROOT_PX } from "@/stores/font-scale";
 import { writeClipboard } from "@/lib/clipboard";
+import { VerticalResizer } from "@/components/VerticalResizer";
+
+// Filters sidebar width, drag-resizable + persisted (px, independent of
+// the font scale — same as the main window's sidebar).
+const SIDEBAR_MIN = 120;
+const SIDEBAR_MAX = 480;
+const SIDEBAR_DEFAULT = 192;
+const SIDEBAR_STORAGE_KEY = "pane.logcat.sidebar-width";
 
 // Same palette as CapturesView's save popover so the colour dots in the
 // two scopes look identical. Kept local rather than shared because there's
@@ -1039,6 +1047,24 @@ const LogcatView: Component = () => {
   const savedStore = savedFiltersFor("logcat");
   const savedFilters = savedStore.filters;
 
+  const loadSidebarWidth = (): number => {
+    try {
+      const n = Number(localStorage.getItem(SIDEBAR_STORAGE_KEY));
+      if (Number.isFinite(n) && n >= SIDEBAR_MIN && n <= SIDEBAR_MAX) return n;
+    } catch {
+      /* storage unavailable */
+    }
+    return SIDEBAR_DEFAULT;
+  };
+  const [sidebarWidth, setSidebarWidth] = createSignal(loadSidebarWidth());
+  createEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, String(sidebarWidth()));
+    } catch {
+      /* storage unavailable */
+    }
+  });
+
   // Inline rename of a sidebar filter. `editingId` is the row being
   // edited; `editName` the in-progress text. Commit on Enter/blur, cancel
   // on Esc — a rename is just an upsert with the same id and a new name.
@@ -1226,7 +1252,10 @@ const LogcatView: Component = () => {
           empty so the table keeps full width until the user stars a
           filter; replaces the old toolbar chevron dropdown. */}
       <Show when={savedFilters().length > 0}>
-        <aside class="w-48 shrink-0 flex flex-col overflow-auto border-r border-border bg-bg-subtle/40 p-2">
+        <aside
+          class="shrink-0 flex flex-col overflow-auto bg-bg-subtle/40 p-2"
+          style={{ width: `${sidebarWidth()}px` }}
+        >
           <div class="px-2 pt-1 pb-2 text-xs uppercase tracking-wide text-fg-muted">
             {t()("nav.filters")}
           </div>
@@ -1306,6 +1335,14 @@ const LogcatView: Component = () => {
             )}
           </For>
         </aside>
+        <VerticalResizer
+          onResize={(dx) =>
+            setSidebarWidth((w) =>
+              Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w + dx)),
+            )
+          }
+          onReset={() => setSidebarWidth(SIDEBAR_DEFAULT)}
+        />
       </Show>
       <div class="flex flex-col flex-1 min-w-0 min-h-0">
       {/* Toolbar */}
