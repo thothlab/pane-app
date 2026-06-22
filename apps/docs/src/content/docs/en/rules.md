@@ -17,9 +17,31 @@ Right-clicking a row in **Captures** opens an "Add to rules" picker. It lists ex
 When you pick one, Pane creates a stub rule pre-filled from the captured request:
 
 - `method`, `host_glob`, `path_glob` (the query string is stripped — `match_params` stays empty so the mock matches regardless of query),
+- **Request body (JSON)** — if the request had a JSON body, it's pre-filled here in full (pretty-printed); see the section below,
 - `res_status`, `res_headers`, `res_body` are taken straight from the captured response.
 
 The Rules tab is also pre-aimed at this new rule's editor — switch tabs and you can tweak name, body, headers and hit Save.
+
+## Matching on the request body (JSON subset)
+
+The **Request body (JSON)** field in the Match section holds a JSON value the engine checks for **containment** in the request body (deep subset). This matches **nested** fields — unlike `match_params`, which only sees top-level scalars of the query/body.
+
+`template ⊆ actual` semantics:
+
+- **objects** — every key in the template must be present in the body and match recursively; extra fields in the request are allowed;
+- **arrays** — positional prefix: the body is at least as long, and `template[i]` is contained in `actual[i]`;
+- **scalars** — exact equality;
+- `{}` matches any JSON object; an empty field / NULL means "don't match on the body";
+- a body that isn't JSON, or doesn't contain the template, **fails the match** (fail-closed).
+
+```jsonc
+// Request body (JSON):
+{ "hidePaid": true, "period": { "from": "2026-01" } }
+// matches any request that has hidePaid:true AND period.from:"2026-01",
+// whatever else the body carries
+```
+
+> ⚠️ **Volatile fields.** A captured body contains per-request values (`requestId` — a UUID, etc.). The match is exact, so leaving `requestId` in makes the rule silently never fire on future requests. The editor flags UUIDs in the body with a warning — **delete** those fields from the JSON. (Numbers: `0` and `0.0` compare as unequal — normally harmless, since the client serializes them consistently.)
 
 ## Response body editor
 
