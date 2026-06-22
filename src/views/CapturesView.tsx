@@ -1111,10 +1111,25 @@ function fmtBytes(n: number) {
 // list shows; seconds included so two captures a moment apart still
 // differ. Falls back to the raw string if started_at doesn't parse.
 function captureStamp(startedAt: string): string {
-  const d = new Date(startedAt);
+  // `started_at` may be ISO ("...T..Z") or the Rust OffsetDateTime Display
+  // form ("2026-06-22 6:38:38.0 +00:00:00"), which `new Date()` can't
+  // parse — normalise that to ISO first so we get a real local time
+  // instead of falling back to the raw, seconds-and-timezone-noisy string.
+  let d = new Date(startedAt);
+  if (Number.isNaN(d.getTime())) {
+    const m = startedAt.match(
+      /(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2}):(\d{2})(?:\.\d+)?\s*([+-]\d{2}):?(\d{2})/,
+    );
+    if (m) {
+      const [, y, mo, da, h, mi, s, offh, offm] = m;
+      d = new Date(`${y}-${mo}-${da}T${h.padStart(2, "0")}:${mi}:${s}${offh}:${offm}`);
+    }
+  }
   if (Number.isNaN(d.getTime())) return startedAt;
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  // Local YYYY-MM-DD HH:MM — drop seconds and timezone (just disambiguates
+  // captures of the same endpoint; minute precision is plenty).
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function decodeBodyAsText(body: {
