@@ -16,7 +16,6 @@ import { createVirtualizer } from "@tanstack/solid-virtual";
 import {
   ArrowDown,
   Braces,
-  Check,
   Copy,
   Download,
   Filter as FilterIcon,
@@ -136,39 +135,6 @@ function formatEntryLine(e: LogEntry): string {
   const lvl = LEVEL_CHAR[e.level];
   return `${ts} ${pid} ${tid} ${lvl} ${e.tag}: ${e.message}`;
 }
-
-// One labelled row in the single-entry detail overlay: the value is
-// selectable text, and a hover copy button puts JUST that field on the
-// clipboard (the only way to grab e.g. the App/process name on its own).
-const DetailField: Component<{ label: string; value: string }> = (p) => {
-  const [copied, setCopied] = createSignal(false);
-  return (
-    <div class="group flex items-start gap-3 px-4 py-1 hover:bg-bg-muted/30">
-      <span class="w-16 shrink-0 text-[10px] uppercase tracking-wide text-fg-muted pt-1">
-        {p.label}
-      </span>
-      <span class="flex-1 min-w-0 select-text break-all whitespace-pre-wrap">
-        {p.value || "—"}
-      </span>
-      <Show when={p.value}>
-        <button
-          type="button"
-          class="opacity-0 group-hover:opacity-100 shrink-0 text-fg-muted hover:text-fg pt-0.5"
-          title={t()("logcat.detail_copy")}
-          onClick={() => {
-            void writeClipboard(p.value);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1200);
-          }}
-        >
-          <Show when={copied()} fallback={<Copy size={12} />}>
-            <Check size={12} />
-          </Show>
-        </button>
-      </Show>
-    </div>
-  );
-};
 
 // Best-effort JSON pretty-printer that doesn't require valid input — it
 // re-indents purely by structure (braces/brackets/commas), tracking
@@ -954,7 +920,14 @@ const LogcatView: Component = () => {
       selectAnchor = index;
     }
     menuViewEntry = entry;
-    setRowMenu({ x: ev.clientX, y: ev.clientY });
+    // Clamp to the viewport so the menu never spills past the bottom/right
+    // edge of the window. The menu is a fixed 3-item list (~110px tall,
+    // 200px wide); flip the anchor back inside if it would overflow.
+    const MENU_W = 200;
+    const MENU_H = 110;
+    const x = Math.max(4, Math.min(ev.clientX, window.innerWidth - MENU_W));
+    const y = Math.max(4, Math.min(ev.clientY, window.innerHeight - MENU_H));
+    setRowMenu({ x, y });
   };
 
   const closeRowMenu = () => setRowMenu(null);
@@ -2043,11 +2016,25 @@ const LogcatView: Component = () => {
                 onClick={(e) => e.stopPropagation()}
               >
                 <div class="flex items-center gap-2 px-4 py-2 border-b border-border text-xs font-mono text-fg-muted shrink-0">
-                  <span>
-                    {single()
-                      ? t()("logcat.detail_title")
-                      : tr("logcat.detail_rows", { n: String(rows().length) })}
-                  </span>
+                  <Show
+                    when={single()}
+                    fallback={
+                      <span>{tr("logcat.detail_rows", { n: String(rows().length) })}</span>
+                    }
+                  >
+                    {(e) => (
+                      <span class="flex-1 min-w-0 select-text break-words text-fg">
+                        <span class={`font-bold ${LEVEL_COLOR[e().level]}`}>
+                          {LEVEL_CHAR[e().level]}
+                        </span>{" "}
+                        {e().timestamp}
+                        <Show when={appNameForPid(e().pid)}>
+                          {(app) => <> {app()}</>}
+                        </Show>
+                        <Show when={e().tag}>{` ${e().tag}`}</Show>
+                      </span>
+                    )}
+                  </Show>
                   <Show when={detailFormatErr()}>
                     {(msg) => (
                       <span class="text-fg-muted truncate max-w-[220px]" title={msg()}>
@@ -2082,24 +2069,6 @@ const LogcatView: Component = () => {
                     </button>
                   </div>
                 </div>
-                <Show when={single()}>
-                  {(e) => (
-                    <div class="shrink-0 max-h-[45%] overflow-auto py-1 text-xs font-mono divide-y divide-border/30 border-b border-border">
-                      <DetailField label={t()("logcat.col_time")} value={e().timestamp} />
-                      <DetailField label={t()("logcat.col_app")} value={appNameForPid(e().pid)} />
-                      <DetailField
-                        label={t()("logcat.col_pid")}
-                        value={e().pid > 0 ? String(e().pid) : ""}
-                      />
-                      <DetailField label="TID" value={e().tid > 0 ? String(e().tid) : ""} />
-                      <DetailField
-                        label={t()("logcat.col_level")}
-                        value={`${LEVEL_CHAR[e().level]} · ${e().level}`}
-                      />
-                      <DetailField label={t()("logcat.col_tag")} value={e().tag} />
-                    </div>
-                  )}
-                </Show>
                 <div class="flex-1 min-h-0 p-2">
                   <Show
                     when={detailLooksJson()}
