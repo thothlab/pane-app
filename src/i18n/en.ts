@@ -116,7 +116,6 @@ const en = {
     pin: "Pin",
     cancel: "Cancel",
     tail_on: "Tail",
-    tail_off: "Tail off",
     tail_on_title: "Auto-scroll to newest is ON — click to lock the viewport",
     tail_off_title: "Auto-scroll is OFF — click to follow the tail",
     pause: "Pause",

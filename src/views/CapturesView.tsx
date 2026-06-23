@@ -132,6 +132,12 @@ const CapturesView: Component = () => {
     }
   });
   let scrollEl: HTMLDivElement | undefined;
+  // Monotonic guard against out-of-order list responses. The 1.5s interval
+  // and a filter keystroke can both have a `captures.list` in flight; if the
+  // older (broader-filter) request resolves last it would clobber the newer
+  // results with stale rows — e.g. typing `mtsm` but still seeing `mts`
+  // matches. Stamp each call and drop any response that isn't the latest.
+  let refreshSeq = 0;
 
   // Persist column widths whenever they change.
   createEffect(() => {
@@ -175,10 +181,15 @@ const CapturesView: Component = () => {
     // they're reading. User-initiated calls (mount, filter change,
     // toggle Follow back on) pass force=true and always go through.
     if (!force && !autoFollow() && captures().length > 0) return;
+    const seq = ++refreshSeq;
     try {
-      setCaptures(await api.captures.list(filter() || undefined, 500));
+      const rows = await api.captures.list(filter() || undefined, 500);
+      // A newer refresh started while we awaited — its results win.
+      if (seq !== refreshSeq) return;
+      setCaptures(rows);
       setFilterError(null);
     } catch (e: any) {
+      if (seq !== refreshSeq) return;
       setFilterError(e?.message ?? "filter error");
     }
   };
@@ -839,7 +850,7 @@ const CapturesView: Component = () => {
           aria-pressed={autoFollow()}
         >
           <ArrowDownToLine size={12} />{" "}
-          {autoFollow() ? t()("captures.tail_on") : t()("captures.tail_off")}
+          {t()("captures.tail_on")}
         </button>
         <button
           class="text-xs px-2 py-1 rounded hover:bg-bg-muted"
