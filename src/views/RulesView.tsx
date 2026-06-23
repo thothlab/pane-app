@@ -15,6 +15,7 @@ import {
   Maximize2,
   Minimize2,
   Braces,
+  FilePlus,
   Minus,
   AlertTriangle,
 } from "lucide-solid";
@@ -905,6 +906,21 @@ const JsonFieldEditor: Component<{
     }
   };
   const [formatErr, setFormatErr] = createSignal<string | null>(null);
+  const loadFromFile = async () => {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!path || typeof path !== "string") return;
+    try {
+      const raw = await api.rules.importRead(path);
+      p.onInput(raw);
+      setFormatErr(null);
+    } catch (e) {
+      setFormatErr((e as Error).message ?? "read failed");
+      setTimeout(() => setFormatErr(null), 2500);
+    }
+  };
   const format = () => {
     const raw = p.value;
     if (!raw.trim()) {
@@ -940,6 +956,16 @@ const JsonFieldEditor: Component<{
         >
           <Braces size={12} />
           Format
+        </button>
+        <button
+          type="button"
+          class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted disabled:opacity-50"
+          title="Load JSON from a file"
+          disabled={p.disabled}
+          onClick={loadFromFile}
+        >
+          <FilePlus size={12} />
+          Load file
         </button>
         <button
           type="button"

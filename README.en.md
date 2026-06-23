@@ -4,7 +4,7 @@
 
 A modern HTTPS network debugger focused on one thing: making mobile-device setup take 30 seconds instead of 15 minutes. Plug your iPhone or Android in over USB, click **Add**, and start inspecting traffic — no Settings dance, no certificate trust spelunking, no Wi-Fi proxy editing.
 
-> **Status:** under active development, shipping regular tagged releases with in-app auto-update via GitHub Releases. Cross-platform shell, proxy engine (HTTP/1.1 with TLS MITM), capture/replay storage, response stubs and patches, device-setup pipelines, JSON-highlighted rule editor, sticky body-panel header, collection-level checkbox toggles, a standalone per-device Logcat window (filter DSL + search, byte-safe stream that tolerates non-UTF-8 device output) — all in. CI/release builds signed bundles for macOS / Linux / Windows on every tag. See the [documentation](https://pane.thothlab.tech/docs/) for user-facing features and setup.
+> **Status:** under active development, shipping regular tagged releases with in-app auto-update via GitHub Releases. Cross-platform shell, proxy engine (HTTP/1.1 with TLS MITM), capture/replay storage, response stubs and patches, device-setup pipelines, JSON-highlighted rule editor, one-click load of request/response JSON body from a file, sticky body-panel header, collection-level checkbox toggles, a standalone per-device Logcat window (filter DSL + search, byte-safe stream that tolerates non-UTF-8 device output) — all in. CI/release builds signed bundles for macOS / Linux / Windows on every tag. See the [documentation](https://pane.thothlab.tech/docs/) for user-facing features and setup.
 
 ## What's inside
 

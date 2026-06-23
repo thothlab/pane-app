@@ -1431,7 +1431,7 @@ const LogcatView: Component = () => {
           {paused() ? t()("logcat.resume") : t()("logcat.pause")}
         </button>
         <button
-          class="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-muted"
+          class="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-muted text-danger"
           onClick={clearAll}
           title={tr("logcat.clear_hotkey")}
         >
