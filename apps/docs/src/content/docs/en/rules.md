@@ -43,6 +43,33 @@ The **Request body (JSON)** field in the Match section holds a JSON value the en
 
 > ⚠️ **Volatile fields.** A captured body contains per-request values (`requestId` — a UUID, etc.). The match is exact, so leaving `requestId` in makes the rule silently never fire on future requests. The editor flags UUIDs in the body with a warning — **delete** those fields from the JSON. (Numbers: `0` and `0.0` compare as unequal — normally harmless, since the client serializes them consistently.)
 
+## Conditions on body fields (comparisons)
+
+`match_req_body` only checks **equality** (template subset). To match on a **comparison** — "`amount` between 1000 and 1500", "`status` contains active" — use the **Conditions** block in the Match section.
+
+Each condition is `path · operator · value`:
+
+- **path** — dot/bracket notation into the JSON body: `amount`, `payment.details.sum`, `items[0].price` (same syntax as patch paths; a leading `body.` is optional);
+- **operator** — `=`, `≠`, `>`, `≥`, `<`, `≤`, `contains`;
+- **value** — the right-hand side.
+
+Conditions are **AND-ed** (with each other and the other matchers), so a **range is two rows**:
+
+```
+amount   ≥   1000
+amount   ≤   1500
+```
+
+Matches a request where `amount` is in `[1000, 1500]`, and won't fire on `999` or `1501`.
+
+**Operator semantics:**
+
+- numeric (`>`, `≥`, `<`, `≤`) — both sides coerce to a number (`f64`). Money arrives as `1200` or as the string `"1200.50"` — both parse. A non-number fails closed (no match);
+- `=` / `≠` — numeric compare when both sides look numeric, else exact string equality. Exact float equality is fragile (`0` vs `0.0`) — use `≥`/`≤` for ranges;
+- `contains` — **case-insensitive** substring (`ACTIVE_NOW` contains `active`); arrays/objects don't match.
+
+> A field missing at the path, a non-JSON body, or a type that can't satisfy the operator → the condition fails and the rule doesn't match (fail-closed) — consistent with the rest of the matcher.
+
 ## Response body editor
 
 The response body lives in a JSON-aware textarea: object keys, strings, numbers, `true`/`false`/`null` are colour-coded inline against the Pane theme. Highlighting is done by a transparent textarea sitting on top of a `<pre>` with a small regex tokenizer — no external editor libraries, no install hit.
