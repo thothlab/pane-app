@@ -1407,10 +1407,11 @@ const LogcatView: Component = () => {
     if (!term || !text) return text;
     const lower = text.toLowerCase();
     if (!lower.includes(term)) return text;
-    // The row jumped to via Enter/Shift+Enter paints its matches orange;
-    // every other match stays the muted yellow so the active one stands out.
+    // The row jumped to via Enter/Shift+Enter paints its matches in the
+    // accent colour (same as the message overlay's current match); every
+    // other match stays the muted yellow so the active one stands out.
     const markClass = current
-      ? "bg-orange-500 text-white rounded-sm px-0.5"
+      ? "bg-accent text-bg rounded-sm px-0.5"
       : "bg-warn/30 text-fg rounded-sm px-0.5";
     const out: JSX.Element[] = [];
     let i = 0;
