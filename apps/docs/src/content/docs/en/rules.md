@@ -50,7 +50,8 @@ The response body lives in a JSON-aware textarea: object keys, strings, numbers,
 Two buttons sit next to the field label:
 
 - **Format** (`{ }`) — runs `JSON.parse → JSON.stringify(..., null, 2)` (2-space indent). Invalid JSON flashes an inline "Invalid JSON: …" message for 2.5 s without touching the content. Empty body shows "Body is empty". Format counts as an edit — Save will turn red.
-- **Expand / Collapse** — toggles the textarea height between compact (~12 rem ≈ 12 rows) and tall (70vh, 400 px minimum). State is persisted to `localStorage` — open a big JSON once, every editor afterwards opens already expanded.
+- **Expand / Collapse** — toggles the textarea height between compact (~7 rem) and tall (70vh, 400 px minimum). State is persisted to `localStorage` — open a big JSON once, every editor afterwards opens already expanded.
+- **Load file** — loads a JSON body from a `.json` file in one click (for heavy dumps, instead of copy-paste).
 
 ## Unsaved-changes indicator
 
@@ -65,6 +66,21 @@ Each rule row has a small checkbox on the left (enabled/disabled, replacing the 
 - mixed → minus (`−`) inside the box, clicking enables everything.
 
 A single click only flips the rules whose current state differs from the target — the rest are left alone.
+
+The **enabled** checkbox inside an open rule editor behaves the same way — for an already-saved rule the toggle commits immediately and instantly syncs the collapsed-row switch and the collection-header tri-state, without waiting for Save.
+
+## Drag to reorder
+
+Rule and collection order is also **match precedence**: the engine takes the first matching rule (by collection priority first, then rule priority). So you can reorder by dragging:
+
+- **A rule within its collection** — drag the rule row and drop it above/below another. A thin accent line shows where it will land.
+- **A whole collection** — drag the grip handle (`⠿`) on the left of the collection header and drop it above/below another collection.
+
+Dragging a rule into a **different** collection (dropping onto its area) still moves the rule into that collection, as before.
+
+## Duplicating a rule
+
+Each rule row has a **Copy** button (between Edit and Export). It creates a duplicate next to the original, with the same priority and all fields (matching, body, headers), appending a ` - copy` suffix to the name. The response body is reused by reference (storage dedupes identical bodies) — no re-upload.
 
 ## Editor state is preserved
 
@@ -82,7 +98,7 @@ A curated set of mocks is worth keeping around — and worth handing to a teamma
 
 **Export**:
 
-- **One rule** — Download icon in the rule row (between Edit and Delete). Saves a `<name>.pane-rule.json` containing that rule plus its response body inline.
+- **One rule** — Download icon in the rule row (between Copy and Delete). Saves a `<name>.pane-rule.json` containing that rule plus its response body inline.
 - **One collection** — Download icon in the collection header. Saves `<name>.pane-collection.json` with the collection metadata and every rule inside it.
 - **Everything** — *Export all* button in the page header. Saves `pane-rules.json` covering every collection (including Ungrouped) and every rule.
 

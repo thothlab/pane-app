@@ -191,6 +191,14 @@ steps: `Small / Medium / Large / Extra large`. It sets `font-size`
 on `<html>`, so every text size, padding, and icon grows
 proportionally. Default is `Small` — matches the pre-0.1.65 look.
 
+## Window size and position
+
+Pane's main window remembers its size and position across launches —
+resize/move it once and the next start reopens it right there instead of
+centered at the default size. The very first launch (nothing saved yet) is
+centered. Standalone Logcat windows are unaffected: they always open at
+their own fixed size.
+
 ## Interface language
 
 Pane ships in **English** and **Russian**. English is the default.
