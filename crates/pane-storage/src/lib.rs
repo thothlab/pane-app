@@ -19,8 +19,8 @@ use base64::Engine as _;
 use pane_ipc::{
     CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionSetPriorityArgs,
     CollectionUpsertArgs, ExportOneResult,
-    FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs, RuleCollectionDto, RuleDto,
-    RuleHeaderDto, RuleParamDto, RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs,
+    FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs, RuleCollectionDto, RuleConditionDto,
+    RuleDto, RuleHeaderDto, RuleParamDto, RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs,
     RuleUpsertArgs,
     SaveFilterArgs, SessionDto,
 };
@@ -52,6 +52,45 @@ pub enum PatchOp {
     },
 }
 
+/// Comparison operator for a request-body condition. Parsed once at load
+/// time from the stored string; unknown operators are dropped (the condition
+/// is skipped rather than failing the whole rule).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionOp {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Contains,
+}
+
+impl ConditionOp {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "eq" => Self::Eq,
+            "ne" => Self::Ne,
+            "gt" => Self::Gt,
+            "gte" => Self::Gte,
+            "lt" => Self::Lt,
+            "lte" => Self::Lte,
+            "contains" => Self::Contains,
+            _ => return None,
+        })
+    }
+}
+
+/// Engine-side predicate on a request-body field. `path` is a dot/bracket
+/// path into the JSON body; `value` is the right-hand side, kept as a string
+/// (numeric ops coerce). All conditions on a rule are AND-ed.
+#[derive(Debug, Clone)]
+pub struct RuleCondition {
+    pub path: String,
+    pub op: ConditionOp,
+    pub value: String,
+}
+
 /// Engine-side view of an active rule. Bodies materialized once at load time
 /// so the proxy_loop can match + serve without re-querying the DB.
 #[derive(Debug, Clone)]
@@ -70,6 +109,9 @@ pub struct ActiveRule {
     /// Parsed JSON template the engine deep-subset-matches against the
     /// request body (nested-capable). `None` = don't match on the body.
     pub req_body_match: Option<serde_json::Value>,
+    /// Predicate conditions on request-body fields (comparison / substring),
+    /// AND-ed together and with the other matchers. Empty = no conditions.
+    pub conditions: Vec<RuleCondition>,
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
@@ -683,7 +725,7 @@ impl Storage {
                         match_host_glob, match_method, match_path_glob, match_query,
                         res_status, res_headers, res_body_id, res_delay_ms,
                         created_at, updated_at, collection_id, mode, patches,
-                        match_req_body
+                        match_req_body, match_conditions
                  FROM rule
                  ORDER BY priority ASC, created_at ASC",
             )?;
@@ -714,7 +756,7 @@ impl Storage {
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
                     created_at, updated_at, collection_id, mode, patches,
-                    match_req_body
+                    match_req_body, match_conditions
              FROM rule WHERE id=?1",
             params![id.to_string()],
             Self::map_rule_row,
@@ -763,6 +805,12 @@ impl Storage {
             .map(str::to_string);
         let res_headers = serde_json::to_string(&args.res_headers)?;
         let patches_json = serde_json::to_string(&args.patches)?;
+        // Empty list → NULL, the canonical "no conditions" state.
+        let match_conditions = if args.match_conditions.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&args.match_conditions)?)
+        };
         let mode = match args.mode.as_str() {
             "patch" => "patch",
             _ => "stub",
@@ -781,8 +829,9 @@ impl Storage {
             "INSERT INTO rule (id, name, enabled, priority,
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
-                    created_at, updated_at, collection_id, mode, patches, match_req_body)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+                    created_at, updated_at, collection_id, mode, patches, match_req_body,
+                    match_conditions)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, enabled=excluded.enabled, priority=excluded.priority,
                 match_host_glob=excluded.match_host_glob, match_method=excluded.match_method,
@@ -791,6 +840,7 @@ impl Storage {
                 res_body_id=excluded.res_body_id, res_delay_ms=excluded.res_delay_ms,
                 collection_id=excluded.collection_id, mode=excluded.mode,
                 patches=excluded.patches, match_req_body=excluded.match_req_body,
+                match_conditions=excluded.match_conditions,
                 updated_at=excluded.updated_at",
             params![
                 id.to_string(),
@@ -811,6 +861,7 @@ impl Storage {
                 mode,
                 patches_json,
                 match_req_body,
+                match_conditions,
             ],
         )?;
         drop(conn);
@@ -855,7 +906,7 @@ impl Storage {
                         r.match_host_glob, r.match_method, r.match_path_glob, r.match_query,
                         r.res_status, r.res_headers, r.res_body_id, r.res_delay_ms,
                         r.created_at, r.updated_at, r.collection_id, r.mode, r.patches,
-                        r.match_req_body
+                        r.match_req_body, r.match_conditions
                  FROM rule r
                  LEFT JOIN rule_collection c ON c.id = r.collection_id
                  WHERE r.enabled=1
@@ -920,6 +971,19 @@ impl Storage {
                     .match_req_body
                     .as_deref()
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
+                // Parse op strings → enum once; conditions with an unknown
+                // operator are dropped (skipped) rather than failing the rule.
+                conditions: dto
+                    .match_conditions
+                    .into_iter()
+                    .filter_map(|c| {
+                        ConditionOp::parse(&c.op).map(|op| RuleCondition {
+                            path: c.path,
+                            op,
+                            value: c.value,
+                        })
+                    })
+                    .collect(),
                 status: dto.res_status,
                 headers: dto
                     .res_headers
@@ -945,6 +1009,7 @@ impl Storage {
         let mode: String = r.get(15)?;
         let patches_json: String = r.get(16)?;
         let match_req_body: Option<String> = r.get(17)?;
+        let match_conditions_json: Option<String> = r.get(18)?;
         Ok(RuleDto {
             id: Uuid::parse_str(&id).unwrap(),
             name: r.get(1)?,
@@ -959,6 +1024,10 @@ impl Storage {
             match_params: serde_json::from_str::<Vec<RuleParamDto>>(&match_params_json)
                 .unwrap_or_default(),
             match_req_body,
+            match_conditions: match_conditions_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<RuleConditionDto>>(s).ok())
+                .unwrap_or_default(),
             res_status: r.get::<_, i64>(8)? as u16,
             res_headers: serde_json::from_str::<Vec<RuleHeaderDto>>(&res_headers)
                 .unwrap_or_default(),

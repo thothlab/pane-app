@@ -265,6 +265,20 @@ pub struct RuleParamDto {
     pub value: String,
 }
 
+/// One predicate condition on a request-body field. `path` is a dot/bracket
+/// path into the JSON body (e.g. `amount`, `payment.details.sum`,
+/// `items[0].price`); `op` is a comparison operator (`eq`, `ne`, `gt`, `gte`,
+/// `lt`, `lte`, `contains`); `value` is the right-hand side as a string
+/// (numeric ops coerce both sides to f64). Multiple conditions are AND-ed, so
+/// a range is two rows (`gte 1000` + `lte 1500`). Nested-capable and typed,
+/// unlike `match_params` (top-level, string-equality only).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleConditionDto {
+    pub path: String,
+    pub op: String,
+    pub value: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleHeaderDto {
     pub name: String,
@@ -304,6 +318,10 @@ pub struct RuleDto {
     /// body (nested-capable, unlike `match_params` which only sees
     /// top-level scalars). `None`/blank = don't match on the body.
     pub match_req_body: Option<String>,
+    /// Predicate conditions on request-body fields (range / comparison /
+    /// substring). AND-ed together and with the other matchers.
+    #[serde(default)]
+    pub match_conditions: Vec<RuleConditionDto>,
 
     pub res_status: u16,
     pub res_headers: Vec<RuleHeaderDto>,
@@ -338,6 +356,8 @@ pub struct RuleUpsertArgs {
     /// blank/whitespace string is treated as `None` (no body matching).
     #[serde(default)]
     pub match_req_body: Option<String>,
+    #[serde(default)]
+    pub match_conditions: Vec<RuleConditionDto>,
 
     pub res_status: u16,
     pub res_headers: Vec<RuleHeaderDto>,

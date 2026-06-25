@@ -254,6 +254,13 @@ const en = {
       "Optional. The request body (parsed as JSON) must contain this as a subset — nested objects and arrays are matched recursively, extra fields are allowed.",
     req_body_volatile_hint:
       "Contains a per-request value (UUID, e.g. requestId). The body match is exact, so the rule won't fire on future requests — delete that field from the JSON.",
+    conditions_label: "Conditions (all AND, on body)",
+    cond_path_placeholder: "path (amount, payment.items[0].sum)",
+    cond_value_placeholder: "value",
+    cond_op_contains: "contains",
+    add_condition: "+ add condition",
+    conditions_note:
+      "Compare a JSON-body field by path. Numeric operators (> ≥ < ≤) coerce both sides to a number; a range is two rows (≥ and ≤). \"contains\" is a case-insensitive substring. A missing or wrong-typed field means the rule doesn't match.",
     response_section: "Response",
     status_label: "Status",
     headers_label: "Headers",

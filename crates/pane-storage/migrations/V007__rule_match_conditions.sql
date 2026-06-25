@@ -1,0 +1,16 @@
+-- Schema v7: predicate conditions on request-body fields.
+--
+-- match_conditions holds a JSON array of {path, op, value} objects. Each
+-- condition reads a (possibly nested) field of the parsed JSON request body
+-- by dot/bracket path and compares it with an operator:
+--   eq, ne, gt, gte, lt, lte  — numeric (both sides coerced to f64), or
+--                               string-equality fallback for eq/ne;
+--   contains                  — case-insensitive substring.
+-- Conditions are AND-ed with each other and with the other matchers, so a
+-- numeric range is expressed as two rows (gte 1000 + lte 1500).
+--
+-- This complements match_req_body (which only does subset *equality*) by
+-- adding comparisons. NULL / empty array means "no conditions" — the common
+-- case and what every existing rule keeps. Additive + nullable, so rows
+-- written before this migration are unaffected.
+ALTER TABLE rule ADD COLUMN match_conditions TEXT;

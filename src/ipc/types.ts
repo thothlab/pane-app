@@ -156,6 +156,17 @@ export interface RulePatchOpDto {
 
 export type RuleMode = "stub" | "patch";
 
+export type RuleConditionOp = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "contains";
+
+/** A predicate on a request-body field: `path` (dot/bracket into the JSON
+ * body), `op` (comparison), `value` (right-hand side as string). AND-ed with
+ * everything else; a numeric range is two rows (gte + lte). */
+export interface RuleConditionDto {
+  path: string;
+  op: RuleConditionOp;
+  value: string;
+}
+
 export interface RuleDto {
   id: string;
   name: string;
@@ -171,6 +182,7 @@ export interface RuleDto {
   /** Optional JSON deep-subset-matched against the request body (nested-
    * capable). null/blank = don't match on the body. */
   match_req_body: string | null;
+  match_conditions: RuleConditionDto[];
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_id: string | null;
@@ -194,6 +206,7 @@ export interface RuleUpsertArgs {
   match_path_glob: string | null;
   match_params: RuleParamDto[];
   match_req_body?: string | null;
+  match_conditions?: RuleConditionDto[];
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_id?: string | null;

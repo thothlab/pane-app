@@ -55,10 +55,24 @@ import type {
   RulePatchOpDto,
   RulePatchOpKind,
   RuleMode,
+  RuleConditionDto,
+  RuleConditionOp,
   RuleCollectionDto,
 } from "@/ipc/types";
 
 const UNGROUPED_KEY = "__ungrouped__";
+
+// Condition operators. Comparison symbols are language-neutral; `contains`
+// gets a translated label at render time.
+const CONDITION_OPS: { value: RuleConditionOp; symbol: string }[] = [
+  { value: "eq", symbol: "=" },
+  { value: "ne", symbol: "≠" },
+  { value: "gt", symbol: ">" },
+  { value: "gte", symbol: "≥" },
+  { value: "lt", symbol: "<" },
+  { value: "lte", symbol: "≤" },
+  { value: "contains", symbol: "contains" },
+];
 
 /// Spread onto every editable <input>/<textarea> in this view to disable the
 /// browser's autocorrect / smart-quote substitution / spellcheck / autocomplete
@@ -259,6 +273,8 @@ const RulesView: Component = () => {
       match_method: r.match_method,
       match_path_glob: r.match_path_glob,
       match_params: r.match_params,
+      match_req_body: r.match_req_body,
+      match_conditions: r.match_conditions,
       res_status: r.res_status,
       res_headers: r.res_headers,
       res_body_id: r.res_body_id,
@@ -287,6 +303,7 @@ const RulesView: Component = () => {
       match_path_glob: r.match_path_glob,
       match_params: r.match_params,
       match_req_body: r.match_req_body,
+      match_conditions: r.match_conditions,
       res_status: r.res_status,
       res_headers: r.res_headers,
       res_body_id: r.res_body_id,
@@ -1100,6 +1117,7 @@ type DraftState = {
   match_path_glob: string;
   match_params: RuleParamDto[];
   match_req_body: string;
+  match_conditions: RuleConditionDto[];
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_text: string;
@@ -1120,6 +1138,7 @@ const emptyDraft = (collectionId: string | null): DraftState => ({
   match_path_glob: "",
   match_params: [],
   match_req_body: "",
+  match_conditions: [],
   res_status: 200,
   res_headers: [{ name: "Content-Type", value: "application/json; charset=UTF-8" }],
   res_body_text: "",
@@ -1322,6 +1341,7 @@ const RuleEditor: Component<{
       match_path_glob: r.match_path_glob ?? "",
       match_params: r.match_params.slice(),
       match_req_body: r.match_req_body ?? "",
+      match_conditions: r.match_conditions.slice(),
       res_status: r.res_status,
       res_headers:
         r.res_headers.length > 0
@@ -1444,6 +1464,12 @@ const RuleEditor: Component<{
         match_params: draft.match_params.filter((q) => q.name.length > 0),
         // Blank → null (no body matching). Storage trims and re-checks.
         match_req_body: draft.match_req_body.trim() ? draft.match_req_body : null,
+        // Drop half-filled rows: a condition needs both a path and a value.
+        // (An empty value would behave inconsistently by op — `contains ""`
+        // matches everything, numeric ops fail closed.)
+        match_conditions: draft.match_conditions.filter(
+          (c) => c.path.trim().length > 0 && c.value.trim().length > 0,
+        ),
         res_status: draft.res_status,
         res_headers: draft.res_headers.filter((h) => h.name.length > 0),
         // The textarea is pre-filled from existing body on open, so we always
@@ -1609,6 +1635,72 @@ const RuleEditor: Component<{
               </div>
             </Show>
             <div class="text-xs text-fg-muted italic">{t()("rules.req_body_note")}</div>
+          </div>
+        </FieldRow>
+        <FieldRow label={t()("rules.conditions_label")}>
+          <div class="flex-1 space-y-1">
+            <Index each={d().match_conditions}>
+              {(c, i) => (
+                <div class="flex items-center gap-2">
+                  <input {...NO_AC}
+                    class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
+                    placeholder={t()("rules.cond_path_placeholder")}
+                    value={c().path}
+                    onInput={(e) => {
+                      const arr = d().match_conditions.slice();
+                      arr[i] = { ...arr[i], path: e.currentTarget.value };
+                      patch({ match_conditions: arr });
+                    }}
+                  />
+                  <select
+                    class="bg-bg border border-border rounded px-1 py-1 text-xs shrink-0"
+                    value={c().op}
+                    onChange={(e) => {
+                      const arr = d().match_conditions.slice();
+                      arr[i] = { ...arr[i], op: e.currentTarget.value as RuleConditionOp };
+                      patch({ match_conditions: arr });
+                    }}
+                  >
+                    <For each={CONDITION_OPS}>
+                      {(op) => (
+                        <option value={op.value}>
+                          {op.value === "contains" ? t()("rules.cond_op_contains") : op.symbol}
+                        </option>
+                      )}
+                    </For>
+                  </select>
+                  <input {...NO_AC}
+                    class="flex-1 bg-bg border border-border rounded px-2 py-1 text-xs font-mono"
+                    placeholder={t()("rules.cond_value_placeholder")}
+                    value={c().value}
+                    onInput={(e) => {
+                      const arr = d().match_conditions.slice();
+                      arr[i] = { ...arr[i], value: e.currentTarget.value };
+                      patch({ match_conditions: arr });
+                    }}
+                  />
+                  <button
+                    class="text-fg-muted hover:text-danger"
+                    onClick={() =>
+                      patch({ match_conditions: d().match_conditions.filter((_, j) => j !== i) })
+                    }
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+            </Index>
+            <button
+              class="text-xs text-accent hover:underline"
+              onClick={() =>
+                patch({
+                  match_conditions: [...d().match_conditions, { path: "", op: "gte", value: "" }],
+                })
+              }
+            >
+              {t()("rules.add_condition")}
+            </button>
+            <div class="text-xs text-fg-muted italic">{t()("rules.conditions_note")}</div>
           </div>
         </FieldRow>
       </Section>
