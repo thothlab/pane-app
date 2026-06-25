@@ -177,6 +177,8 @@ const ru: Dict = {
     no_body: "Нет тела",
     binary_body: "Бинарное тело ({{size}}). Используйте Hex или скачайте файл.",
     load_failed: "Не удалось загрузить тело: {{message}}",
+    copy: "Копировать",
+    copy_full_title: "Скопировать тело целиком",
     copy_value: "Копировать значение",
     copy_path: "Копировать путь",
     expand_all: "Развернуть всё",

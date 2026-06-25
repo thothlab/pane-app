@@ -179,6 +179,8 @@ const en = {
     no_body: "No body",
     binary_body: "Binary body ({{size}}). Use Hex view or download.",
     load_failed: "Failed to load body: {{message}}",
+    copy: "Copy",
+    copy_full_title: "Copy the full body",
     copy_value: "Copy value",
     copy_path: "Copy path",
     expand_all: "Expand all",

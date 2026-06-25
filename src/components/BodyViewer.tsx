@@ -100,13 +100,13 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
           <ModeToggle mode={mode()} setMode={setMode} kind={kind()} />
           <button
             class="text-xs px-2 py-1 rounded hover:bg-bg-muted flex items-center gap-1"
-            title="Copy full body"
+            title={t()("body.copy_full_title")}
             onClick={copyAll}
           >
             <Show when={copied()} fallback={<Copy size={12} />}>
               <Check size={12} class="text-success" />
             </Show>
-            Copy
+            {t()("body.copy")}
           </button>
         </div>
       </div>
