@@ -1402,11 +1402,16 @@ const LogcatView: Component = () => {
   // search is empty so we don't pay the split/join cost on the firehose
   // hot path. The hot range slice keeps the original casing — only the
   // match boundary uses the lowered haystack.
-  const renderHL = (text: string): JSX.Element => {
+  const renderHL = (text: string, current = false): JSX.Element => {
     const term = searchLower();
     if (!term || !text) return text;
     const lower = text.toLowerCase();
     if (!lower.includes(term)) return text;
+    // The row jumped to via Enter/Shift+Enter paints its matches orange;
+    // every other match stays the muted yellow so the active one stands out.
+    const markClass = current
+      ? "bg-orange-500 text-white rounded-sm px-0.5"
+      : "bg-warn/30 text-fg rounded-sm px-0.5";
     const out: JSX.Element[] = [];
     let i = 0;
     while (i < text.length) {
@@ -1416,11 +1421,7 @@ const LogcatView: Component = () => {
         break;
       }
       if (idx > i) out.push(text.slice(i, idx));
-      out.push(
-        <mark class="bg-warn/30 text-fg rounded-sm px-0.5">
-          {text.slice(idx, idx + term.length)}
-        </mark>,
-      );
+      out.push(<mark class={markClass}>{text.slice(idx, idx + term.length)}</mark>);
       i = idx + term.length;
     }
     return out;
@@ -1946,6 +1947,7 @@ const LogcatView: Component = () => {
                       };
                       const pidStr = () =>
                         entry().pid > 0 ? String(entry().pid) : "";
+                      const isCurrentRow = () => vi.index === currentMatchRow();
                       return (
                         <div
                           class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 select-none cursor-default ${
@@ -1969,12 +1971,12 @@ const LogcatView: Component = () => {
                         >
                           <Show when={colVisible().time}>
                             <span class="truncate px-2 border-r border-border/30">
-                              {renderHL(entry().timestamp)}
+                              {renderHL(entry().timestamp, isCurrentRow())}
                             </span>
                           </Show>
                           <Show when={colVisible().pid}>
                             <span class="truncate px-2 border-r border-border/30">
-                              {renderHL(pidStr())}
+                              {renderHL(pidStr(), isCurrentRow())}
                             </span>
                           </Show>
                           <Show when={colVisible().app}>
@@ -1982,7 +1984,7 @@ const LogcatView: Component = () => {
                               class="truncate px-2 border-r border-border/30"
                               title={appName()}
                             >
-                              {renderHL(appName())}
+                              {renderHL(appName(), isCurrentRow())}
                             </span>
                           </Show>
                           <Show when={colVisible().level}>
@@ -1994,12 +1996,12 @@ const LogcatView: Component = () => {
                           </Show>
                           <Show when={colVisible().tag}>
                             <span class="truncate px-2 border-r border-border/30">
-                              {renderHL(entry().tag)}
+                              {renderHL(entry().tag, isCurrentRow())}
                             </span>
                           </Show>
                           <Show when={colVisible().message}>
                             <span class="truncate px-2">
-                              {renderHL(entry().message)}
+                              {renderHL(entry().message, isCurrentRow())}
                             </span>
                           </Show>
                         </div>
