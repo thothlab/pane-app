@@ -5,6 +5,7 @@ import {
   Pencil,
   Copy,
   GripVertical,
+  Eraser,
   Shuffle,
   X,
   Check,
@@ -1229,40 +1230,55 @@ const JsonFieldEditor: Component<{
         <Show when={formatErr()}>
           {(msg) => (
             <span class="text-xs text-danger truncate max-w-[260px]" title={msg()}>
-              {msg() === "empty" ? "Body is empty" : `Invalid JSON: ${msg()}`}
+              {msg() === "empty"
+                ? t()("rules.json_body_empty")
+                : `${t()("rules.json_invalid")}: ${msg()}`}
             </span>
           )}
         </Show>
         <button
           type="button"
           class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted disabled:opacity-50"
-          title="Pretty-print as JSON (2-space indent)"
+          title={t()("rules.json_format_title")}
           disabled={p.disabled}
           onClick={format}
         >
           <Braces size={12} />
-          Format
+          {t()("rules.json_format")}
         </button>
         <button
           type="button"
           class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted disabled:opacity-50"
-          title="Load JSON from a file"
+          title={t()("rules.json_load_file_title")}
           disabled={p.disabled}
           onClick={loadFromFile}
         >
           <FilePlus size={12} />
-          Load file
+          {t()("rules.json_load_file")}
+        </button>
+        <button
+          type="button"
+          class="text-xs text-danger hover:text-danger inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-danger/10 disabled:opacity-50"
+          title={t()("rules.json_clear_title")}
+          disabled={p.disabled || p.value.length === 0}
+          onClick={() => {
+            p.onInput("");
+            setFormatErr(null);
+          }}
+        >
+          <Eraser size={12} />
+          {t()("rules.json_clear")}
         </button>
         <button
           type="button"
           class="text-xs text-fg-muted hover:text-fg inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-bg-muted"
-          title={expanded() ? "Collapse editor" : "Expand editor"}
+          title={expanded() ? t()("rules.json_collapse_title") : t()("rules.json_expand_title")}
           onClick={() => setExpanded(!expanded())}
         >
           <Show when={expanded()} fallback={<Maximize2 size={12} />}>
             <Minimize2 size={12} />
           </Show>
-          {expanded() ? "Collapse" : "Expand"}
+          {expanded() ? t()("rules.json_collapse") : t()("rules.json_expand")}
         </button>
       </div>
       <div class={`w-full ${expanded() ? "h-[70vh] min-h-[400px]" : "h-28 min-h-20"}`}>

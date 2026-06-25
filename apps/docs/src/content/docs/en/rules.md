@@ -79,6 +79,7 @@ Two buttons sit next to the field label:
 - **Format** (`{ }`) — runs `JSON.parse → JSON.stringify(..., null, 2)` (2-space indent). Invalid JSON flashes an inline "Invalid JSON: …" message for 2.5 s without touching the content. Empty body shows "Body is empty". Format counts as an edit — Save will turn red.
 - **Expand / Collapse** — toggles the textarea height between compact (~7 rem) and tall (70vh, 400 px minimum). State is persisted to `localStorage` — open a big JSON once, every editor afterwards opens already expanded.
 - **Load file** — loads a JSON body from a `.json` file in one click (for heavy dumps, instead of copy-paste).
+- **Clear** (red) — empties the field contents. Disabled when the field is already empty.
 
 ## Unsaved-changes indicator
 
