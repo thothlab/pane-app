@@ -348,7 +348,7 @@ What's inside:
   !~^E/                                # outer ! — drop everything matching
   ~slow tag:OkHttp level:W..F          # AND with other keys
   ```
-- **Find in filtered** (`⌘⇧F`) — a separate input next to the filter:
+- **Find in filtered** (`⌘F`) — a separate input next to the filter:
   plain substring search over the already-filtered rows with in-cell
   match highlighting. Useful once the filter has narrowed the firehose
   down to hundreds/thousands of rows and you need to spot a specific
@@ -359,25 +359,22 @@ What's inside:
 - **Export** — save the currently-visible filtered view to a `.log`
   file in `threadtime` format (drop-in for Android Studio / any
   grep pipeline).
-- **⌘F** focuses the filter input. **⌘⇧F** focuses the search input.
+- **⌘F** focuses the search input. **⌘⇧F** focuses the filter input.
 - **Row selection & copy** (LogRabbit-style): click selects a row,
   Shift-click extends a range, ⌘-click toggles one, click-and-drag
   selects several. **⌘C** copies the selected rows in full (threadtime:
   time · pid · tid · level · tag: message), **⇧⌘C** copies just the
   message field. Right-click → **Copy / Copy message / View message**;
-  the copy actions operate on the whole selection. (Free-form text
-  selection lives in the text view, below.)
+  the copy actions operate on the whole selection.
 - **View a row** — double-click a row, or **View message** from the
   menu. The overlay is **resizable** (drag the bottom-right corner) and
   scrollable. A single row lists its fields (Time/App/PID/TID/Level/Tag),
   each copyable on its own; below is the content (the message, or the
-  messages of the selected rows). JSON-looking content gets **syntax
+  messages of the selected rows). A **search box** at the top (`⌘F` inside
+  the overlay) highlights matches with Enter (next) / Shift+Enter (prev)
+  navigation and a counter. JSON-looking content gets **syntax
   highlighting** and a **Format** button that pretty-prints even
   broken/truncated JSON by structure (like LogRabbit).
-- **Text view** (the **Text** button) — swaps the table for a flat,
-  snapshotted text of the filtered lines: native selection of any
-  substring, horizontal scroll for long lines, and copy — what the
-  virtualized grid can't offer.
 
 Safety bits:
 - Closing the window kills the `adb logcat` subprocess (via

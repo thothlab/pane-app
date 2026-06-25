@@ -26,7 +26,6 @@ import {
   Search as SearchIcon,
   Star,
   Trash2,
-  Type,
   X,
 } from "lucide-solid";
 import { t, tr } from "@/i18n";
@@ -111,8 +110,8 @@ const LEVEL_ROW_COLOR: Record<LogLevel, string> = {
 const IS_MAC_PLATFORM = /Mac|iPhone|iPad/.test(
   navigator.platform || navigator.userAgent,
 );
-const FILTER_HOTKEY_LABEL = IS_MAC_PLATFORM ? "⌘F" : "Ctrl+F";
-const SEARCH_HOTKEY_LABEL = IS_MAC_PLATFORM ? "⌘⇧F" : "Ctrl+Shift+F";
+const FILTER_HOTKEY_LABEL = IS_MAC_PLATFORM ? "⌘⇧F" : "Ctrl+Shift+F";
+const SEARCH_HOTKEY_LABEL = IS_MAC_PLATFORM ? "⌘F" : "Ctrl+F";
 
 const LEVEL_CHAR: Record<LogLevel, string> = {
   verbose: "V",
@@ -189,11 +188,6 @@ function formatJsonLoose(src: string): string {
   return out;
 }
 
-// Cap the plain-text snapshot so a 100k-line firehose doesn't build a
-// pathologically large string / textarea value. The tail is what
-// matters; narrow with a filter to see less.
-const TEXT_VIEW_CAP = 5000;
-
 /// Column header with a thin draggable right-edge handle. The handle
 /// is a 1-px vertical line at the cell's right edge — it works as
 /// both the visual column divider and the resize affordance.
@@ -244,9 +238,48 @@ const LogcatView: Component = () => {
   // Format pretty-prints it when it parses as JSON.
   const [detailText, setDetailText] = createSignal("");
   const [detailFormatErr, setDetailFormatErr] = createSignal<string | null>(null);
+  // In-overlay substring search over the message text (Cmd+F while the
+  // overlay is open). `detailMatchIdx` is the 0-based current match.
+  const [detailSearch, setDetailSearch] = createSignal("");
+  const [detailMatchIdx, setDetailMatchIdx] = createSignal(0);
+  let detailBodyRef: HTMLDivElement | undefined;
+  let detailSearchRef: HTMLInputElement | undefined;
+  const detailMatches = createMemo<number[]>(() => {
+    const q = detailSearch();
+    if (!q) return [];
+    const hay = detailText().toLowerCase();
+    const needle = q.toLowerCase();
+    const out: number[] = [];
+    let i = hay.indexOf(needle);
+    while (i !== -1) {
+      out.push(i);
+      i = hay.indexOf(needle, i + needle.length);
+    }
+    return out;
+  });
+  // Select the n-th match (wrapping) and scroll it into view. The overlay
+  // body holds a <textarea> in both the plain and JsonEditor branches, so
+  // we grab it live (Format swaps which branch renders). We focus the
+  // textarea to get the browser's native scroll-to-selection (correct with
+  // wrapping), then hand focus back to the search box so Enter keeps cycling.
+  const gotoDetailMatch = (idx: number) => {
+    const m = detailMatches();
+    if (m.length === 0) return;
+    const wrapped = ((idx % m.length) + m.length) % m.length;
+    setDetailMatchIdx(wrapped);
+    const start = m[wrapped]!;
+    const ta = detailBodyRef?.querySelector("textarea") as HTMLTextAreaElement | null;
+    if (ta) {
+      ta.focus();
+      ta.setSelectionRange(start, start + detailSearch().length);
+      detailSearchRef?.focus();
+    }
+  };
   const openDetail = (rows: LogEntry[]) => {
     if (rows.length === 0) return;
     setDetailFormatErr(null);
+    setDetailSearch("");
+    setDetailMatchIdx(0);
     // Just the Message column of the selected rows — when a big JSON was
     // logged line-by-line, joining the messages reconstructs it (and
     // Format can then pretty-print it).
@@ -306,14 +339,6 @@ const LogcatView: Component = () => {
   // Brief "copied N" confirmation shown in the status bar.
   const [copyHint, setCopyHint] = createSignal<string | null>(null);
 
-  // ── Plain-text view (free-form select / scroll / copy) ────────────
-  // A read-only textarea is the right tool for "grab arbitrary text":
-  // native substring + multi-line selection, horizontal scroll to the
-  // end of any long line, and copy — none of which a virtualized grid
-  // can offer. Snapshotted on toggle (not live) so the content doesn't
-  // shift under a selection while the firehose runs.
-  const [textMode, setTextMode] = createSignal(false);
-  const [textSnapshot, setTextSnapshot] = createSignal("");
   // PID → process name snapshot. Polled every 10s via
   // `android_pid_names` so the App column in the table can label
   // each entry with the package it came from. Accumulates across
@@ -987,18 +1012,6 @@ const LogcatView: Component = () => {
     return true;
   };
 
-  // Toggle the plain-text view. Snapshots the (filter-narrowed, tail-
-  // capped) lines on enter so the content stays put for selecting and
-  // scrolling while the firehose keeps running underneath.
-  const toggleTextMode = () => {
-    const next = !textMode();
-    if (next) {
-      const v = visible();
-      const slice = v.length > TEXT_VIEW_CAP ? v.slice(v.length - TEXT_VIEW_CAP) : v;
-      setTextSnapshot(slice.map(formatEntryLine).join("\n"));
-    }
-    setTextMode(next);
-  };
 
   /// Serialize the currently-visible entries (after filter + follow-app
   /// constraints) into a plain-text `.log` file. Format mirrors what
@@ -1090,12 +1103,18 @@ const LogcatView: Component = () => {
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        // Cmd+Shift+F → quick substring search; Cmd+F (no shift) → DSL
-        // filter. Two hotkeys because the two inputs serve different
-        // mental modes: shape the firehose vs. find a specific token in
-        // what's already on screen.
-        if (e.shiftKey) searchInputRef?.focus();
-        else filterInputRef?.focus();
+        // While the message overlay is open, both Cmd+F and Cmd+Shift+F
+        // focus its in-overlay search — never the toolbar inputs behind it.
+        if (detail() !== null) {
+          detailSearchRef?.focus();
+          return;
+        }
+        // Cmd+F (no shift) → quick substring search; Cmd+Shift+F → DSL
+        // filter. Cmd+F matches the platform "find" convention for the
+        // common case (find a token on screen); the filter — a different
+        // mental mode, shaping the firehose — takes the shifted variant.
+        if (e.shiftKey) filterInputRef?.focus();
+        else searchInputRef?.focus();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1457,16 +1476,6 @@ const LogcatView: Component = () => {
           <ArrowDown size={12} />
           {t()("logcat.auto_scroll")}
         </button>
-        <button
-          class={`inline-flex items-center gap-1 px-2 py-1 rounded ${
-            textMode() ? "bg-accent/15 text-accent" : "hover:bg-bg-muted text-fg-muted"
-          }`}
-          onClick={toggleTextMode}
-          title={t()("logcat.text_view_title")}
-        >
-          <Type size={12} />
-          {t()("logcat.text_view")}
-        </button>
 
         {/* Token-highlight overlay over a transparent input. The
             previous Solid-<For>-based overlay rendered only the
@@ -1688,8 +1697,7 @@ const LogcatView: Component = () => {
           their right edge; Level is fixed (1 char) and Message
           takes the remainder (1fr). Vertical hairlines via
           per-cell border-r — no grid gap so the borders are
-          column-edge aligned. Hidden in plain-text mode. */}
-      <Show when={!textMode()}>
+          column-edge aligned. */}
       <div
         class="grid font-mono text-fg-muted tracking-wide text-xs px-3 py-1 border-b border-border bg-bg-subtle/60"
         style={{ "grid-template-columns": gridTemplate() }}
@@ -1741,21 +1749,6 @@ const LogcatView: Component = () => {
           <span class="px-2">{t()("logcat.col_message")}</span>
         </Show>
       </div>
-      </Show>
-
-      {/* Plain-text view. A read-only textarea (wrap off → horizontal
-          scroll) of the snapshotted filtered lines: native selection,
-          scroll-to-end, and copy that the virtualized grid can't give.
-          Swaps in for the header + table while active. */}
-      <Show when={textMode()}>
-        <textarea
-          class="flex-1 w-full bg-bg text-fg text-xs font-mono p-3 outline-none resize-none select-text"
-          readOnly
-          wrap="off"
-          spellcheck={false}
-          value={textSnapshot()}
-        />
-      </Show>
 
       {/* Column show/hide menu. Anchored to the right-click position
           via `fixed` + inline `left/top`. We don't bother flipping
@@ -1799,8 +1792,7 @@ const LogcatView: Component = () => {
 
       {/* Virtualized table. <For> over the reactive virtual-items
           accessor keeps row identity stable across the firehose;
-          .map would rebuild DOM nodes each batch. Hidden in text mode. */}
-      <Show when={!textMode()}>
+          .map would rebuild DOM nodes each batch. */}
       <div
         ref={(el) => (scrollEl = el)}
         class="flex-1 overflow-auto"
@@ -1917,7 +1909,6 @@ const LogcatView: Component = () => {
           </div>
         </Show>
       </div>
-      </Show>
 
       {/* Status bar. LogRabbit-style row at the foot of the window
           carrying the counter on the left — keeps the toolbar uncluttered
@@ -2043,6 +2034,40 @@ const LogcatView: Component = () => {
                     )}
                   </Show>
                   <div class="ml-auto flex items-center gap-1">
+                    <div class="relative flex items-center bg-bg-muted rounded focus-within:ring-1 focus-within:ring-accent w-48">
+                      <SearchIcon size={11} class="text-fg-muted shrink-0 ml-1.5" />
+                      <input
+                        ref={(el) => (detailSearchRef = el)}
+                        type="text"
+                        class="w-full bg-transparent rounded pl-1.5 pr-12 py-0.5 outline-none text-xs font-mono"
+                        placeholder={t()("logcat.detail_search_placeholder")}
+                        value={detailSearch()}
+                        onInput={(e) => {
+                          setDetailSearch(e.currentTarget.value);
+                          gotoDetailMatch(0);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            gotoDetailMatch(detailMatchIdx() + (e.shiftKey ? -1 : 1));
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (detailSearch()) setDetailSearch("");
+                            else setDetail(null);
+                          }
+                        }}
+                        autocapitalize="off"
+                        autocomplete="off"
+                        autocorrect="off"
+                        spellcheck={false}
+                      />
+                      <Show when={detailSearch()}>
+                        <span class="absolute right-1.5 text-[10px] text-fg-muted tabular-nums pointer-events-none">
+                          {detailMatches().length ? `${detailMatchIdx() + 1}/${detailMatches().length}` : "0/0"}
+                        </span>
+                      </Show>
+                    </div>
                     <button
                       class="inline-flex items-center gap-1 px-2 py-1 rounded hover:bg-bg-muted"
                       onClick={formatDetail}
@@ -2069,7 +2094,7 @@ const LogcatView: Component = () => {
                     </button>
                   </div>
                 </div>
-                <div class="flex-1 min-h-0 p-2">
+                <div class="flex-1 min-h-0 p-2" ref={(el) => (detailBodyRef = el)}>
                   <Show
                     when={detailLooksJson()}
                     fallback={

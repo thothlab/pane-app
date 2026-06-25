@@ -367,7 +367,7 @@ const en = {
     wrap_rows: "Wrap",
     wrap_rows_title: "Wrap long cell text onto multiple lines",
     filter_help:
-      "Bare word — substring in tag or message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:<package> — substring match against running process names; auto-tracks app restarts. Type `app:ru.` to match every running package starting with `ru.`.\n~pattern — regex (matches tag or message).\nlevel:W..F — range, all warnings and above.\nComma in value combines alternatives: positives OR (`tag:A,B` = A or B), each value can be negated with `!` (`tag:!Spam,!Noise,SSH` = not Spam AND not Noise AND contains SSH). `!tag:foo` flips the whole term.\nMultiple tokens are ANDed.\n⌘K clears the buffer. ⌘F focuses this input.",
+      "Bare word — substring in tag or message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:<package> — substring match against running process names; auto-tracks app restarts. Type `app:ru.` to match every running package starting with `ru.`.\n~pattern — regex (matches tag or message).\nlevel:W..F — range, all warnings and above.\nComma in value combines alternatives: positives OR (`tag:A,B` = A or B), each value can be negated with `!` (`tag:!Spam,!Noise,SSH` = not Spam AND not Noise AND contains SSH). `!tag:foo` flips the whole term.\nMultiple tokens are ANDed.\n⌘K clears the buffer. ⌘⇧F focuses this input.",
     counter: "Viewing {{shown}} of {{total}}",
     pending_counter: "+{{n}} new",
     row_open_detail: "Click to select · double-click for the full message",
@@ -379,13 +379,11 @@ const en = {
     detail_invalid_json: "Invalid JSON: {{message}}",
     detail_not_json: "Not JSON",
     detail_rows: "{{n}} rows",
+    detail_search_placeholder: "Search…",
     copy_failed: "Copy failed: {{message}}",
     menu_copy: "Copy",
     menu_copy_message: "Copy message",
     menu_view_message: "View message",
-    text_view: "Text",
-    text_view_title:
-      "Plain-text view — select, scroll and copy freely (snapshot of the filtered lines)",
     selected_count: "{{n}} selected",
     copied: "Copied {{n}}",
     empty_waiting: "Waiting for log entries…",

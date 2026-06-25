@@ -366,7 +366,7 @@ const ru: Dict = {
     wrap_rows: "Перенос",
     wrap_rows_title: "Переносить длинный текст ячеек на несколько строк",
     filter_help:
-      "Слово без префикса — substring по tag или message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:<package> — substring по именам запущенных процессов; авто-подхват рестарта. `app:ru.` поймает все запущенные пакеты начинающиеся с `ru.`.\n~pattern — regex (по tag или message).\nlevel:W..F — диапазон, все warning и выше.\nЗапятая в значении объединяет альтернативы: позитивы — OR (`tag:A,B` = A или B), каждое значение можно отрицать через `!` (`tag:!Spam,!Noise,SSH` = не Spam И не Noise И содержит SSH). `!tag:foo` инвертирует весь токен.\nНесколько токенов соединяются по AND.\n⌘K — очистить буфер. ⌘F — фокус в это поле.",
+      "Слово без префикса — substring по tag или message.\nkey:value — tag, msg, level (V/D/I/W/E/F), pid, app.\napp:<package> — substring по именам запущенных процессов; авто-подхват рестарта. `app:ru.` поймает все запущенные пакеты начинающиеся с `ru.`.\n~pattern — regex (по tag или message).\nlevel:W..F — диапазон, все warning и выше.\nЗапятая в значении объединяет альтернативы: позитивы — OR (`tag:A,B` = A или B), каждое значение можно отрицать через `!` (`tag:!Spam,!Noise,SSH` = не Spam И не Noise И содержит SSH). `!tag:foo` инвертирует весь токен.\nНесколько токенов соединяются по AND.\n⌘K — очистить буфер. ⌘⇧F — фокус в это поле.",
     counter: "Показано {{shown}} из {{total}}",
     pending_counter: "+{{n}} новых",
     row_open_detail: "Клик — выделить · двойной клик — полный текст",
@@ -378,13 +378,11 @@ const ru: Dict = {
     detail_invalid_json: "Невалидный JSON: {{message}}",
     detail_not_json: "Не похоже на JSON",
     detail_rows: "Строк: {{n}}",
+    detail_search_placeholder: "Поиск…",
     copy_failed: "Не скопировалось: {{message}}",
     menu_copy: "Копировать",
     menu_copy_message: "Копировать message",
     menu_view_message: "Показать message",
-    text_view: "Текст",
-    text_view_title:
-      "Текстовый режим — свободно выделять, скроллить и копировать (снимок отфильтрованных строк)",
     selected_count: "Выделено: {{n}}",
     copied: "Скопировано: {{n}}",
     empty_waiting: "Жду записи логов…",
