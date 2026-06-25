@@ -390,6 +390,12 @@ pub struct CollectionSetEnabledArgs {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionSetPriorityArgs {
+    pub id: Uuid,
+    pub priority: i64,
+}
+
 // ------------------- Pinning event -------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -86,6 +86,7 @@ pub fn run() {
             commands::rules::collection_upsert,
             commands::rules::collection_delete,
             commands::rules::collection_set_enabled,
+            commands::rules::collection_set_priority,
             commands::rules::rules_export_write,
             commands::rules::rules_import_read,
         ])

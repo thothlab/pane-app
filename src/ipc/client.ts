@@ -108,5 +108,7 @@ export const api = {
     delete: (id: string) => call<void>("collection_delete", { id }),
     setEnabled: (id: string, enabled: boolean) =>
       call<void>("collection_set_enabled", { args: { id, enabled } }),
+    setPriority: (id: string, priority: number) =>
+      call<void>("collection_set_priority", { args: { id, priority } }),
   },
 };

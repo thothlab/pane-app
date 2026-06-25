@@ -17,7 +17,8 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use base64::Engine as _;
 use pane_ipc::{
-    CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionUpsertArgs, ExportOneResult,
+    CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionSetPriorityArgs,
+    CollectionUpsertArgs, ExportOneResult,
     FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs, RuleCollectionDto, RuleDto,
     RuleHeaderDto, RuleParamDto, RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs,
     RuleUpsertArgs,
@@ -658,6 +659,16 @@ impl Storage {
         conn.execute(
             "UPDATE rule_collection SET enabled=?1, updated_at=?2 WHERE id=?3",
             params![args.enabled as i64, now, args.id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_collection_priority(&self, args: CollectionSetPriorityArgs) -> Result<()> {
+        let conn = self.conn.lock();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        conn.execute(
+            "UPDATE rule_collection SET priority=?1, updated_at=?2 WHERE id=?3",
+            params![args.priority, now, args.id.to_string()],
         )?;
         Ok(())
     }

@@ -205,6 +205,7 @@ const en = {
     export_collection_title: "Export this collection",
     export_rule_title: "Export this rule",
     duplicate_rule_title: "Duplicate this rule",
+    drag_collection: "Drag to reorder",
     copy_suffix: " - copy",
     export_failed: "Export failed: {{message}}",
     import_invalid: "This file isn't a Pane rules export: {{message}}",

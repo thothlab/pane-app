@@ -4,6 +4,7 @@ import {
   Trash2,
   Pencil,
   Copy,
+  GripVertical,
   Shuffle,
   X,
   Check,
@@ -126,6 +127,11 @@ const RulesView: Component = () => {
   // pointer; UNGROUPED_KEY is used for the Ungrouped section.
   const [draggingRuleId, setDraggingRuleId] = createSignal<string | null>(null);
   const [dragOverKey, setDragOverKey] = createSignal<string | null>(null);
+  // Id of the collection currently being dragged by its header grip, or null.
+  // Drives collection-reorder detection via a signal (not dataTransfer.types)
+  // because WKWebView doesn't reliably expose custom drag types during
+  // dragover — a signal is bulletproof and mirrors draggingRuleId.
+  const [draggingCollectionId, setDraggingCollectionId] = createSignal<string | null>(null);
 
   const refresh = async () => {
     const [r, c] = await Promise.all([api.rules.list(), api.collections.list()]);
@@ -401,6 +407,8 @@ const RulesView: Component = () => {
     setDraggingRuleId(null);
     setDragOverKey(null);
   };
+  const onDragStartCollection = (id: string) => setDraggingCollectionId(id);
+  const onDragEndCollection = () => setDraggingCollectionId(null);
   const onDragOverSection = (key: string) => setDragOverKey(key);
   const onDragLeaveSection = () => setDragOverKey(null);
   const onDropOnSection = async (key: string, ruleId: string | null) => {
@@ -449,6 +457,30 @@ const RulesView: Component = () => {
       .filter(({ rid, idx }) => priorityOf.get(rid) !== idx);
     if (changed.length === 0) return;
     await Promise.all(changed.map(({ rid, idx }) => api.rules.setPriority(rid, idx)));
+    await refresh();
+  };
+
+  // Reorder whole collections by dragging their headers. Collection order is
+  // also precedence — list_active_rules sorts by collection priority first —
+  // so this lets the user prioritise an entire group. Same diff-then-fan-out
+  // shape as reorderRule. The Ungrouped pseudo-section has no collection row
+  // and is always rendered last, so it never participates.
+  const reorderCollection = async (
+    draggedId: string,
+    targetId: string,
+    position: "before" | "after",
+  ) => {
+    if (draggedId === targetId) return;
+    const ordered = collections().map((c) => c.id).filter((cid) => cid !== draggedId);
+    const targetIdx = ordered.indexOf(targetId);
+    if (targetIdx < 0) return;
+    ordered.splice(position === "after" ? targetIdx + 1 : targetIdx, 0, draggedId);
+    const priorityOf = new Map(collections().map((c) => [c.id, c.priority]));
+    const changed = ordered
+      .map((cid, idx) => ({ cid, idx }))
+      .filter(({ cid, idx }) => priorityOf.get(cid) !== idx);
+    if (changed.length === 0) return;
+    await Promise.all(changed.map(({ cid, idx }) => api.collections.setPriority(cid, idx)));
     await refresh();
   };
 
@@ -535,6 +567,7 @@ const RulesView: Component = () => {
               onEditRule={startEditRule}
               onCopyRule={duplicateRule}
               onReorderRule={reorderRule}
+              onReorderCollection={reorderCollection}
               onToggleRule={toggleRule}
               onToggleCollection={(en) => toggleCollection(rulesByCollection().get(c.id) ?? [], en)}
               onDeleteRule={removeRule}
@@ -549,9 +582,12 @@ const RulesView: Component = () => {
               onConfirmRename={confirmRename}
               onCancelRename={() => setRenamingId(null)}
               draggingRuleId={draggingRuleId()}
+              draggingCollectionId={draggingCollectionId()}
               dragOverKey={dragOverKey()}
               onDragStartRule={onDragStartRule}
               onDragEndRule={onDragEndRule}
+              onDragStartCollection={onDragStartCollection}
+              onDragEndCollection={onDragEndCollection}
               onDragOverSection={onDragOverSection}
               onDragLeaveSection={onDragLeaveSection}
               onDropOnSection={(rid) => onDropOnSection(c.id, rid)}
@@ -569,6 +605,7 @@ const RulesView: Component = () => {
           onEditRule={startEditRule}
           onCopyRule={duplicateRule}
           onReorderRule={reorderRule}
+          onReorderCollection={reorderCollection}
           onToggleRule={toggleRule}
           onToggleCollection={(en) => toggleCollection(rulesByCollection().get(UNGROUPED_KEY) ?? [], en)}
           onDeleteRule={removeRule}
@@ -583,9 +620,12 @@ const RulesView: Component = () => {
           onConfirmRename={confirmRename}
           onCancelRename={() => setRenamingId(null)}
           draggingRuleId={draggingRuleId()}
+          draggingCollectionId={draggingCollectionId()}
           dragOverKey={dragOverKey()}
           onDragStartRule={onDragStartRule}
           onDragEndRule={onDragEndRule}
+          onDragStartCollection={onDragStartCollection}
+          onDragEndCollection={onDragEndCollection}
           onDragOverSection={onDragOverSection}
           onDragLeaveSection={onDragLeaveSection}
           onDropOnSection={(rid) => onDropOnSection(UNGROUPED_KEY, rid)}
@@ -613,6 +653,7 @@ const CollectionSection: Component<{
   onEditRule: (r: RuleDto) => void;
   onCopyRule: (r: RuleDto) => void;
   onReorderRule: (draggedId: string, targetId: string, position: "before" | "after") => void;
+  onReorderCollection: (draggedId: string, targetId: string, position: "before" | "after") => void;
   onToggleRule: (r: RuleDto) => void;
   onToggleCollection: (enable: boolean) => void;
   onDeleteRule: (r: RuleDto) => void;
@@ -629,9 +670,12 @@ const CollectionSection: Component<{
   onConfirmRename: () => void;
   onCancelRename: () => void;
   draggingRuleId: string | null;
+  draggingCollectionId: string | null;
   dragOverKey: string | null;
   onDragStartRule: (id: string) => void;
   onDragEndRule: () => void;
+  onDragStartCollection: (id: string) => void;
+  onDragEndCollection: () => void;
   onDragOverSection: (key: string) => void;
   onDragLeaveSection: () => void;
   onDropOnSection: (ruleId: string | null) => void;
@@ -640,6 +684,13 @@ const CollectionSection: Component<{
   const sectionKey = () => p.collection?.id ?? UNGROUPED_KEY;
   const isRenaming = () => p.collection !== null && p.renamingId === p.collection.id;
   const isDragOver = () => p.draggingRuleId !== null && p.dragOverKey === sectionKey();
+  // Which edge this section would drop a dragged *collection* against. Rule
+  // drags and collection drags share the section as a drop target; we tell
+  // them apart by the dataTransfer type rather than a shared signal so the
+  // two systems never cross-fire.
+  const [collectionDropEdge, setCollectionDropEdge] = createSignal<"before" | "after" | null>(null);
+  const COLLECTION_DND = "application/x-pane-collection";
+  const isCollectionDrag = () => p.draggingCollectionId !== null;
   const editingNewHere = () => {
     const ed = p.editing;
     return (
@@ -649,19 +700,31 @@ const CollectionSection: Component<{
 
   return (
     <section
-      class={`border rounded transition-colors ${
+      class={`relative border rounded transition-colors ${
         isDragOver()
           ? "border-accent ring-2 ring-accent/40 bg-accent/5"
           : "border-border"
       }`}
       onDragEnter={(e) => {
         e.preventDefault();
-        p.onDragOverSection(sectionKey());
+        if (!isCollectionDrag()) p.onDragOverSection(sectionKey());
       }}
       onDragOver={(e) => {
-        // Unconditionally allow drop. We can't reliably read p.draggingRuleId
-        // here in time across native DnD events, so just accept the drop and
-        // let onDropOnSection bail out if there's no active rule drag.
+        // A collection is being dragged onto this one → reorder mode: pick the
+        // edge by pointer half and show an insertion line. (Ungrouped has no
+        // collection row, so it never accepts a reorder.)
+        if (!isUngrouped() && isCollectionDrag()) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCollectionDropEdge(e.clientY < rect.top + rect.height / 2 ? "before" : "after");
+          return;
+        }
+        // Otherwise it's a rule drag. Unconditionally allow drop. We can't
+        // reliably read p.draggingRuleId here in time across native DnD events,
+        // so just accept the drop and let onDropOnSection bail if there's no
+        // active rule drag.
         e.preventDefault();
         if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
         p.onDragOverSection(sectionKey());
@@ -671,16 +734,59 @@ const CollectionSection: Component<{
         const related = e.relatedTarget as Node | null;
         if (!related || !(e.currentTarget as Node).contains(related)) {
           p.onDragLeaveSection();
+          setCollectionDropEdge(null);
         }
       }}
       onDrop={(e) => {
+        if (!isUngrouped() && isCollectionDrag()) {
+          e.preventDefault();
+          e.stopPropagation();
+          const edge = collectionDropEdge();
+          const draggedId = p.draggingCollectionId;
+          setCollectionDropEdge(null);
+          if (edge && draggedId && p.collection && draggedId !== p.collection.id) {
+            p.onReorderCollection(draggedId, p.collection.id, edge);
+          }
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         const id = e.dataTransfer?.getData("text/plain") || null;
         p.onDropOnSection(id);
       }}
     >
+      <Show when={collectionDropEdge()}>
+        {(edge) => (
+          <div
+            class={`pointer-events-none absolute inset-x-0 h-0.5 bg-accent rounded ${
+              edge() === "before" ? "-top-px" : "-bottom-px"
+            }`}
+          />
+        )}
+      </Show>
       <header class="flex items-center gap-2 px-3 py-2">
+        <Show when={!isUngrouped()}>
+          <div
+            draggable={true}
+            class="cursor-grab active:cursor-grabbing text-fg-muted hover:text-fg shrink-0"
+            title={t()("rules.drag_collection")}
+            onDragStart={(e) => {
+              if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = "move";
+                // Set data for native DnD validity; detection itself rides on
+                // the draggingCollectionId signal, not this type.
+                e.dataTransfer.setData(COLLECTION_DND, p.collection!.id);
+              }
+              p.onDragStartCollection(p.collection!.id);
+            }}
+            onDragEnd={() => {
+              p.onDragEndCollection();
+              setCollectionDropEdge(null);
+            }}
+          >
+            <GripVertical size={14} />
+          </div>
+        </Show>
         <button
           class="text-fg-muted hover:text-fg shrink-0"
           onClick={p.onToggleCollapsed}
@@ -876,7 +982,10 @@ const RuleRow: Component<{
         // A rule is being dragged over this row — claim the drop for
         // reordering (the section's own drop is for moving between
         // collections). Pick the edge by which half the pointer is in.
+        // Ignore collection drags (no text/plain) so they bubble to the
+        // section's collection-reorder handler instead.
         if (p.isDragging) return;
+        if (!e.dataTransfer?.types.includes("text/plain")) return;
         e.preventDefault();
         e.stopPropagation();
         if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
@@ -890,6 +999,8 @@ const RuleRow: Component<{
         }
       }}
       onDrop={(e) => {
+        // Collection drags (no text/plain) belong to the section handler.
+        if (!e.dataTransfer?.types.includes("text/plain")) return;
         const edge = dropEdge();
         setDropEdge(null);
         if (p.isDragging || !edge) return;

@@ -1,8 +1,8 @@
 use super::{to_api, CmdResult};
 use crate::state::AppState;
 use pane_ipc::{
-    CollectionSetEnabledArgs, CollectionUpsertArgs, RuleCollectionDto, RuleDto, RuleSetEnabledArgs,
-    RuleSetPriorityArgs, RuleUpsertArgs,
+    CollectionSetEnabledArgs, CollectionSetPriorityArgs, CollectionUpsertArgs, RuleCollectionDto,
+    RuleDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs,
 };
 use tauri::State;
 use uuid::Uuid;
@@ -69,6 +69,17 @@ pub async fn collection_set_enabled(
     state
         .storage
         .set_collection_enabled(args)
+        .map_err(to_api("db"))
+}
+
+#[tauri::command]
+pub async fn collection_set_priority(
+    state: State<'_, AppState>,
+    args: CollectionSetPriorityArgs,
+) -> CmdResult<()> {
+    state
+        .storage
+        .set_collection_priority(args)
         .map_err(to_api("db"))
 }
 

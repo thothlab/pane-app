@@ -203,6 +203,7 @@ const ru: Dict = {
     export_collection_title: "Экспортировать коллекцию",
     export_rule_title: "Экспортировать правило",
     duplicate_rule_title: "Дублировать правило",
+    drag_collection: "Перетащите для сортировки",
     copy_suffix: " - копия",
     export_failed: "Экспорт не удался: {{message}}",
     import_invalid: "Файл не похож на экспорт Pane: {{message}}",
