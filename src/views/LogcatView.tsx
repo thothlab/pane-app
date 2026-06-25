@@ -34,7 +34,7 @@ import { savedFiltersFor } from "@/stores/saved-filters";
 import { fontScale, ROOT_PX } from "@/stores/font-scale";
 import { writeClipboard } from "@/lib/clipboard";
 import { VerticalResizer } from "@/components/VerticalResizer";
-import JsonEditor from "@/components/JsonEditor";
+import { highlightJson } from "@/lib/json-highlight";
 
 // Filters sidebar width, drag-resizable + persisted (px, independent of
 // the font scale — same as the main window's sidebar).
@@ -125,14 +125,54 @@ const LEVEL_CHAR: Record<LogLevel, string> = {
 
 // One log entry as a `threadtime`-format line — the same shape
 // `adb logcat -v threadtime` emits and what Export writes. Shared by
-// Export, the "Copy selected" command (⌘C) and the plain-text view so
-// all three produce identical, paste-anywhere output.
+// Export and the "Copy selected" command (⌘C) so both produce identical,
+// paste-anywhere output.
 function formatEntryLine(e: LogEntry): string {
   const ts = e.timestamp || "";
   const pid = String(e.pid).padStart(5);
   const tid = String(e.tid).padStart(5);
   const lvl = LEVEL_CHAR[e.level];
   return `${ts} ${pid} ${tid} ${lvl} ${e.tag}: ${e.message}`;
+}
+
+// Render `src` with every case-insensitive occurrence of `query` wrapped in
+// a <mark>; the `current`-th match gets the active colour and reports its
+// element via `onCurrent` so the caller can scroll it into view. Used as the
+// overlay <pre> content behind the message overlay's transparent textarea.
+function highlightSearch(
+  src: string,
+  query: string,
+  current: number,
+  onCurrent: (el: HTMLElement) => void,
+): JSX.Element[] {
+  const out: JSX.Element[] = [];
+  const lower = src.toLowerCase();
+  const needle = query.toLowerCase();
+  let last = 0;
+  let i = lower.indexOf(needle);
+  let n = 0;
+  while (i !== -1) {
+    if (i > last) out.push(src.slice(last, i));
+    const isCurrent = n === current;
+    out.push(
+      <mark
+        class={
+          isCurrent
+            ? "bg-accent text-bg rounded-sm"
+            : "bg-warn/40 text-fg rounded-sm"
+        }
+        ref={isCurrent ? onCurrent : undefined}
+      >
+        {src.slice(i, i + query.length)}
+      </mark>,
+    );
+    last = i + query.length;
+    i = lower.indexOf(needle, last);
+    n++;
+  }
+  if (last < src.length) out.push(src.slice(last));
+  out.push("\n ");
+  return out;
 }
 
 // Best-effort JSON pretty-printer that doesn't require valid input — it
@@ -242,8 +282,14 @@ const LogcatView: Component = () => {
   // overlay is open). `detailMatchIdx` is the 0-based current match.
   const [detailSearch, setDetailSearch] = createSignal("");
   const [detailMatchIdx, setDetailMatchIdx] = createSignal(0);
-  let detailBodyRef: HTMLDivElement | undefined;
   let detailSearchRef: HTMLInputElement | undefined;
+  // The overlay <pre> + transparent <textarea> (same stack as JsonEditor):
+  // the <pre> paints search marks / JSON colours, the textarea keeps the
+  // caret + scroll. `detailCurrentMarkEl` is the active match's <mark>, set
+  // by the overlay ref so we can scroll it into view on navigation.
+  let detailPreRef: HTMLPreElement | undefined;
+  let detailTaRef: HTMLTextAreaElement | undefined;
+  let detailCurrentMarkEl: HTMLElement | undefined;
   const detailMatches = createMemo<number[]>(() => {
     const q = detailSearch();
     if (!q) return [];
@@ -257,23 +303,17 @@ const LogcatView: Component = () => {
     }
     return out;
   });
-  // Select the n-th match (wrapping) and scroll it into view. The overlay
-  // body holds a <textarea> in both the plain and JsonEditor branches, so
-  // we grab it live (Format swaps which branch renders). We focus the
-  // textarea to get the browser's native scroll-to-selection (correct with
-  // wrapping), then hand focus back to the search box so Enter keeps cycling.
+  // Move to the n-th match (wrapping) and scroll its <mark> into view. Focus
+  // stays in the search box so Enter keeps cycling; the visible layer is the
+  // <pre>, so scrolling it (then syncing the textarea) reveals the match.
   const gotoDetailMatch = (idx: number) => {
     const m = detailMatches();
     if (m.length === 0) return;
-    const wrapped = ((idx % m.length) + m.length) % m.length;
-    setDetailMatchIdx(wrapped);
-    const start = m[wrapped]!;
-    const ta = detailBodyRef?.querySelector("textarea") as HTMLTextAreaElement | null;
-    if (ta) {
-      ta.focus();
-      ta.setSelectionRange(start, start + detailSearch().length);
-      detailSearchRef?.focus();
-    }
+    setDetailMatchIdx(((idx % m.length) + m.length) % m.length);
+    requestAnimationFrame(() => {
+      detailCurrentMarkEl?.scrollIntoView({ block: "center" });
+      if (detailPreRef && detailTaRef) detailTaRef.scrollTop = detailPreRef.scrollTop;
+    });
   };
   const openDetail = (rows: LogEntry[]) => {
     if (rows.length === 0) return;
@@ -318,6 +358,19 @@ const LogcatView: Component = () => {
   const detailLooksJson = createMemo(() => {
     const s = detailText().trim();
     return s.length > 0 && (s[0] === "{" || s[0] === "[");
+  });
+  // What the overlay <pre> renders: search marks when searching, else JSON
+  // syntax colours for JSON-looking content, else plain text. The trailing
+  // "\n " keeps the last line paintable (matches JsonEditor). Defined after
+  // detailLooksJson so the eager memo doesn't hit its TDZ.
+  const detailOverlay = createMemo(() => {
+    if (detailSearch() && detailMatches().length > 0) {
+      return highlightSearch(detailText(), detailSearch(), detailMatchIdx(), (el) => {
+        detailCurrentMarkEl = el;
+      });
+    }
+    if (detailLooksJson()) return [...highlightJson(detailText()), "\n "];
+    return [detailText(), "\n "];
   });
 
   // ── Row selection (LogRabbit-style) ───────────────────────────────
@@ -2094,20 +2147,32 @@ const LogcatView: Component = () => {
                     </button>
                   </div>
                 </div>
-                <div class="flex-1 min-h-0 p-2" ref={(el) => (detailBodyRef = el)}>
-                  <Show
-                    when={detailLooksJson()}
-                    fallback={
-                      <textarea
-                        class="w-full h-full bg-bg border border-border rounded px-2 py-1 text-xs font-mono leading-snug whitespace-pre-wrap break-words resize-none overflow-auto text-fg outline-none focus:border-accent"
-                        spellcheck={false}
-                        value={detailText()}
-                        onInput={(e) => setDetailText(e.currentTarget.value)}
-                      />
-                    }
-                  >
-                    <JsonEditor value={detailText()} onInput={setDetailText} />
-                  </Show>
+                <div class="flex-1 min-h-0 p-2">
+                  {/* Transparent textarea over a coloured <pre>: the <pre>
+                      paints search marks / JSON syntax, the textarea owns the
+                      caret + scroll. Scroll synced textarea→pre on scroll. */}
+                  <div class="relative w-full h-full bg-bg border border-border rounded overflow-hidden focus-within:border-accent">
+                    <pre
+                      ref={detailPreRef}
+                      aria-hidden="true"
+                      class="absolute inset-0 m-0 px-2 py-1 text-xs font-mono leading-snug whitespace-pre-wrap break-words overflow-auto pointer-events-none text-fg"
+                    >
+                      {detailOverlay()}
+                    </pre>
+                    <textarea
+                      ref={detailTaRef}
+                      class="absolute inset-0 w-full h-full bg-transparent px-2 py-1 text-xs font-mono leading-snug whitespace-pre-wrap break-words resize-none overflow-auto text-transparent caret-fg outline-none"
+                      spellcheck={false}
+                      value={detailText()}
+                      onInput={(e) => setDetailText(e.currentTarget.value)}
+                      onScroll={() => {
+                        if (detailPreRef && detailTaRef) {
+                          detailPreRef.scrollTop = detailTaRef.scrollTop;
+                          detailPreRef.scrollLeft = detailTaRef.scrollLeft;
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
