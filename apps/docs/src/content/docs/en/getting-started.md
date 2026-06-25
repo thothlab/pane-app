@@ -351,8 +351,10 @@ What's inside:
 - **Search** (`⌘F`) — a separate input next to the filter: a plain
   substring search that **highlights** matches across every visible
   column (time, app, tag, message) and does **not** narrow the rows
-  (that's the filter's job). Handy for spotting a specific word in
-  whatever is already on screen.
+  (that's the filter's job). **Enter** jumps to the next match (down),
+  **Shift+Enter** to the previous (up); the current row gets a ring and
+  an `i/N` counter sits in the box. Handy for spotting a specific word
+  in whatever is already on screen.
 - **Status bar** at the foot of the window: `Viewing N of M`
   (`M+` means the buffer has hit MAX_ENTRIES = 100k and older entries
   are being dropped FIFO).

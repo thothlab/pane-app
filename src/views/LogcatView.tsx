@@ -649,6 +649,57 @@ const LogcatView: Component = () => {
 
   const visible = createMemo(() => entries().filter(filterPredicate()));
 
+  // ── Search match navigation (Enter ↓ / Shift+Enter ↑) ─────────────
+  // Indices into visible() of rows that contain the term in ANY visible
+  // column. Drives the i/m counter, the current-row marker, and the
+  // jump — it does NOT filter (visible() already ignores search).
+  const rowMatchesSearch = (
+    e: LogEntry,
+    term: string,
+    names: Map<number, Set<string>>,
+  ): boolean => {
+    if (e.tag.toLowerCase().includes(term)) return true;
+    if (e.message.toLowerCase().includes(term)) return true;
+    if (String(e.pid).includes(term)) return true;
+    if (e.timestamp.toLowerCase().includes(term)) return true;
+    const set = names.get(e.pid);
+    if (set) for (const n of set) if (n.toLowerCase().includes(term)) return true;
+    return false;
+  };
+  const searchMatchRows = createMemo<number[]>(() => {
+    const term = searchLower();
+    if (!term) return [];
+    const names = pidNames();
+    const v = visible();
+    const out: number[] = [];
+    for (let i = 0; i < v.length; i++) {
+      if (rowMatchesSearch(v[i]!, term, names)) out.push(i);
+    }
+    return out;
+  });
+  // -1 = nothing navigated yet (so the first Enter lands on match 0).
+  const [searchCur, setSearchCur] = createSignal(-1);
+  const currentMatchRow = createMemo(() => {
+    const c = searchCur();
+    return c >= 0 ? (searchMatchRows()[c] ?? -1) : -1;
+  });
+  // Jump to the next (dir +1) / previous (dir -1) match, wrapping. Pauses
+  // Tail so the view holds on the match instead of snapping back to bottom.
+  const gotoSearchMatch = (dir: 1 | -1) => {
+    const rows = searchMatchRows();
+    if (rows.length === 0) return;
+    const cur = searchCur();
+    const next =
+      cur < 0
+        ? dir === 1
+          ? 0
+          : rows.length - 1
+        : ((cur + dir) % rows.length + rows.length) % rows.length;
+    setSearchCur(next);
+    setAutoScroll(false);
+    virtualizer.scrollToIndex(rows[next]!, { align: "center" });
+  };
+
   // Poll PID → process-name snapshot. 10s cadence is enough — process
   // launches/exits are infrequent on a Logcat-watch timescale, and
   // `ps -A` is ~50ms over USB so cost is negligible.
@@ -1683,19 +1734,25 @@ const LogcatView: Component = () => {
         {/* Substring search — sits next to the DSL filter so the two are
             visually paired. Narrower than the filter (max-w-xs) since
             it's a simple term, not a query. Clears on Esc. */}
-        <div class="relative flex items-center bg-bg-muted rounded focus-within:ring-1 focus-within:ring-accent w-48">
+        <div class="relative flex items-center bg-bg-muted rounded focus-within:ring-1 focus-within:ring-accent w-56">
           <SearchIcon size={12} class="text-fg-muted shrink-0 ml-2" />
           <input
             ref={(el) => (searchInputRef = el)}
             type="text"
-            class="w-full bg-transparent rounded px-2 py-1 pr-7 outline-none text-xs font-mono"
+            class="w-full bg-transparent rounded px-2 py-1 pr-16 outline-none text-xs font-mono"
             placeholder={tr("logcat.search_placeholder", {
               hotkey: SEARCH_HOTKEY_LABEL,
             })}
             value={search()}
-            onInput={(e) => setSearch(e.currentTarget.value)}
+            onInput={(e) => {
+              setSearch(e.currentTarget.value);
+              setSearchCur(-1);
+            }}
             onKeyDown={(e) => {
-              if (e.key === "Escape" && search()) {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                gotoSearchMatch(e.shiftKey ? -1 : 1);
+              } else if (e.key === "Escape" && search()) {
                 e.preventDefault();
                 setSearch("");
               }
@@ -1707,6 +1764,11 @@ const LogcatView: Component = () => {
             spellcheck={false}
           />
           <Show when={search()}>
+            <span class="absolute right-7 text-[10px] text-fg-muted tabular-nums pointer-events-none">
+              {searchMatchRows().length
+                ? `${searchCur() < 0 ? 0 : searchCur() + 1}/${searchMatchRows().length}`
+                : "0/0"}
+            </span>
             <button
               type="button"
               class="absolute right-1 inset-y-0 my-auto h-5 w-5 inline-flex items-center justify-center rounded text-fg-muted hover:text-fg hover:bg-bg-subtle"
@@ -1890,6 +1952,10 @@ const LogcatView: Component = () => {
                             selected().has(entry())
                               ? "bg-accent/25"
                               : "hover:bg-bg-muted/40"
+                          } ${
+                            vi.index === currentMatchRow()
+                              ? "ring-1 ring-inset ring-accent"
+                              : ""
                           } ${LEVEL_ROW_COLOR[entry().level]}`}
                           style={{
                             transform: `translateY(${vi.start}px)`,
