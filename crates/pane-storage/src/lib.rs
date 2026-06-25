@@ -19,7 +19,8 @@ use base64::Engine as _;
 use pane_ipc::{
     CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionUpsertArgs, ExportOneResult,
     FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs, RuleCollectionDto, RuleDto,
-    RuleHeaderDto, RuleParamDto, RulePatchOpDto, RuleSetEnabledArgs, RuleUpsertArgs,
+    RuleHeaderDto, RuleParamDto, RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs,
+    RuleUpsertArgs,
     SaveFilterArgs, SessionDto,
 };
 use parking_lot::Mutex;
@@ -817,6 +818,16 @@ impl Storage {
         conn.execute(
             "UPDATE rule SET enabled=?1, updated_at=?2 WHERE id=?3",
             params![args.enabled as i64, now, args.id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_rule_priority(&self, args: RuleSetPriorityArgs) -> Result<()> {
+        let conn = self.conn.lock();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        conn.execute(
+            "UPDATE rule SET priority=?1, updated_at=?2 WHERE id=?3",
+            params![args.priority, now, args.id.to_string()],
         )?;
         Ok(())
     }

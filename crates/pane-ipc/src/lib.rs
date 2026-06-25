@@ -360,6 +360,12 @@ pub struct RuleSetEnabledArgs {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleSetPriorityArgs {
+    pub id: Uuid,
+    pub priority: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleCollectionDto {
     pub id: Uuid,
     pub name: String,

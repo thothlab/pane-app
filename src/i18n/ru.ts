@@ -202,6 +202,8 @@ const ru: Dict = {
     export_all_title: "Сохранить все коллекции и правила в .json",
     export_collection_title: "Экспортировать коллекцию",
     export_rule_title: "Экспортировать правило",
+    duplicate_rule_title: "Дублировать правило",
+    copy_suffix: " - копия",
     export_failed: "Экспорт не удался: {{message}}",
     import_invalid: "Файл не похож на экспорт Pane: {{message}}",
     import_failed: "Импорт не удался: {{message}}",

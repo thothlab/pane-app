@@ -204,6 +204,8 @@ const en = {
     export_all_title: "Export every collection and rule to a .json file",
     export_collection_title: "Export this collection",
     export_rule_title: "Export this rule",
+    duplicate_rule_title: "Duplicate this rule",
+    copy_suffix: " - copy",
     export_failed: "Export failed: {{message}}",
     import_invalid: "This file isn't a Pane rules export: {{message}}",
     import_failed: "Import failed: {{message}}",

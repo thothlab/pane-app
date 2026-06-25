@@ -55,6 +55,7 @@ pane-pinning.workspace = true
 # the working version regardless of cache state. Drop this when
 # brotli/alloc-stdlib publish a compatible pair.
 alloc-stdlib = "=0.2.2"
+tauri-plugin-window-state = "2.4.1"
 
 [features]
 default = ["custom-protocol"]

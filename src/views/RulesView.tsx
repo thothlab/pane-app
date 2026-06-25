@@ -3,6 +3,7 @@ import {
   Plus,
   Trash2,
   Pencil,
+  Copy,
   Shuffle,
   X,
   Check,
@@ -214,6 +215,16 @@ const RulesView: Component = () => {
     await refresh();
   };
 
+  // Reflect an enabled toggle that an open RuleEditor already persisted. We
+  // mutate the matching rule in place (keeping its object identity so the
+  // <For> doesn't remount the open editor) and hand back a fresh array so the
+  // collection-header tri-state memo recomputes.
+  const syncRuleEnabled = (id: string, enabled: boolean) => {
+    setRules((prev) =>
+      prev.map((r) => (r.id === id ? Object.assign(r, { enabled }) : r)),
+    );
+  };
+
   // Bulk-toggle every rule in `list` to `targetEnabled`. Issues only the
   // changes that actually differ from the current state, in parallel,
   // then refreshes once. The backend has no batch endpoint for this, so
@@ -242,6 +253,34 @@ const RulesView: Component = () => {
       match_method: r.match_method,
       match_path_glob: r.match_path_glob,
       match_params: r.match_params,
+      res_status: r.res_status,
+      res_headers: r.res_headers,
+      res_body_id: r.res_body_id,
+      res_body_base64: null,
+      res_body_mime: r.res_body_mime,
+      res_delay_ms: r.res_delay_ms,
+    });
+    await refresh();
+  };
+
+  // Clone a rule in place: same collection, same everything, name suffixed
+  // with " - copy"/" - копия". The stored body is shared by id (storage
+  // dedupes bodies by sha256, so referencing res_body_id is safe — no
+  // re-upload). Keeping the source priority lands the copy right next to
+  // the original in the list.
+  const duplicateRule = async (r: RuleDto) => {
+    await api.rules.upsert({
+      collection_id: r.collection_id,
+      name: `${r.name || "Unnamed rule"}${t()("rules.copy_suffix")}`,
+      enabled: r.enabled,
+      priority: r.priority,
+      mode: r.mode,
+      patches: r.patches,
+      match_host_glob: r.match_host_glob,
+      match_method: r.match_method,
+      match_path_glob: r.match_path_glob,
+      match_params: r.match_params,
+      match_req_body: r.match_req_body,
       res_status: r.res_status,
       res_headers: r.res_headers,
       res_body_id: r.res_body_id,
@@ -374,6 +413,45 @@ const RulesView: Component = () => {
     await moveRule(rule, targetCollectionId);
   };
 
+  // Drop a dragged rule directly onto another rule to reorder it within the
+  // same collection. Rule order *is* match precedence (engine takes the first
+  // match in priority order), so this lets the user promote/demote a rule by
+  // hand. Cross-collection drops still fall through to moveRule — reordering
+  // is intentionally a within-list operation.
+  const reorderRule = async (
+    draggedId: string,
+    targetId: string,
+    position: "before" | "after",
+  ) => {
+    setDraggingRuleId(null);
+    setDragOverKey(null);
+    if (draggedId === targetId) return;
+    const dragged = rules().find((r) => r.id === draggedId);
+    const target = rules().find((r) => r.id === targetId);
+    if (!dragged || !target) return;
+    if (dragged.collection_id !== target.collection_id) {
+      // Different collection — keep the existing "move into this collection"
+      // semantics; positional sort is left to a follow-up drag within it.
+      await moveRule(dragged, target.collection_id);
+      return;
+    }
+    const sectionKey = dragged.collection_id ?? UNGROUPED_KEY;
+    const current = rulesByCollection().get(sectionKey) ?? [];
+    const ordered = current.map((r) => r.id).filter((rid) => rid !== draggedId);
+    const targetIdx = ordered.indexOf(targetId);
+    if (targetIdx < 0) return;
+    ordered.splice(position === "after" ? targetIdx + 1 : targetIdx, 0, draggedId);
+    // Renumber to a dense 0..N-1 sequence, but only persist the rows whose
+    // priority actually changes (mirrors toggleCollection's diff-then-fan-out).
+    const priorityOf = new Map(current.map((r) => [r.id, r.priority]));
+    const changed = ordered
+      .map((rid, idx) => ({ rid, idx }))
+      .filter(({ rid, idx }) => priorityOf.get(rid) !== idx);
+    if (changed.length === 0) return;
+    await Promise.all(changed.map(({ rid, idx }) => api.rules.setPriority(rid, idx)));
+    await refresh();
+  };
+
   return (
     <div class="h-full grid grid-rows-[auto_1fr]">
       <header class="border-b border-border bg-bg-subtle px-4 py-3 flex items-center gap-3">
@@ -455,12 +533,15 @@ const RulesView: Component = () => {
               onExportRule={exportRule}
               onAddRule={() => startNewRule(c.id)}
               onEditRule={startEditRule}
+              onCopyRule={duplicateRule}
+              onReorderRule={reorderRule}
               onToggleRule={toggleRule}
               onToggleCollection={(en) => toggleCollection(rulesByCollection().get(c.id) ?? [], en)}
               onDeleteRule={removeRule}
               editing={editing()}
               onSaved={onRuleSaved}
               onCancel={cancelEdit}
+              onLiveSync={syncRuleEnabled}
                   onStartRename={startRename}
               renamingId={renamingId()}
               renamingName={renamingName()}
@@ -486,12 +567,15 @@ const RulesView: Component = () => {
           onExportRule={exportRule}
           onAddRule={() => startNewRule(null)}
           onEditRule={startEditRule}
+          onCopyRule={duplicateRule}
+          onReorderRule={reorderRule}
           onToggleRule={toggleRule}
           onToggleCollection={(en) => toggleCollection(rulesByCollection().get(UNGROUPED_KEY) ?? [], en)}
           onDeleteRule={removeRule}
           editing={editing()}
           onSaved={onRuleSaved}
           onCancel={cancelEdit}
+          onLiveSync={syncRuleEnabled}
           onStartRename={startRename}
           renamingId={renamingId()}
           renamingName={renamingName()}
@@ -527,12 +611,15 @@ const CollectionSection: Component<{
   onDelete?: () => void;
   onAddRule: () => void;
   onEditRule: (r: RuleDto) => void;
+  onCopyRule: (r: RuleDto) => void;
+  onReorderRule: (draggedId: string, targetId: string, position: "before" | "after") => void;
   onToggleRule: (r: RuleDto) => void;
   onToggleCollection: (enable: boolean) => void;
   onDeleteRule: (r: RuleDto) => void;
   editing: Editing;
   onSaved: (r: RuleDto) => void;
   onCancel: () => void;
+  onLiveSync: (id: string, enabled: boolean) => void;
   onStartRename: (c: RuleCollectionDto) => void;
   onExportCollection?: () => void;
   onExportRule: (r: RuleDto) => void;
@@ -717,10 +804,14 @@ const CollectionSection: Component<{
                     isDragging={p.draggingRuleId === rule.id}
                     onToggle={() => p.onToggleRule(rule)}
                     onEdit={() => p.onEditRule(rule)}
+                    onCopy={() => p.onCopyRule(rule)}
                     onExport={() => p.onExportRule(rule)}
                     onDelete={() => p.onDeleteRule(rule)}
                     onDragStart={() => p.onDragStartRule(rule.id)}
                     onDragEnd={p.onDragEndRule}
+                    onReorder={(draggedId, position) =>
+                      p.onReorderRule(draggedId, rule.id, position)
+                    }
                   />
                 }
               >
@@ -729,6 +820,7 @@ const CollectionSection: Component<{
                   defaultCollectionId={rule.collection_id}
                   onCancel={p.onCancel}
                   onSaved={p.onSaved}
+                  onLiveSync={p.onLiveSync}
                 />
               </Show>
             )}
@@ -744,12 +836,17 @@ const RuleRow: Component<{
   isDragging: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  onCopy: () => void;
   onExport: () => void;
   onDelete: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
+  onReorder: (draggedId: string, position: "before" | "after") => void;
 }> = (p) => {
   const effectivelyOn = () => p.rule.enabled;
+  // Which edge the dragged row would drop against, or null when nothing is
+  // hovering this row. Drives the insertion indicator line.
+  const [dropEdge, setDropEdge] = createSignal<"before" | "after" | null>(null);
   const summary = () => {
     const r = p.rule;
     const m = r.match_method ?? "ANY";
@@ -771,9 +868,47 @@ const RuleRow: Component<{
         }
         p.onDragStart();
       }}
-      onDragEnd={p.onDragEnd}
-      class={`border rounded p-2 flex items-start gap-3 cursor-move ${effectivelyOn() ? "border-border bg-bg" : "border-border/50 bg-bg-subtle/30 opacity-70"} ${p.isDragging ? "opacity-40" : ""}`}
+      onDragEnd={() => {
+        setDropEdge(null);
+        p.onDragEnd();
+      }}
+      onDragOver={(e) => {
+        // A rule is being dragged over this row — claim the drop for
+        // reordering (the section's own drop is for moving between
+        // collections). Pick the edge by which half the pointer is in.
+        if (p.isDragging) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        const rect = e.currentTarget.getBoundingClientRect();
+        setDropEdge(e.clientY < rect.top + rect.height / 2 ? "before" : "after");
+      }}
+      onDragLeave={(e) => {
+        const related = e.relatedTarget as Node | null;
+        if (!related || !(e.currentTarget as Node).contains(related)) {
+          setDropEdge(null);
+        }
+      }}
+      onDrop={(e) => {
+        const edge = dropEdge();
+        setDropEdge(null);
+        if (p.isDragging || !edge) return;
+        e.preventDefault();
+        // Stop the section's onDrop from also firing — that would move the
+        // rule between collections on top of the reorder.
+        e.stopPropagation();
+        const draggedId = e.dataTransfer?.getData("text/plain");
+        if (draggedId) p.onReorder(draggedId, edge);
+      }}
+      class={`relative border rounded p-2 flex items-start gap-3 cursor-move ${effectivelyOn() ? "border-border bg-bg" : "border-border/50 bg-bg-subtle/30 opacity-70"} ${p.isDragging ? "opacity-40" : ""}`}
     >
+      <Show when={dropEdge()}>
+        {(edge) => (
+          <div
+            class={`pointer-events-none absolute inset-x-1 h-0.5 bg-accent rounded ${edge() === "before" ? "-top-px" : "-bottom-px"}`}
+          />
+        )}
+      </Show>
       <div class="mt-0.5">
         <Checkbox
           state={p.rule.enabled ? "on" : "off"}
@@ -798,6 +933,13 @@ const RuleRow: Component<{
           onClick={p.onEdit}
         >
           <Pencil size={12} />
+        </button>
+        <button
+          class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-fg-muted"
+          title={t()("rules.duplicate_rule_title")}
+          onClick={p.onCopy}
+        >
+          <Copy size={12} />
         </button>
         <button
           class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-fg-muted"
@@ -979,7 +1121,7 @@ const JsonFieldEditor: Component<{
           {expanded() ? "Collapse" : "Expand"}
         </button>
       </div>
-      <div class={`w-full ${expanded() ? "h-[70vh] min-h-[400px]" : "h-48 min-h-32"}`}>
+      <div class={`w-full ${expanded() ? "h-[70vh] min-h-[400px]" : "h-28 min-h-20"}`}>
         <JsonEditor
           value={p.value}
           onInput={p.onInput}
@@ -1018,6 +1160,10 @@ const RuleEditor: Component<{
   defaultCollectionId: string | null;
   onCancel: () => void;
   onSaved: (saved: RuleDto) => void;
+  // Reflect a live (non-Save) enabled toggle in the parent list so the
+  // collection-header switch re-renders in sync — without remounting this
+  // open editor (a full refetch would, and could race the async body load).
+  onLiveSync?: (id: string, enabled: boolean) => void;
 }> = (p) => {
   // Stable storage key for this editor instance. Drafts are persisted
   // per-(rule|new+collection) so switching between two rules doesn't
@@ -1127,6 +1273,30 @@ const RuleEditor: Component<{
     p.onCancel();
   };
 
+  // The `enabled` flag behaves like the standalone RuleRow checkbox: for an
+  // already-saved rule it commits immediately so the collapsed row and the
+  // collection-header tri-state switch reflect it at once, without waiting
+  // for a full Save of the open draft. A brand-new (unsaved) rule has no row
+  // to sync yet, so it just rides along in the draft until first Save.
+  const toggleEnabled = async (checked: boolean) => {
+    const id = d().id;
+    if (!id) {
+      patch({ enabled: checked });
+      return;
+    }
+    // Keep the draft in lockstep but don't mark it dirty — the change is
+    // persisted below, so the Save button shouldn't flag it as unsaved.
+    const next = { ...d(), enabled: checked };
+    setD(next);
+    saveRuleDraft(draftKey, next);
+    try {
+      await api.rules.setEnabled(id, checked);
+      p.onLiveSync?.(id, checked);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    }
+  };
+
   const save = async () => {
     setBusy(true);
     setErr(null);
@@ -1201,7 +1371,7 @@ const RuleEditor: Component<{
           <input {...NO_AC}
             type="checkbox"
             checked={d().enabled}
-            onChange={(e) => patch({ enabled: e.currentTarget.checked })}
+            onChange={(e) => toggleEnabled(e.currentTarget.checked)}
           />
           {t()("rules.enabled_label")}
         </label>

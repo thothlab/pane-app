@@ -26,6 +26,15 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        // Persist & restore the main window's size and position across
+        // launches. Scoped to the "main" window via with_filter so the
+        // per-device logcat windows (label "logcat-{serial}") keep their
+        // own fixed 1100x720 first-open geometry from logcat_open.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_filter(|label| label == "main")
+                .build(),
+        )
         .manage(app_state)
         // LogcatSessions tracks one shutdown-sender per open logcat
         // window so a second click on the Logcat button can detect
@@ -72,6 +81,7 @@ pub fn run() {
             commands::rules::rule_upsert,
             commands::rules::rule_delete,
             commands::rules::rule_set_enabled,
+            commands::rules::rule_set_priority,
             commands::rules::collections_list,
             commands::rules::collection_upsert,
             commands::rules::collection_delete,
