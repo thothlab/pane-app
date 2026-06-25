@@ -12,6 +12,7 @@
  */
 
 import { type Component } from "solid-js";
+import { t } from "@/i18n";
 
 export const VerticalResizer: Component<{
   onResize: (deltaX: number) => void;
@@ -42,7 +43,7 @@ export const VerticalResizer: Component<{
       class="group relative w-1.5 cursor-col-resize self-stretch z-10"
       onMouseDown={start}
       onDblClick={props.onReset}
-      title={props.title ?? "Drag to resize · double-click to reset"}
+      title={props.title ?? t()("common.resize_title")}
     >
       <div class="absolute inset-y-0 right-1/2 w-px bg-border group-hover:bg-accent group-active:bg-accent" />
     </div>

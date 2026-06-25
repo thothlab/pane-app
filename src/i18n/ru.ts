@@ -142,6 +142,22 @@ const ru: Dict = {
     replay: "Повтор",
     curl: "cURL",
     select_capture: "Выберите запись чтобы увидеть детали.",
+    id: "ID",
+    version: "Версия",
+    total: "Итого",
+    pinning_detected: "Обнаружен certificate pinning",
+    pinning_body:
+      "{{host}} использует certificate pinning. Просмотр невозможен без обхода на устройстве (напр. Frida). Для своих приложений отключите pinning в debug-сборке.",
+    learn_more: "Подробнее",
+    tls_note:
+      "Подробная информация о TLS требует расшифрованного TLS-пути движка. CONNECT-туннели захватывают только метаданные хоста.",
+    timing_note:
+      "Разбивка по фазам (DNS/connect/TLS/send/wait/receive) проброшена через timing-события движка; заполнится, когда появится расшифрованный TLS-путь.",
+    expand_headers: "Развернуть заголовки",
+    collapse_headers: "Свернуть заголовки",
+    copy_header_name: "Скопировать имя заголовка",
+    copy_header_value: "Скопировать значение заголовка",
+    copy_header_pair: "Скопировать «name: value»",
     method: "Метод",
     url: "URL",
     status: "Статус",
@@ -183,6 +199,18 @@ const ru: Dict = {
     copy_path: "Копировать путь",
     expand_all: "Развернуть всё",
     collapse_all: "Свернуть всё",
+    label: "Тело",
+    truncated: "обрезано",
+    load_full: "Загрузить целиком",
+    load_full_title: "Загрузить остаток тела",
+    truncated_warning:
+      "Тело обрезано — показана только первая часть. Дерево/Формат. могут быть недоступны, пока тело не загружено полностью.",
+    binary_inline: "<бинарное, {{size}} байт>",
+    tree_unavailable:
+      "JSON-дерево недоступно: тело обрезано на середине. Нажмите «Загрузить целиком», чтобы догрузить остаток, или переключитесь на «Исходный».",
+    node_expand: "Развернуть",
+    node_collapse: "Свернуть",
+    children_count: "{{count}} элементов",
   },
   rules: {
     title: "Правила",
@@ -273,6 +301,11 @@ const ru: Dict = {
     json_collapse_title: "Свернуть редактор",
     json_body_empty: "Тело пустое",
     json_invalid: "Невалидный JSON",
+    empty_state:
+      "Пока нет правил и коллекций. Создайте коллекцию для группировки моков или добавьте правило без группы.",
+    empty_collection: "В этой коллекции нет правил.",
+    summary_no_body: "нет тела",
+    summary_delay: "задержка",
     response_section: "Ответ",
     status_label: "Статус",
     headers_label: "Заголовки",
@@ -396,6 +429,8 @@ const ru: Dict = {
     response_section: "Ответ",
     history_section: "История",
     no_history: "Пока нет повторов.",
+    header_name_placeholder: "Имя",
+    header_value_placeholder: "Значение",
   },
   settings: {
     title: "Настройки",
@@ -462,6 +497,7 @@ const ru: Dict = {
     delete: "Удалить",
     edit: "Изменить",
     close: "Закрыть",
+    resize_title: "Перетащите чтобы изменить размер · двойной клик чтобы сбросить",
   },
 };
 

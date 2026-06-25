@@ -84,17 +84,17 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
       */}
       <div class="sticky top-0 z-10 bg-bg px-3 py-2 flex items-center gap-2 text-fg-muted">
         <span>
-          Body · {p.body.mime ?? "?"} · {p.body.total_size}B
-          <Show when={p.body.truncated}> · truncated</Show>
+          {t()("body.label")} · {p.body.mime ?? "?"} · {p.body.total_size}B
+          <Show when={p.body.truncated}> · {t()("body.truncated")}</Show>
         </span>
         <div class="ml-auto flex items-center gap-1">
           <Show when={p.body.truncated && p.onLoadFull}>
             <button
               class="text-xs px-2 py-1 rounded border border-warn/40 text-warn hover:bg-warn/10"
-              title="Fetch the rest of the body"
+              title={t()("body.load_full_title")}
               onClick={() => p.onLoadFull!()}
             >
-              Load full ({Math.ceil(p.body.total_size / 1024)} KB)
+              {t()("body.load_full")} ({Math.ceil(p.body.total_size / 1024)} KB)
             </button>
           </Show>
           <ModeToggle mode={mode()} setMode={setMode} kind={kind()} />
@@ -118,12 +118,12 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
       <div class="px-3 pb-2">
         <Show when={p.body.truncated}>
           <div class="mb-2 px-2 py-1 rounded bg-warn/10 text-warn border border-warn/30 text-xs">
-            Body truncated — showing first part only. Tree/Pretty view may be unavailable until full body is loaded.
+            {t()("body.truncated_warning")}
           </div>
         </Show>
 
         <Show when={text() === null}>
-          <div class="text-fg-muted italic">&lt;binary, {p.body.total_size} bytes&gt;</div>
+          <div class="text-fg-muted italic">{t()("body.binary_inline", { size: String(p.body.total_size) })}</div>
         </Show>
 
         <Show when={text() !== null}>
@@ -210,10 +210,7 @@ const JsonTree: Component<{ raw: string; truncated: boolean }> = (p) => {
               </div>
             }
           >
-            <div class="text-fg-muted">
-              JSON tree unavailable: body is truncated mid-document. Click "Load full" to fetch the
-              rest, or switch to Raw.
-            </div>
+            <div class="text-fg-muted">{t()("body.tree_unavailable")}</div>
           </Show>
           <pre class="whitespace-pre-wrap break-all leading-snug mt-2 text-fg">{p.raw}</pre>
         </div>
@@ -235,20 +232,20 @@ type JsonNodeProps = {
 };
 
 const JsonNode: Component<JsonNodeProps> = (p) => {
-  const t = jsonTypeOf(p.value);
-  const isContainer = t === "object" || t === "array";
+  const vtype = jsonTypeOf(p.value);
+  const isContainer = vtype === "object" || vtype === "array";
   const [open, setOpen] = createSignal(p.depth < 1);
 
   const keys = createMemo<string[]>(() => {
-    if (t === "object") return Object.keys(p.value as Record<string, unknown>);
-    if (t === "array") return (p.value as unknown[]).map((_, i) => String(i));
+    if (vtype === "object") return Object.keys(p.value as Record<string, unknown>);
+    if (vtype === "array") return (p.value as unknown[]).map((_, i) => String(i));
     return [];
   });
   const count = () => keys().length;
 
   const previewSummary = () => {
-    if (t === "array") return `Array(${count()})`;
-    if (t === "object") return `Object{${count()}}`;
+    if (vtype === "array") return `Array(${count()})`;
+    if (vtype === "object") return `Object{${count()}}`;
     return "";
   };
 
@@ -258,7 +255,7 @@ const JsonNode: Component<JsonNodeProps> = (p) => {
         <button
           class="w-3 h-4 flex items-center justify-center text-fg-muted shrink-0"
           onClick={() => isContainer && setOpen(!open())}
-          aria-label={open() ? "Collapse" : "Expand"}
+          aria-label={open() ? t()("body.node_collapse") : t()("body.node_expand")}
           disabled={!isContainer}
         >
           <Show when={isContainer}>
@@ -279,12 +276,12 @@ const JsonNode: Component<JsonNodeProps> = (p) => {
           >
             <Show
               when={!open()}
-              fallback={<span class="text-fg-muted">{t === "array" ? "[" : "{"}</span>}
+              fallback={<span class="text-fg-muted">{vtype === "array" ? "[" : "{"}</span>}
             >
               <span class="text-fg-muted">
-                {t === "array" ? "[" : "{"}
+                {vtype === "array" ? "[" : "{"}
                 <span class="mx-1 italic text-fg-muted/70">{previewSummary()}</span>
-                {t === "array" ? "]" : "}"}
+                {vtype === "array" ? "]" : "}"}
                 <Show when={!p.isLast}>,</Show>
               </span>
             </Show>
@@ -305,13 +302,13 @@ const JsonNode: Component<JsonNodeProps> = (p) => {
           <For each={keys()}>
             {(k, i) => {
               const childValue =
-                t === "object"
+                vtype === "object"
                   ? (p.value as Record<string, unknown>)[k]
                   : (p.value as unknown[])[Number(k)];
-              const childPath = t === "array" ? `${p.path}[${k}]` : `${p.path}.${k}`;
+              const childPath = vtype === "array" ? `${p.path}[${k}]` : `${p.path}.${k}`;
               return (
                 <JsonNode
-                  name={t === "object" ? k : k}
+                  name={vtype === "object" ? k : k}
                   value={childValue}
                   path={childPath}
                   depth={p.depth + 1}
@@ -322,7 +319,7 @@ const JsonNode: Component<JsonNodeProps> = (p) => {
           </For>
         </div>
         <div class="ml-4 text-fg-muted">
-          {t === "array" ? "]" : "}"}
+          {vtype === "array" ? "]" : "}"}
           <Show when={!p.isLast}>,</Show>
         </div>
       </Show>
@@ -457,7 +454,7 @@ const XmlNode: Component<{ node: Node; depth: number }> = (p) => {
             <button
               class="w-3 h-4 flex items-center justify-center text-fg-muted shrink-0"
               onClick={() => hasChildren() && setOpen(!open())}
-              aria-label={open() ? "Collapse" : "Expand"}
+              aria-label={open() ? t()("body.node_collapse") : t()("body.node_expand")}
               disabled={!hasChildren()}
             >
               <Show when={hasChildren()}>
@@ -481,7 +478,7 @@ const XmlNode: Component<{ node: Node; depth: number }> = (p) => {
               <Show when={hasChildren() && !onlyText()}>
                 {renderTagOpen(false)}
                 <Show when={!open()}>
-                  <span class="mx-1 italic text-fg-muted/70">… {children().length} children</span>
+                  <span class="mx-1 italic text-fg-muted/70">… {t()("body.children_count", { count: String(children().length) })}</span>
                   <span class="text-fg-muted">&lt;/</span>
                   <span class="text-accent">{el()!.tagName}</span>
                   <span class="text-fg-muted">&gt;</span>
@@ -566,7 +563,7 @@ const CopyButton: Component<{ getText: () => string; getPath: () => string }> = 
     <div class="opacity-0 group-hover:opacity-100 flex items-center gap-1 shrink-0">
       <button
         class="text-[10px] px-1 py-0.5 rounded hover:bg-bg-muted text-fg-muted"
-        title="Copy path"
+        title={t()("body.copy_path")}
         onClick={(e) => {
           e.stopPropagation();
           void writeClipboard(p.getPath());
@@ -578,7 +575,7 @@ const CopyButton: Component<{ getText: () => string; getPath: () => string }> = 
       </button>
       <button
         class="text-fg-muted hover:text-fg p-0.5 rounded"
-        title="Copy value"
+        title={t()("body.copy_value")}
         onClick={(e) => {
           e.stopPropagation();
           void writeClipboard(p.getText());

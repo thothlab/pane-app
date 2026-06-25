@@ -1,4 +1,5 @@
 import { type Component } from "solid-js";
+import { t } from "@/i18n";
 
 export const HorizontalResizer: Component<{
   onResize: (deltaY: number) => void;
@@ -29,7 +30,7 @@ export const HorizontalResizer: Component<{
       class="group relative h-1.5 cursor-row-resize self-stretch z-10"
       onMouseDown={start}
       onDblClick={() => props.onReset?.()}
-      title={props.title ?? "Drag to resize · double-click to reset"}
+      title={props.title ?? t()("common.resize_title")}
     >
       <div class="absolute inset-x-0 top-1/2 h-px bg-border group-hover:bg-accent group-active:bg-accent" />
     </div>

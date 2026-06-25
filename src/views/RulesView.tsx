@@ -651,8 +651,7 @@ const RulesView: Component = () => {
 
         <Show when={!loading() && rules().length === 0 && collections().length === 0}>
           <div class="text-center text-fg-muted text-sm py-12">
-            No rules or collections yet. Create a collection to organize stubs, or add an Ungrouped
-            rule.
+            {t()("rules.empty_state")}
           </div>
         </Show>
       </div>
@@ -929,7 +928,7 @@ const CollectionSection: Component<{
           </Show>
 
           <Show when={p.rules.length === 0 && !editingNewHere()}>
-            <div class="text-xs text-fg-muted italic px-2 py-2">No rules in this collection.</div>
+            <div class="text-xs text-fg-muted italic px-2 py-2">{t()("rules.empty_collection")}</div>
           </Show>
 
           <For each={p.rules}>
@@ -1065,8 +1064,8 @@ const RuleRow: Component<{
         </div>
         <div class="text-xs font-mono text-fg-subtle truncate mt-0.5">{summary()}</div>
         <div class="text-xs text-fg-muted mt-0.5">
-          → {p.rule.res_status} · {p.rule.res_body_mime ?? "no body"} · {p.rule.res_body_size}B
-          <Show when={p.rule.res_delay_ms > 0}> · delay {p.rule.res_delay_ms}ms</Show>
+          → {p.rule.res_status} · {p.rule.res_body_mime ?? t()("rules.summary_no_body")} · {p.rule.res_body_size}B
+          <Show when={p.rule.res_delay_ms > 0}> · {t()("rules.summary_delay")} {p.rule.res_delay_ms}ms</Show>
         </div>
       </div>
       <div class="flex items-center gap-1 shrink-0">

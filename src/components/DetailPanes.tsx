@@ -94,28 +94,27 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
           <Show when={isPinning()}>
             <div class="mx-3 mt-3 mb-0 p-3 rounded border border-warn/40 bg-warn/10 text-warn">
               <div class="flex items-center gap-2 font-semibold">
-                <Lock size={14} /> Cert pinning detected
+                <Lock size={14} /> {t()("detail.pinning_detected")}
               </div>
               <p class="text-fg-subtle mt-1">
-                {full()?.server_host} uses certificate pinning. Inspection isn't possible without
-                bypassing it on the device (e.g. Frida). For your own apps, disable pinning in the
-                debug build. <a class="underline" href="/about">Learn more</a>
+                {t()("detail.pinning_body", { host: full()?.server_host ?? "" })}{" "}
+                <a class="underline" href="/about">{t()("detail.learn_more")}</a>
               </p>
             </div>
           </Show>
 
           <Show when={tab() === "overview"}>
             <div class="overflow-auto p-3 flex-1 min-h-0">
-              <Row k="ID">{full()!.id}</Row>
-              <Row k="Method">{full()!.method}</Row>
-              <Row k="URL">{`${full()!.scheme}://${full()!.server_host}:${full()!.server_port}${full()!.url_path}`}</Row>
-              <Row k="Status">{full()!.status ?? "—"}</Row>
+              <Row k={t()("detail.id")}>{full()!.id}</Row>
+              <Row k={t()("detail.method")}>{full()!.method}</Row>
+              <Row k={t()("detail.url")}>{`${full()!.scheme}://${full()!.server_host}:${full()!.server_port}${full()!.url_path}`}</Row>
+              <Row k={t()("detail.status")}>{full()!.status ?? "—"}</Row>
               <Row k="HTTP">{full()!.http_version}</Row>
-              <Row k="State">{full()!.state}</Row>
-              <Row k="Error">{full()!.error_kind ?? "—"}</Row>
-              <Row k="Started">{full()!.started_at}</Row>
-              <Row k="Duration">{full()!.duration_ms ?? "—"} ms</Row>
-              <Row k="Size">{full()!.total_bytes} B</Row>
+              <Row k={t()("detail.state")}>{full()!.state}</Row>
+              <Row k={t()("detail.error")}>{full()!.error_kind ?? "—"}</Row>
+              <Row k={t()("detail.started")}>{full()!.started_at}</Row>
+              <Row k={t()("detail.duration")}>{full()!.duration_ms ?? "—"} ms</Row>
+              <Row k={t()("detail.size")}>{full()!.total_bytes} B</Row>
             </div>
           </Show>
 
@@ -146,11 +145,8 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
           <Show when={tab() === "tls"}>
             <div class="overflow-auto p-3 flex-1 min-h-0">
               <Row k="SNI">{full()!.server_host}</Row>
-              <Row k="Version">{full()!.http_version}</Row>
-              <p class="text-fg-muted mt-3">
-                Detailed TLS information requires the engine's decrypted-TLS path.
-                CONNECT tunnels capture host metadata only.
-              </p>
+              <Row k={t()("detail.version")}>{full()!.http_version}</Row>
+              <p class="text-fg-muted mt-3">{t()("detail.tls_note")}</p>
             </div>
           </Show>
         </div>
@@ -203,21 +199,21 @@ const HeaderRow: Component<{ header: { name: string; value: string } }> = (p) =>
     <div class="group flex gap-2 py-0.5 hover:bg-bg-subtle rounded px-1 -mx-1">
       <button
         class="text-accent hover:underline text-left shrink-0"
-        title="Copy header name"
+        title={t()("detail.copy_header_name")}
         onClick={copyName}
       >
         {p.header.name}
       </button>
       <button
         class="text-fg-subtle break-all hover:underline text-left flex-1 min-w-0"
-        title="Copy header value"
+        title={t()("detail.copy_header_value")}
         onClick={copyValue}
       >
         {p.header.value}
       </button>
       <button
         class="opacity-0 group-hover:opacity-100 text-fg-muted hover:text-fg shrink-0 p-0.5 rounded"
-        title='Copy "name: value"'
+        title={t()("detail.copy_header_pair")}
         onClick={copyPair}
       >
         <Show when={copied() !== null} fallback={<Copy size={11} />}>
@@ -295,12 +291,12 @@ const HeadersBodySplit: Component<{
           <button
             class="flex items-center gap-1 hover:text-fg"
             onClick={() => setHeadersCollapsed(!headersCollapsed())}
-            title={headersCollapsed() ? "Expand headers" : "Collapse headers"}
+            title={headersCollapsed() ? t()("detail.expand_headers") : t()("detail.collapse_headers")}
           >
             <Show when={headersCollapsed()} fallback={<ChevronDown size={12} />}>
               <ChevronRight size={12} />
             </Show>
-            Headers <span class="text-fg-muted/70">({p.headers.length})</span>
+            {t()("detail.headers")} <span class="text-fg-muted/70">({p.headers.length})</span>
           </button>
         </div>
         <Show when={!headersCollapsed()}>
@@ -329,7 +325,7 @@ const HeadersBodySplit: Component<{
       <div class="min-h-0 overflow-auto">
         <Show
           when={p.body}
-          fallback={<div class="text-fg-muted italic px-3 py-2">No body</div>}
+          fallback={<div class="text-fg-muted italic px-3 py-2">{t()("detail.no_body")}</div>}
         >
           <BodyViewer body={p.body!} onLoadFull={p.onLoadFull} />
         </Show>
@@ -342,14 +338,11 @@ const TimingWaterfall: Component<{ capture: CaptureDto }> = (p) => {
   const total = p.capture.duration_ms ?? 0;
   return (
     <div>
-      <Row k="Total">{total} ms</Row>
+      <Row k={t()("detail.total")}>{total} ms</Row>
       <div class="mt-3 h-3 bg-bg-muted rounded overflow-hidden">
         <div class="h-full bg-accent" style={{ width: "100%" }} />
       </div>
-      <p class="text-fg-muted mt-2 text-xs">
-        Per-phase breakdown (DNS/connect/TLS/send/wait/receive) is wired through the engine's
-        timing events; populated once the decrypted-TLS path lands.
-      </p>
+      <p class="text-fg-muted mt-2 text-xs">{t()("detail.timing_note")}</p>
     </div>
   );
 };

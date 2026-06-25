@@ -144,6 +144,22 @@ const en = {
     replay: "Replay",
     curl: "cURL",
     select_capture: "Select a capture to see details.",
+    id: "ID",
+    version: "Version",
+    total: "Total",
+    pinning_detected: "Cert pinning detected",
+    pinning_body:
+      "{{host}} uses certificate pinning. Inspection isn't possible without bypassing it on the device (e.g. Frida). For your own apps, disable pinning in the debug build.",
+    learn_more: "Learn more",
+    tls_note:
+      "Detailed TLS information requires the engine's decrypted-TLS path. CONNECT tunnels capture host metadata only.",
+    timing_note:
+      "Per-phase breakdown (DNS/connect/TLS/send/wait/receive) is wired through the engine's timing events; populated once the decrypted-TLS path lands.",
+    expand_headers: "Expand headers",
+    collapse_headers: "Collapse headers",
+    copy_header_name: "Copy header name",
+    copy_header_value: "Copy header value",
+    copy_header_pair: 'Copy "name: value"',
     method: "Method",
     url: "URL",
     status: "Status",
@@ -185,6 +201,18 @@ const en = {
     copy_path: "Copy path",
     expand_all: "Expand all",
     collapse_all: "Collapse all",
+    label: "Body",
+    truncated: "truncated",
+    load_full: "Load full",
+    load_full_title: "Fetch the rest of the body",
+    truncated_warning:
+      "Body truncated — showing first part only. Tree/Pretty view may be unavailable until full body is loaded.",
+    binary_inline: "<binary, {{size}} bytes>",
+    tree_unavailable:
+      'JSON tree unavailable: body is truncated mid-document. Click "Load full" to fetch the rest, or switch to Raw.',
+    node_expand: "Expand",
+    node_collapse: "Collapse",
+    children_count: "{{count}} children",
   },
   rules: {
     title: "Rules",
@@ -275,6 +303,11 @@ const en = {
     json_collapse_title: "Collapse editor",
     json_body_empty: "Body is empty",
     json_invalid: "Invalid JSON",
+    empty_state:
+      "No rules or collections yet. Create a collection to organize stubs, or add an Ungrouped rule.",
+    empty_collection: "No rules in this collection.",
+    summary_no_body: "no body",
+    summary_delay: "delay",
     response_section: "Response",
     status_label: "Status",
     headers_label: "Headers",
@@ -397,6 +430,8 @@ const en = {
     response_section: "Response",
     history_section: "History",
     no_history: "No replays yet.",
+    header_name_placeholder: "Name",
+    header_value_placeholder: "Value",
   },
   settings: {
     title: "Settings",
@@ -461,6 +496,7 @@ const en = {
     delete: "Delete",
     edit: "Edit",
     close: "Close",
+    resize_title: "Drag to resize · double-click to reset",
   },
 };
 

@@ -210,7 +210,7 @@ const HeaderCell: Component<{
       class="absolute top-0 right-0 h-full w-px bg-border cursor-col-resize hover:w-1 hover:bg-accent active:bg-accent"
       onMouseDown={p.onResize}
       onDblClick={() => p.onReset?.()}
-      title="Drag to resize · double-click to reset"
+      title={t()("common.resize_title")}
     />
   </span>
 );

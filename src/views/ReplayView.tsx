@@ -111,7 +111,7 @@ const ReplayView: Component = () => {
               <div class="flex gap-2">
                 <input
                   class="flex-1 bg-bg-subtle border border-border rounded px-2 py-1 text-xs font-mono"
-                  placeholder="Name"
+                  placeholder={t()("replay.header_name_placeholder")}
                   value={h.name}
                   onInput={(e) => {
                     const copy = [...headers()];
@@ -121,7 +121,7 @@ const ReplayView: Component = () => {
                 />
                 <input
                   class="flex-[2] bg-bg-subtle border border-border rounded px-2 py-1 text-xs font-mono"
-                  placeholder="Value"
+                  placeholder={t()("replay.header_value_placeholder")}
                   value={h.value}
                   onInput={(e) => {
                     const copy = [...headers()];
