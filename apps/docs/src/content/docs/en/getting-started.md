@@ -352,7 +352,7 @@ What's inside:
   substring search that **highlights** matches across every visible
   column (time, app, tag, message) and does **not** narrow the rows
   (that's the filter's job). **Enter** jumps to the next match (down),
-  **Shift+Enter** to the previous (up); the current row gets a ring and
+  **Ctrl+Enter** to the previous (up); the current row gets a ring and
   an `i/N` counter sits in the box. Handy for spotting a specific word
   in whatever is already on screen.
 - **Status bar** at the foot of the window: `Viewing N of M`
@@ -373,7 +373,7 @@ What's inside:
   scrollable. A single row lists its fields (Time/App/PID/TID/Level/Tag),
   each copyable on its own; below is the content (the message, or the
   messages of the selected rows). A **search box** at the top (`⌘F` inside
-  the overlay) highlights matches with Enter (next) / Shift+Enter (prev)
+  the overlay) highlights matches with Enter (next) / Ctrl+Enter (prev)
   navigation and a counter. JSON-looking content gets **syntax
   highlighting** and a **Format** button that pretty-prints even
   broken/truncated JSON by structure (like LogRabbit).

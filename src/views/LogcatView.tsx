@@ -1753,7 +1753,8 @@ const LogcatView: Component = () => {
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                gotoSearchMatch(e.shiftKey ? -1 : 1);
+                // Enter → next, Ctrl+Enter → previous.
+                gotoSearchMatch(e.ctrlKey ? -1 : 1);
               } else if (e.key === "Escape" && search()) {
                 e.preventDefault();
                 setSearch("");
@@ -2155,7 +2156,8 @@ const LogcatView: Component = () => {
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             e.preventDefault();
-                            gotoDetailMatch(detailMatchIdx() + (e.shiftKey ? -1 : 1));
+                            // Enter → next, Ctrl+Enter → previous.
+                            gotoDetailMatch(detailMatchIdx() + (e.ctrlKey ? -1 : 1));
                           } else if (e.key === "Escape") {
                             e.preventDefault();
                             e.stopPropagation();

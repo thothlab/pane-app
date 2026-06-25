@@ -361,7 +361,7 @@ const en = {
     filter_placeholder: "{{hotkey}} · app:com.foo · tag:OkHttp · level:E · pid:1234 · ~regex",
     search_placeholder: "{{hotkey}} · Find in filtered…",
     search_title:
-      "Highlights the matching substring across all visible columns (time, app, tag, message). Enter jumps to the next match, Shift+Enter to the previous. Does not filter rows — that's the filter's job. Case-insensitive.",
+      "Highlights the matching substring across all visible columns (time, app, tag, message). Enter jumps to the next match, Ctrl+Enter to the previous. Does not filter rows — that's the filter's job. Case-insensitive.",
     search_clear: "Clear search",
     search_counter: "{{matches}} matched",
     wrap_rows: "Wrap",
