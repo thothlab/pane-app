@@ -348,11 +348,11 @@ What's inside:
   !~^E/                                # outer ! — drop everything matching
   ~slow tag:OkHttp level:W..F          # AND with other keys
   ```
-- **Find in filtered** (`⌘F`) — a separate input next to the filter:
-  plain substring search over the already-filtered rows with in-cell
-  match highlighting. Useful once the filter has narrowed the firehose
-  down to hundreds/thousands of rows and you need to spot a specific
-  word among them.
+- **Search** (`⌘F`) — a separate input next to the filter: a plain
+  substring search that **highlights** matches across every visible
+  column (time, app, tag, message) and does **not** narrow the rows
+  (that's the filter's job). Handy for spotting a specific word in
+  whatever is already on screen.
 - **Status bar** at the foot of the window: `Viewing N of M`
   (`M+` means the buffer has hit MAX_ENTRIES = 100k and older entries
   are being dropped FIFO).

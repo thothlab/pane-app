@@ -622,44 +622,28 @@ const LogcatView: Component = () => {
   // typed input and checked against tag / message / app-name; the
   // numeric pid is also matched as a string so `search:1234` finds
   // entries from that pid even when the App column is empty.
+  // Lower-cased search term. Drives ONLY highlighting (renderHL across every
+  // visible column) — search never filters the table. Narrowing the firehose
+  // is the DSL filter's job (Cmd+Shift+F); search (Cmd+F) just marks matches
+  // in whatever the filter already shows.
   const searchLower = createMemo(() => search().trim().toLowerCase());
-  const matchesSearch = (e: LogEntry, term: string, names: Map<number, Set<string>>): boolean => {
-    if (!term) return true;
-    if (e.tag.toLowerCase().includes(term)) return true;
-    if (e.message.toLowerCase().includes(term)) return true;
-    if (String(e.pid).includes(term)) return true;
-    if (e.timestamp.toLowerCase().includes(term)) return true;
-    const set = names.get(e.pid);
-    if (set) {
-      for (const name of set) {
-        if (name.toLowerCase().includes(term)) return true;
-      }
-    }
-    return false;
-  };
 
   // The single source of truth for "does this entry pass the current
-  // filter?" — DSL predicate + app:<pkg> PID gate + substring search,
-  // combined. Shared by visible() (the rendered table) and the "+N new"
-  // badge's pending count, so the badge reflects how many *filtered*
-  // rows will appear on Tail rather than the raw firehose total. A
-  // positive `app:X` whose package isn't running leaves `include` empty
-  // → every entry fails the `!include.has(e.pid)` gate → empty result,
-  // which surfaces the "app not running" state (same as the old
-  // explicit early-return).
+  // filter?" — DSL predicate + app:<pkg> PID gate. Shared by visible() (the
+  // rendered table) and the "+N new" badge's pending count, so the badge
+  // reflects how many *filtered* rows will appear on Tail rather than the raw
+  // firehose total. A positive `app:X` whose package isn't running leaves
+  // `include` empty → every entry fails the `!include.has(e.pid)` gate →
+  // empty result, which surfaces the "app not running" state.
   const filterPredicate = createMemo(() => {
     const { predicate, appPackages } = matcher();
     const { include, exclude, hasPositive } = appPids();
-    const term = searchLower();
-    const names = pidNames();
     return (e: LogEntry): boolean => {
       if (appPackages.length > 0) {
         if (hasPositive && !include.has(e.pid)) return false;
         if (exclude.has(e.pid)) return false;
       }
-      if (!predicate(e)) return false;
-      if (term && !matchesSearch(e, term, names)) return false;
-      return true;
+      return predicate(e);
     };
   });
 
