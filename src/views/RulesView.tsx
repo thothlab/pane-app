@@ -686,11 +686,17 @@ const CollectionSection: Component<{
   const isDragOver = () => p.draggingRuleId !== null && p.dragOverKey === sectionKey();
   // Which edge this section would drop a dragged *collection* against. Rule
   // drags and collection drags share the section as a drop target; we tell
-  // them apart by the dataTransfer type rather than a shared signal so the
-  // two systems never cross-fire.
+  // them apart by the draggingCollectionId signal (not dataTransfer types,
+  // which WKWebView doesn't expose reliably on dragover) so the two systems
+  // never cross-fire.
   const [collectionDropEdge, setCollectionDropEdge] = createSignal<"before" | "after" | null>(null);
   const COLLECTION_DND = "application/x-pane-collection";
   const isCollectionDrag = () => p.draggingCollectionId !== null;
+  // This collection is the one currently being dragged (dim it like a rule row).
+  const isBeingDragged = () => p.collection !== null && p.draggingCollectionId === p.collection.id;
+  // The header DOM node, snapshotted as the drag image so dragging a collection
+  // looks like dragging a rule (a translucent row), not the bare grip icon.
+  let headerEl: HTMLElement | undefined;
   const editingNewHere = () => {
     const ed = p.editing;
     return (
@@ -764,7 +770,10 @@ const CollectionSection: Component<{
           />
         )}
       </Show>
-      <header class="flex items-center gap-2 px-3 py-2">
+      <header
+        ref={headerEl}
+        class={`flex items-center gap-2 px-3 py-2 ${isBeingDragged() ? "opacity-40" : ""}`}
+      >
         <Show when={!isUngrouped()}>
           <div
             draggable={true}
@@ -776,6 +785,11 @@ const CollectionSection: Component<{
                 // Set data for native DnD validity; detection itself rides on
                 // the draggingCollectionId signal, not this type.
                 e.dataTransfer.setData(COLLECTION_DND, p.collection!.id);
+                // Drag the whole header as the preview (like a rule row), not
+                // the bare grip. Offset keeps the cursor over the grip area.
+                if (headerEl) {
+                  e.dataTransfer.setDragImage(headerEl, 16, headerEl.offsetHeight / 2);
+                }
               }
               p.onDragStartCollection(p.collection!.id);
             }}
