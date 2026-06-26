@@ -146,6 +146,7 @@ async fn plain_http_post_body_round_trip() {
             ca: ca.clone(),
             pac_listen: None,
             heartbeat_listen: None,
+            registry: pane_engine::DevicePortRegistry::new(),
         })
         .await
         .unwrap();

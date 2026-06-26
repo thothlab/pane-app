@@ -37,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
             ca: ca.material(),
             pac_listen: Some("127.0.0.1:8889".parse().unwrap()),
             heartbeat_listen: Some("127.0.0.1:8890".parse().unwrap()),
+            registry: pane_engine::DevicePortRegistry::new(),
         })
         .await?;
 

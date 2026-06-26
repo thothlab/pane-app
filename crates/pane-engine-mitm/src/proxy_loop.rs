@@ -17,7 +17,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use pane_engine::EngineEvent;
+use pane_engine::{DevicePortRegistry, EngineEvent};
 use pane_storage::Storage;
 use rusqlite::params;
 use time::OffsetDateTime;
@@ -27,13 +27,20 @@ use tokio::sync::broadcast;
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn handle(
     mut stream: TcpStream,
     peer: SocketAddr,
+    local_port: u16,
+    registry: DevicePortRegistry,
     storage: Arc<Storage>,
     events: broadcast::Sender<EngineEvent>,
     tls_acceptor: TlsAcceptor,
 ) -> anyhow::Result<()> {
+    // Resolve which device this connection belongs to from the local port it
+    // landed on. Each USB device has its own Mac-side proxy port; ports with no
+    // mapping (old sessions, iOS, pool fallback) resolve to None → NULL.
+    let device_id = registry.device_for_port(local_port);
     // Read raw bytes into a Vec until we see the end-of-headers marker, so we
     // know exactly how much has been consumed off the socket. Using BufReader
     // here is dangerous on the CONNECT path: it over-reads, and handing the
@@ -60,6 +67,7 @@ pub async fn handle(
         emit_started(&events, cap_id, &host, &method, "/");
         insert_capture_opening(
             &storage, cap_id, session_id, peer, &host, port, "https", &method,
+            device_id.as_deref(),
         )?;
 
         // RFC 7231 says a client SHOULD NOT pipeline anything after CONNECT
@@ -98,6 +106,7 @@ pub async fn handle(
     emit_started(&events, cap_id, &host, &method, &path);
     insert_capture_opening(
         &storage, cap_id, session_id, peer, &host, port, "http", &method,
+        device_id.as_deref(),
     )?;
     update_url_path(&storage, cap_id, &path)?;
     persist_headers(&storage, cap_id, "request", &headers)?;
@@ -565,12 +574,13 @@ fn insert_capture_opening(
     port: u16,
     scheme: &str,
     method: &str,
+    device_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let conn = storage.conn().lock();
     conn.execute(
         "INSERT INTO capture (id, session_id, started_at, client_addr, server_host, server_port,
-                              scheme, http_version, method, url_path, total_bytes, state)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '1.1', ?8, '/', 0, 'in_flight')",
+                              scheme, http_version, method, url_path, total_bytes, state, device_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '1.1', ?8, '/', 0, 'in_flight', ?9)",
         params![
             id.to_string(),
             session_id.to_string(),
@@ -580,6 +590,7 @@ fn insert_capture_opening(
             port as i64,
             scheme,
             method,
+            device_id,
         ],
     )?;
     Ok(())

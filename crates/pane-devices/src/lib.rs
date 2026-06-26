@@ -9,6 +9,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use pane_android::AndroidPlatform;
 use pane_ca::CaMaterial;
+use pane_engine::DevicePortRegistry;
 use pane_ios::IosPlatform;
 use pane_ipc::{AndroidToolingStatusDto, DeviceDto, DiscoveredDeviceDto, RemoveDeviceResult};
 use pane_storage::Storage;
@@ -20,15 +21,45 @@ pub struct DeviceManager {
     storage: Arc<Storage>,
     ios: IosPlatform,
     android: AndroidPlatform,
+    /// Shared with the proxy engine: maps serial→Mac-port→device_id so each
+    /// device's captures can be attributed. DeviceManager owns the resolution
+    /// (it has storage to look up the persisted device-row id) and assigns the
+    /// port at pair time; the engine resolves device_id from the local port.
+    registry: DevicePortRegistry,
 }
 
 impl DeviceManager {
-    pub fn new(storage: Arc<Storage>) -> Self {
+    pub fn new(storage: Arc<Storage>, registry: DevicePortRegistry) -> Self {
         Self {
             storage,
             ios: IosPlatform::new(),
             android: AndroidPlatform::new(),
+            registry,
         }
+    }
+
+    /// Resolve the PERSISTED device-row id for an Android serial. This is the
+    /// id `devices_list` returns and the UI joins against — NOT the fresh UUID
+    /// `add_usb` mints in its DeviceDto. `transition(... pairing ...)` has
+    /// already inserted/updated the row by the time we call this, so the row
+    /// exists. Returns None only if the row is somehow missing (then the
+    /// capture stays unattributed rather than mis-attributed).
+    fn android_device_id(&self, serial: &str) -> Option<String> {
+        let conn = self.storage.conn().lock();
+        conn.query_row(
+            "SELECT id FROM device WHERE platform='android' AND serial=?1",
+            params![serial],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    }
+
+    /// Assign this serial its Mac-side proxy port, resolving + storing the
+    /// device_id for attribution. Idempotent per serial (returns the existing
+    /// port on re-pair / reapply).
+    fn assign_port(&self, serial: &str) -> u16 {
+        let device_id = self.android_device_id(serial);
+        self.registry.assign(serial, device_id)
     }
 
     pub async fn discover_attached(&self) -> Result<Vec<DiscoveredDeviceDto>> {
@@ -66,7 +97,11 @@ impl DeviceManager {
 
     pub async fn add_android_usb(&self, serial: &str, ca: CaMaterial) -> Result<DeviceDto> {
         self.transition("android", serial, "pairing", None)?;
-        let outcome = self.android.add_usb(serial, &ca).await;
+        // Resolve device_id + reserve the Mac-side port AFTER the pairing row
+        // exists (so android_device_id finds it) but BEFORE add_usb sets up the
+        // `adb reverse`, which needs the assigned port.
+        let mac_port = self.assign_port(serial);
+        let outcome = self.android.add_usb(serial, &ca, mac_port).await;
         match outcome {
             Ok(device) => {
                 self.record_ready(&device)?;
@@ -83,7 +118,10 @@ impl DeviceManager {
         let dev = self.get(id)?;
         let cleaned = match dev.platform.as_str() {
             "ios" => self.ios.remove(&dev.serial).await.is_ok(),
-            "android" => self.android.remove(&dev.serial).await.is_ok(),
+            "android" => {
+                self.registry.release(&dev.serial);
+                self.android.remove(&dev.serial).await.is_ok()
+            }
             _ => false,
         };
         let conn = self.storage.conn().lock();
@@ -123,7 +161,8 @@ impl DeviceManager {
         serial: &str,
         ca: CaMaterial,
     ) -> anyhow::Result<()> {
-        self.android.add_usb(serial, &ca).await?;
+        let mac_port = self.assign_port(serial);
+        self.android.add_usb(serial, &ca, mac_port).await?;
         Ok(())
     }
 
@@ -131,6 +170,7 @@ impl DeviceManager {
     /// reconnects while Pane proxy is stopped — restores the phone's
     /// internet by stripping the stale http_proxy setting.
     pub async fn clear_one_android_proxy(&self, serial: &str) -> anyhow::Result<()> {
+        self.registry.release(serial);
         self.android.remove(serial).await
     }
 
@@ -144,7 +184,8 @@ impl DeviceManager {
             .collect();
         let mut ok = Vec::with_capacity(serials.len());
         for serial in serials {
-            if self.android.add_usb(&serial, &ca).await.is_ok() {
+            let mac_port = self.assign_port(&serial);
+            if self.android.add_usb(&serial, &ca, mac_port).await.is_ok() {
                 ok.push(serial);
             }
         }
@@ -168,6 +209,7 @@ impl DeviceManager {
             .collect();
         let mut cleaned = Vec::with_capacity(serials.len());
         for serial in serials {
+            self.registry.release(&serial);
             if self.android.remove(&serial).await.is_ok() {
                 cleaned.push(serial);
             }
