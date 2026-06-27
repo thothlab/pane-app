@@ -11,7 +11,8 @@ use std::sync::Arc;
 use pane_ca::CaMaterial;
 use parking_lot::Mutex;
 use rcgen::{
-    CertificateParams, DistinguishedName, DnType, KeyPair, SanType, PKCS_ECDSA_P256_SHA256,
+    CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, KeyPair, SanType,
+    PKCS_ECDSA_P256_SHA256,
 };
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -55,8 +56,17 @@ impl LeafCache {
         params
             .subject_alt_names
             .push(SanType::DnsName(sni.try_into()?));
+        // EKU = serverAuth is REQUIRED by the macOS Security framework
+        // (Safari / Chrome-on-macOS go through it) for TLS server certs; a
+        // leaf without it hand-shake-fails there even with the root trusted.
+        // Android/conscrypt is laxer, which is why device capture worked
+        // without it. Harmless for mobile, mandatory for desktop browsers.
+        params
+            .extended_key_usages
+            .push(ExtendedKeyUsagePurpose::ServerAuth);
         let now = time::OffsetDateTime::now_utc();
         params.not_before = now - time::Duration::days(1);
+        // Apple caps TLS server-cert validity at 398 days; 90 is well under.
         params.not_after = now + time::Duration::days(90);
 
         let leaf_kp = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
