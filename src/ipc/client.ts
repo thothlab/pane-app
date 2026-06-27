@@ -39,6 +39,16 @@ export const api = {
     stop: () => call<{ stopped_at: string }>("stop"),
     status: () => call<ProxyStatusDto>("status"),
   },
+  host: {
+    // "Capture this Mac": trust the CA + point the Mac's system proxy at the
+    // local MITM port. enable/status return { enabled, service }. macOS-only;
+    // the backend command errors on other platforms.
+    enable: () =>
+      call<{ enabled: boolean; service: string | null }>("host_capture_enable"),
+    disable: () => call<void>("host_capture_disable"),
+    status: () =>
+      call<{ enabled: boolean; service: string | null }>("host_capture_status"),
+  },
   ca: {
     current: () => call<CaCertificateDto>("current"),
     rotate: () => call<CaCertificateDto>("rotate"),

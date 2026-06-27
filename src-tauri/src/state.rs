@@ -21,6 +21,11 @@ pub struct AppState {
     /// wiring (DeviceManager) and the proxy engine (via EngineConfig) see the
     /// same map.
     pub registry: DevicePortRegistry,
+    /// "Capture this Mac" prior-proxy snapshot. `Some` ⇒ host capture is
+    /// active; holds the exact network service and its prior web/secure proxy
+    /// config so `host_proxy::disable` restores it verbatim. macOS-only.
+    #[cfg(target_os = "macos")]
+    pub host_proxy: Mutex<Option<crate::host_proxy::HostProxySnapshot>>,
 }
 
 impl AppState {
@@ -42,6 +47,8 @@ impl AppState {
             devices,
             proxy_handle: Mutex::new(None),
             registry,
+            #[cfg(target_os = "macos")]
+            host_proxy: Mutex::new(None),
         })
     }
 }

@@ -98,6 +98,8 @@ const ru: Dict = {
     column_device: "Устройство",
     col_menu_title: "Колонки",
     device_filter_all: "Все устройства",
+    device_filter_none: "Не выбрано",
+    device_this_computer: "Текущий компьютер",
     device_unknown: "—",
     filter_placeholder: "google · host:api.foo.com,api.bar.com · status:200,500..599 · !error:tls_handshake",
     filter_help:
@@ -126,6 +128,7 @@ const ru: Dict = {
     clear: "Очистить",
     clear_confirm: "Удалить все записи? Это действие нельзя отменить.",
     clear_failed: "Не удалось очистить: {{message}}",
+    host_capture_failed: "Не удалось перехватить этот Mac: {{message}}",
     column_resize_title: "Перетащите чтобы изменить ширину · двойной клик чтобы сбросить",
     empty_state: "Пока нет записей. Запустите прокси и сопрягите устройство.",
     error_tls_handshake:

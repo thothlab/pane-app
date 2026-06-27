@@ -1,7 +1,7 @@
 import { type Component, createSignal, createMemo, createEffect, createResource, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
-import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle } from "lucide-solid";
+import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown } from "lucide-solid";
 import { api } from "@/ipc/client";
 import { listenToCaptures } from "@/ipc/events";
 import type {
@@ -165,6 +165,8 @@ const CapturesView: Component = () => {
     return parts.length > 1 ? parts.slice(1).join(" ") : head;
   };
   const shortDeviceName = (id: string | null): string | null => {
+    // The host sentinel has no device row — label it "This computer".
+    if (id === "__host__") return t()("captures.device_this_computer");
     const full = deviceName(id);
     return full ? deviceModel(full) : null;
   };
@@ -173,26 +175,60 @@ const CapturesView: Component = () => {
   const deviceFilterToken = (model: string): string =>
     model.includes(" ") ? `"${model}"` : model;
 
-  // Dropdown lists "All devices" + every known device by its FULL head
-  // ("CipherLab RS35"), but selecting injects the short model token
-  // (`device:RS35`), replacing any existing device: token. The <select>
-  // value is the model so it re-syncs when the user edits the filter text.
+  // The device filter is driven by a custom button+menu (not a native
+  // <select>, which desynced from the filter string). The current value is
+  // derived from the device: token in the filter — `__host__` is the host
+  // sentinel ("This computer"), any other value is a device model, none means
+  // "Not selected".
   const selectedDeviceModel = createMemo(() => {
     // Match device:"quoted value" OR device:bareword.
     const m = filter().match(/(?:^|\s)device:("([^"]*)"|\S+)/);
     if (!m) return "";
     return (m[2] !== undefined ? m[2] : m[1]!).trim();
   });
-  const onPickDevice = (model: string) => {
-    // Drop any existing device: token (quoted or bare), then append the new.
+  // Human label for the dropdown button, derived from the filter token.
+  const selectedDeviceLabel = createMemo(() => {
+    const v = selectedDeviceModel();
+    if (!v) return t()("captures.device_filter_none");
+    if (v === "__host__") return t()("captures.device_this_computer");
+    return v;
+  });
+  // Replace the device: token (quoted or bare) with `tok` (or remove it when
+  // empty). Does NOT touch host capture — turning host capture off is reserved
+  // for Stop proxy / app exit, so "Not selected" still shows Mac traffic if it
+  // was enabled.
+  const setDeviceToken = (tok: string) => {
     const stripped = filter()
       .replace(/(?:^|\s)!?device:("[^"]*"|\S+)/g, "")
       .trim();
-    const tok = model ? `device:${deviceFilterToken(model)}` : "";
     const next = tok ? (stripped ? `${stripped} ${tok}` : tok) : stripped;
     setFilter(next);
     debouncedRefresh(true);
   };
+  const onPickDevice = (model: string) => {
+    setDeviceToken(model ? `device:${deviceFilterToken(model)}` : "");
+    setDeviceMenuOpen(false);
+  };
+  // "This computer": enable host capture (trust CA + set system proxy), then
+  // filter the list to host-local traffic via the __host__ sentinel token.
+  const onPickThisComputer = async () => {
+    setDeviceMenuOpen(false);
+    try {
+      await api.host.enable();
+    } catch (e: unknown) {
+      alert(
+        tr("captures.host_capture_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+      );
+      return;
+    }
+    setDeviceToken("device:__host__");
+  };
+  // Custom device dropdown open/close state. Outside-click close is wired into
+  // the shared onMount mousedown handler alongside the other menus.
+  const [deviceMenuOpen, setDeviceMenuOpen] = createSignal(false);
+  let deviceMenuRef: HTMLDivElement | undefined;
   // Auto-follow tail: when true, new captures yank the list to the bottom.
   // The user's preference is persisted; manual scroll up/down also adjusts
   // it implicitly (Android Studio Logcat-style — scrolling away pauses
@@ -816,6 +852,9 @@ const CapturesView: Component = () => {
       if (headerMenuPos() && headerMenuRef && !headerMenuRef.contains(t)) {
         setHeaderMenuPos(null);
       }
+      if (deviceMenuOpen() && deviceMenuRef && !deviceMenuRef.contains(t)) {
+        setDeviceMenuOpen(false);
+      }
     };
     document.addEventListener("mousedown", onDoc);
     onCleanup(() => document.removeEventListener("mousedown", onDoc));
@@ -967,22 +1006,65 @@ const CapturesView: Component = () => {
         <Show when={filterError()}>
           <span class="text-xs text-danger">{filterError()}</span>
         </Show>
-        <select
-          class="text-xs px-2 py-1 rounded bg-bg-muted text-fg outline-none focus:ring-1 focus:ring-accent max-w-[180px]"
-          value={selectedDeviceModel()}
-          onFocus={() => void refetchDevices()}
-          onChange={(e) => onPickDevice(e.currentTarget.value)}
-          title={t()("captures.column_device")}
-        >
-          <option value="">{t()("captures.device_filter_all")}</option>
-          <For each={devices() ?? []}>
-            {(d) => (
-              <option value={deviceModel(d.display_name)} title={d.display_name}>
-                {deviceHead(d.display_name)}
-              </option>
-            )}
-          </For>
-        </select>
+        <div class="relative" ref={(el) => (deviceMenuRef = el)}>
+          <button
+            type="button"
+            class="text-xs px-2 py-1 rounded bg-bg-muted text-fg outline-none focus:ring-1 focus:ring-accent max-w-[180px] truncate inline-flex items-center gap-1"
+            title={t()("captures.column_device")}
+            onClick={() => {
+              if (!deviceMenuOpen()) void refetchDevices();
+              setDeviceMenuOpen((o) => !o);
+            }}
+          >
+            <span class="truncate">{selectedDeviceLabel()}</span>
+            <ChevronDown size={12} class="shrink-0 text-fg-muted" />
+          </button>
+          <Show when={deviceMenuOpen()}>
+            <div
+              class="absolute right-0 top-full mt-1 z-30 min-w-[180px] max-w-[260px] bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs select-none"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                class={`w-full text-left px-3 py-1.5 hover:bg-bg-muted truncate ${
+                  selectedDeviceModel() === "" ? "text-accent" : ""
+                }`}
+                onClick={() => onPickDevice("")}
+              >
+                {t()("captures.device_filter_none")}
+              </button>
+              <button
+                type="button"
+                class={`w-full text-left px-3 py-1.5 hover:bg-bg-muted truncate ${
+                  selectedDeviceModel() === "__host__" ? "text-accent" : ""
+                }`}
+                onClick={() => void onPickThisComputer()}
+              >
+                {t()("captures.device_this_computer")}
+              </button>
+              <Show when={(devices() ?? []).length > 0}>
+                <div class="border-t border-border my-1" />
+                <For each={devices() ?? []}>
+                  {(d) => {
+                    const model = deviceModel(d.display_name);
+                    return (
+                      <button
+                        type="button"
+                        class={`w-full text-left px-3 py-1.5 hover:bg-bg-muted truncate ${
+                          selectedDeviceModel() === model ? "text-accent" : ""
+                        }`}
+                        title={d.display_name}
+                        onClick={() => onPickDevice(model)}
+                      >
+                        {deviceHead(d.display_name)}
+                      </button>
+                    );
+                  }}
+                </For>
+              </Show>
+            </div>
+          </Show>
+        </div>
         <button
           class={`text-xs px-2 py-1 rounded inline-flex items-center gap-1 ${
             autoFollow()

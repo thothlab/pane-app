@@ -207,6 +207,17 @@ fn device_clause(value: &str, neg: bool, params: &mut Vec<Box<dyn ToSql>>) -> St
     let parts: Vec<String> = split_values(value)
         .into_iter()
         .map(|v| {
+            // The host sentinel ("Текущий компьютер") is not a real device row,
+            // so it can't resolve through the name/serial subquery. Match the
+            // device_id column directly instead.
+            if v == "__host__" {
+                params.push(Box::new("__host__".to_string()));
+                return if neg {
+                    "capture.device_id <> ?".to_string()
+                } else {
+                    "capture.device_id = ?".to_string()
+                };
+            }
             let pattern = if v.contains('*') {
                 v.replace('*', "%")
             } else {
@@ -359,6 +370,23 @@ mod tests {
         let (sql, p) = compile_to_sql("device:\"CipherLab RS35\"").unwrap();
         assert!(sql.contains("capture.device_id IN (SELECT id FROM device"));
         assert_eq!(p.len(), 2);
+    }
+
+    #[test]
+    fn device_host_sentinel_matches_device_id_directly() {
+        // __host__ is not a real device row — it must compile to a direct
+        // device_id equality, not the name/serial subquery.
+        let (sql, p) = compile_to_sql("device:__host__").unwrap();
+        assert_eq!(sql, "capture.device_id = ?");
+        assert!(!sql.contains("SELECT id FROM device"));
+        assert_eq!(p.len(), 1);
+    }
+
+    #[test]
+    fn device_host_sentinel_negation() {
+        let (sql, p) = compile_to_sql("!device:__host__").unwrap();
+        assert_eq!(sql, "capture.device_id <> ?");
+        assert_eq!(p.len(), 1);
     }
 
     #[test]

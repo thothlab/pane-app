@@ -101,6 +101,8 @@ const en = {
     column_device: "Device",
     col_menu_title: "Columns",
     device_filter_all: "All devices",
+    device_filter_none: "Not selected",
+    device_this_computer: "This computer",
     device_unknown: "—",
     filter_placeholder: "google · host:api.foo.com,api.bar.com · status:200,500..599 · !error:tls_handshake",
     filter_help:
@@ -128,6 +130,7 @@ const en = {
     clear: "Clear",
     clear_confirm: "Clear all captures? This cannot be undone.",
     clear_failed: "Clear failed: {{message}}",
+    host_capture_failed: "Couldn't capture this Mac: {{message}}",
     column_resize_title: "Drag to resize · double-click to reset",
     empty_state: "No captures yet. Start the proxy and pair a device.",
     error_tls_handshake:

@@ -98,6 +98,23 @@ impl DevicePortRegistry {
     pub fn device_for_port(&self, host_port: u16) -> Option<String> {
         self.inner.lock().port_to_device.get(&host_port).cloned()
     }
+
+    /// Stamp an explicit `port → device_id` mapping, bypassing the serial pool.
+    /// Used for the reserved host port 8888 → "__host__" sentinel when the user
+    /// captures their own Mac: connections on 8888 then resolve to the host
+    /// sentinel via `device_for_port` with no change to the accept loop.
+    pub fn set_port(&self, port: u16, device_id: &str) {
+        self.inner
+            .lock()
+            .port_to_device
+            .insert(port, device_id.to_string());
+    }
+
+    /// Drop an explicit port mapping set by `set_port` (host capture disabled).
+    /// After this, a connection on `port` resolves to `None` again.
+    pub fn clear_port(&self, port: u16) {
+        self.inner.lock().port_to_device.remove(&port);
+    }
 }
 
 #[cfg(test)]
@@ -141,6 +158,17 @@ mod tests {
         let c = r.assign("C", Some("dev-c".into()));
         assert_eq!(c, a);
         assert_eq!(r.device_for_port(c).as_deref(), Some("dev-c"));
+    }
+
+    #[test]
+    fn set_port_and_clear_port_for_host_sentinel() {
+        let r = DevicePortRegistry::new();
+        // 8888 is reserved (not in the pool) and unmapped by default.
+        assert_eq!(r.device_for_port(8888), None);
+        r.set_port(8888, "__host__");
+        assert_eq!(r.device_for_port(8888).as_deref(), Some("__host__"));
+        r.clear_port(8888);
+        assert_eq!(r.device_for_port(8888), None);
     }
 
     #[test]

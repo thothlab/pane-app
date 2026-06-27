@@ -89,6 +89,13 @@ pub async fn stop(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
     // refuses connections — manifesting on the device as "no internet"
     // until the user notices and removes the device manually.
     let cleared = state.devices.clear_all_android_proxies().await;
+    // Revert the Mac's own system proxy too, if "Capture this Mac" was on.
+    // No-op when host capture was never enabled. Same rationale as devices:
+    // a stopped proxy left pointing at dead 127.0.0.1:8888 strands the Mac
+    // without internet.
+    if let Err(e) = crate::host_proxy::disable(&state) {
+        tracing::warn!(error = %e, "failed to revert host proxy on stop");
+    }
     Ok(serde_json::json!({
         "stopped_at": time::OffsetDateTime::now_utc().to_string(),
         "cleared_devices": cleared,

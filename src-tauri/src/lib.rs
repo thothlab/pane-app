@@ -4,6 +4,7 @@
 //! frontend window. Domain logic lives in workspace crates; this file is glue.
 
 mod commands;
+mod host_proxy;
 mod state;
 
 use state::AppState;
@@ -46,6 +47,10 @@ pub fn run() {
             commands::proxy::start,
             commands::proxy::stop,
             commands::proxy::status,
+            // host capture ("Capture this Mac")
+            commands::host::host_capture_enable,
+            commands::host::host_capture_disable,
+            commands::host::host_capture_status,
             // logcat
             commands::logcat::logcat_open,
             commands::logcat::android_pid_names,
@@ -92,6 +97,10 @@ pub fn run() {
         ])
         .setup(|app| {
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "Pane starting");
+            // Clear any stale 127.0.0.1:8888 system-proxy pointer left by a
+            // previous crash (SIGKILL skips our exit handler), so the user
+            // isn't stranded offline. No-op if nothing stale. macOS-only.
+            host_proxy::self_heal_on_start();
             if let Err(e) = install_app_menu(app.handle()) {
                 tracing::warn!(error = %e, "failed to install app menu");
             }
@@ -132,8 +141,23 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Pane");
+        .build(tauri::generate_context!())
+        .expect("error while building Pane")
+        .run(|app, event| {
+            // Revert the Mac's system proxy on quit so we never leave it
+            // pointing at a dead 127.0.0.1:8888. `Exit` covers the broadest
+            // set of quit paths (menu Quit, Cmd-Q, last window closed). This
+            // runs without a tokio reactor, which is why host_proxy uses
+            // synchronous std::process::Command. SIGKILL bypasses this — that
+            // case is handled by self_heal_on_start on the next launch.
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                let state: tauri::State<AppState> = app.state();
+                if let Err(e) = host_proxy::disable(&state) {
+                    tracing::warn!(error = %e, "failed to revert host proxy on exit");
+                }
+            }
+        });
 }
 
 /// Build the application menu so the About dialog shows the Pane icon and
