@@ -26,6 +26,8 @@ The Rules tab is also pre-aimed at this new rule's editor — switch tabs and yo
 
 The **Request body (JSON)** field in the Match section holds a JSON value the engine checks for **containment** in the request body (deep subset). This matches **nested** fields — unlike `match_params`, which only sees top-level scalars of the query/body.
 
+> ⚠️ **Params are exact-match, no operators.** A param value is compared literally (string for string). `=10000` will NOT match a body with `amount: 10000` — the leading `=` is taken as part of the value. For `=`/`>`/`≥`/contains use the **Conditions** block (below) and put a plain value (`10000`) in Params. The editor flags a Params value that starts with an operator.
+
 `template ⊆ actual` semantics:
 
 - **objects** — every key in the template must be present in the body and match recursively; extra fields in the request are allowed;

@@ -285,6 +285,8 @@ const en = {
       "Each row must be found either in the URL query, or at the top level of a JSON request body.",
     param_volatile_hint:
       "Looks like a per-request value (UUID). The rule matches it exactly, so it will only fire for this one request — remove this row unless you mean to pin it.",
+    param_operator_hint:
+      "Params are exact-match — a leading operator like = or > is taken literally and won't match. For comparisons use the Conditions block below.",
     req_body_label: "Request body (JSON)",
     req_body_placeholder: '{ "field": "value" }  — leave empty to ignore the body',
     req_body_note:

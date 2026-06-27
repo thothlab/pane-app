@@ -1580,6 +1580,17 @@ const RuleEditor: Component<{
             <Index each={d().match_params}>
               {(q, i) => {
                 const volatileValue = () => looksVolatile(q().value);
+                // Params are EXACT-match — a leading comparison operator is a
+                // common mix-up with Conditions ("=10000" never matches the
+                // body's "10000"). Warn and point the user at Conditions.
+                const operatorLike = () => /^\s*[=≠<>≥≤!]/.test(q().value);
+                const warnValue = () => volatileValue() || operatorLike();
+                const warnHint = () =>
+                  operatorLike()
+                    ? t()("rules.param_operator_hint")
+                    : volatileValue()
+                      ? t()("rules.param_volatile_hint")
+                      : undefined;
                 return (
                   <div class="flex items-center gap-2">
                     <input {...NO_AC}
@@ -1594,21 +1605,21 @@ const RuleEditor: Component<{
                     />
                     <input {...NO_AC}
                       class={`flex-1 bg-bg border rounded px-2 py-1 text-xs font-mono ${
-                        volatileValue()
+                        warnValue()
                           ? "border-warn ring-1 ring-warn/40"
                           : "border-border"
                       }`}
                       placeholder={t()("rules.param_value_placeholder")}
                       value={q().value}
-                      title={volatileValue() ? t()("rules.param_volatile_hint") : undefined}
+                      title={warnHint()}
                       onInput={(e) => {
                         const arr = d().match_params.slice();
                         arr[i] = { ...arr[i], value: e.currentTarget.value };
                         patch({ match_params: arr });
                       }}
                     />
-                    <Show when={volatileValue()}>
-                      <span class="text-warn shrink-0" title={t()("rules.param_volatile_hint")}>
+                    <Show when={warnValue()}>
+                      <span class="text-warn shrink-0" title={warnHint()}>
                         <AlertTriangle size={12} />
                       </span>
                     </Show>
