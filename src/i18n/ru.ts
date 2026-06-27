@@ -96,6 +96,7 @@ const ru: Dict = {
     column_ms: "мс",
     column_bytes: "байт",
     column_device: "Устройство",
+    col_menu_title: "Колонки",
     device_filter_all: "Все устройства",
     device_unknown: "—",
     filter_placeholder: "google · host:api.foo.com,api.bar.com · status:200,500..599 · !error:tls_handshake",

@@ -99,6 +99,7 @@ const en = {
     column_ms: "ms",
     column_bytes: "bytes",
     column_device: "Device",
+    col_menu_title: "Columns",
     device_filter_all: "All devices",
     device_unknown: "—",
     filter_placeholder: "google · host:api.foo.com,api.bar.com · status:200,500..599 · !error:tls_handshake",

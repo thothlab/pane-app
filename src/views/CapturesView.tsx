@@ -62,17 +62,48 @@ function loadListPaneWidth(): number {
 // is narrower than the label — full text shows on hover via title.
 const COLUMNS = [
   { key: "idx", labelKey: "captures.column_idx", width: 40 },
+  { key: "device", labelKey: "captures.column_device", width: 140 },
   { key: "method", labelKey: "captures.column_method", width: 80 },
   { key: "status", labelKey: "captures.column_status", width: 72 },
   { key: "host", labelKey: "captures.column_host", width: 220 },
-  { key: "device", labelKey: "captures.column_device", width: 140 },
   { key: "path", labelKey: "captures.column_path", width: 320 },
   { key: "ms", labelKey: "captures.column_ms", width: 64 },
   { key: "bytes", labelKey: "captures.column_bytes", width: 72 },
 ] as const;
 const MIN_COL_WIDTH = 28;
-const WIDTHS_STORAGE_KEY = "pane:captures-col-widths";
+// v2: bumped when `device` moved to position 1 — the old positional width
+// array is in the pre-reorder order, so reset rather than mis-map widths.
+const WIDTHS_STORAGE_KEY = "pane:captures-col-widths-v2";
+const VISIBLE_STORAGE_KEY = "pane:captures-col-visible";
 const AUTOFOLLOW_STORAGE_KEY = "pane:captures-autofollow";
+
+// Columns the header context-menu can hide. `idx` (the row number) is the
+// anchor and always stays — it guarantees there's a place to right-click.
+const TOGGLEABLE_COLS = ["device", "method", "status", "host", "path", "ms", "bytes"] as const;
+type ToggleableCol = (typeof TOGGLEABLE_COLS)[number];
+const VISIBLE_DEFAULTS: Record<ToggleableCol, boolean> = {
+  device: true,
+  method: true,
+  status: true,
+  host: true,
+  path: true,
+  ms: true,
+  bytes: true,
+};
+function loadColVisible(): Record<ToggleableCol, boolean> {
+  try {
+    const raw = localStorage.getItem(VISIBLE_STORAGE_KEY);
+    if (!raw) return { ...VISIBLE_DEFAULTS };
+    const parsed = JSON.parse(raw) as Partial<Record<ToggleableCol, boolean>>;
+    const out = { ...VISIBLE_DEFAULTS };
+    for (const k of TOGGLEABLE_COLS) {
+      if (typeof parsed[k] === "boolean") out[k] = parsed[k] as boolean;
+    }
+    return out;
+  } catch {
+    return { ...VISIBLE_DEFAULTS };
+  }
+}
 
 // Filter help text — read via i18n at render time so it switches with
 // the locale. The Russian translation mirrors the same examples.
@@ -152,7 +183,47 @@ const CapturesView: Component = () => {
     }
   });
   const [colWidths, setColWidths] = createSignal<number[]>(loadWidths());
-  const gridTemplate = createMemo(() => colWidths().map((w) => `${w}px`).join(" "));
+
+  // Per-column show/hide (header right-click menu). `idx` is never in the
+  // map — it's always shown. Persisted separately from widths.
+  const [colVisible, setColVisibleRaw] = createSignal(loadColVisible());
+  const isColVisible = (key: string): boolean =>
+    key === "idx" || colVisible()[key as ToggleableCol] !== false;
+  const setColVisible = (next: Record<ToggleableCol, boolean>) => {
+    setColVisibleRaw(next);
+    try {
+      localStorage.setItem(VISIBLE_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* storage unavailable */
+    }
+  };
+  // gridTemplate skips hidden columns; `colWidths` stays positionally
+  // aligned with COLUMNS (8 entries) so resize-by-index keeps working.
+  const gridTemplate = createMemo(() =>
+    COLUMNS.map((c, i) => (isColVisible(c.key) ? `${colWidths()[i]}px` : null))
+      .filter((p): p is string => p !== null)
+      .join(" "),
+  );
+  // Index of the rightmost visible column — its header gets no resize
+  // handle (nothing to its right to push against).
+  const lastVisibleColIdx = createMemo(() => {
+    let last = 0;
+    COLUMNS.forEach((c, i) => {
+      if (isColVisible(c.key)) last = i;
+    });
+    return last;
+  });
+
+  // Header context-menu (column toggles). Right-click the header row to
+  // open at the cursor; outside click closes it (handled in onMount).
+  const [headerMenuPos, setHeaderMenuPos] = createSignal<
+    { x: number; y: number } | null
+  >(null);
+  let headerMenuRef: HTMLDivElement | undefined;
+  const openHeaderMenu = (e: MouseEvent) => {
+    e.preventDefault();
+    setHeaderMenuPos({ x: e.clientX, y: e.clientY });
+  };
   const [listPaneWidth, setListPaneWidth] = createSignal(loadListPaneWidth());
   const splitTemplate = createMemo(() => `${listPaneWidth()}px 6px 1fr`);
   createEffect(() => {
@@ -719,6 +790,9 @@ const CapturesView: Component = () => {
       if (addMenuPos() && addMenuRef && !addMenuRef.contains(t)) {
         closeAddMenu();
       }
+      if (headerMenuPos() && headerMenuRef && !headerMenuRef.contains(t)) {
+        setHeaderMenuPos(null);
+      }
     };
     document.addEventListener("mousedown", onDoc);
     onCleanup(() => document.removeEventListener("mousedown", onDoc));
@@ -923,39 +997,77 @@ const CapturesView: Component = () => {
           <div
             class="grid sticky top-0 bg-bg-subtle text-fg-muted z-10 border-b border-border select-none"
             style={{ "grid-template-columns": gridTemplate() }}
+            onContextMenu={openHeaderMenu}
           >
             <For each={COLUMNS}>
               {(col, i) => (
-                <div class="relative px-2 py-1 overflow-hidden" title={t()(col.labelKey)}>
-                  <span class="truncate block">{t()(col.labelKey)}</span>
-                  <Show when={i() < COLUMNS.length - 1}>
-                    {/*
-                      6px-wide hit area for the cursor; the 1px visible line
-                      sits at its right edge via `border-r`. Default colour =
-                      border token; on hover/active it brightens to accent so
-                      it's obvious you can grab it.
-                    */}
-                    <div
-                      class="group absolute top-0 bottom-0 -right-[3px] w-1.5 cursor-col-resize z-20"
-                      onMouseDown={(e) => startResize(i(), e)}
-                      onDblClick={(e) => {
-                        e.stopPropagation();
-                        // Double-click resets this column to its default width.
-                        setColWidths((ws) => {
-                          const copy = ws.slice();
-                          copy[i()] = COLUMNS[i()]!.width;
-                          return copy;
-                        });
-                      }}
-                      title={t()("captures.column_resize_title")}
-                    >
-                      <div class="absolute right-1/2 top-1 bottom-1 w-px bg-border group-hover:bg-accent group-active:bg-accent" />
-                    </div>
-                  </Show>
-                </div>
+                <Show when={isColVisible(col.key)}>
+                  <div class="relative px-2 py-1 overflow-hidden" title={t()(col.labelKey)}>
+                    <span class="truncate block">{t()(col.labelKey)}</span>
+                    <Show when={i() < lastVisibleColIdx()}>
+                      {/*
+                        6px-wide hit area for the cursor; the 1px visible line
+                        sits at its right edge via `border-r`. Default colour =
+                        border token; on hover/active it brightens to accent so
+                        it's obvious you can grab it.
+                      */}
+                      <div
+                        class="group absolute top-0 bottom-0 -right-[3px] w-1.5 cursor-col-resize z-20"
+                        onMouseDown={(e) => startResize(i(), e)}
+                        onDblClick={(e) => {
+                          e.stopPropagation();
+                          // Double-click resets this column to its default width.
+                          setColWidths((ws) => {
+                            const copy = ws.slice();
+                            copy[i()] = COLUMNS[i()]!.width;
+                            return copy;
+                          });
+                        }}
+                        title={t()("captures.column_resize_title")}
+                      >
+                        <div class="absolute right-1/2 top-1 bottom-1 w-px bg-border group-hover:bg-accent group-active:bg-accent" />
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
               )}
             </For>
           </div>
+          <Show when={headerMenuPos()}>
+            <div
+              ref={(el) => (headerMenuRef = el)}
+              class="fixed z-50 bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs select-none"
+              style={{
+                left: `${headerMenuPos()!.x}px`,
+                top: `${headerMenuPos()!.y}px`,
+                "min-width": "180px",
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              <div class="px-3 py-1 text-fg-muted uppercase tracking-wide text-[10px]">
+                {t()("captures.col_menu_title")}
+              </div>
+              <For each={TOGGLEABLE_COLS}>
+                {(key) => (
+                  <label class="flex items-center gap-2 px-3 py-1 cursor-pointer hover:bg-bg-muted">
+                    <input
+                      type="checkbox"
+                      class="accent-accent"
+                      checked={colVisible()[key]}
+                      onChange={(e) =>
+                        setColVisible({
+                          ...colVisible(),
+                          [key]: e.currentTarget.checked,
+                        })
+                      }
+                    />
+                    <span>{t()(`captures.column_${key}`)}</span>
+                  </label>
+                )}
+              </For>
+            </div>
+          </Show>
           <Show
             when={captures().length > 0}
             fallback={
@@ -984,29 +1096,43 @@ const CapturesView: Component = () => {
                       onContextMenu={(e) => openAddMenu(e, cap.id)}
                     >
                       <div class="px-2 truncate text-fg-muted">{row.index + 1}</div>
-                      <div class="px-2 truncate">{cap.method}</div>
-                      <div
-                        class={`px-2 truncate ${statusColor(cap.status, cap.error_kind)}`}
-                        title={errorHint(cap.error_kind)}
-                      >
-                        {cap.error_kind === "pinning" ? (
-                          <Lock size={12} />
-                        ) : cap.error_kind === "tls_handshake" ? (
-                          <ShieldAlert size={12} />
-                        ) : (
-                          cap.status ?? "—"
-                        )}
-                      </div>
-                      <div class="px-2 truncate">{cap.server_host}</div>
-                      <div
-                        class="px-2 truncate text-fg-muted"
-                        title={deviceName(cap.device_id) ?? cap.device_id ?? t()("captures.device_unknown")}
-                      >
-                        {deviceName(cap.device_id) ?? t()("captures.device_unknown")}
-                      </div>
-                      <div class="px-2 truncate">{cap.url_path}</div>
-                      <div class="px-2 truncate text-fg-muted">{cap.duration_ms ?? "—"}</div>
-                      <div class="px-2 truncate text-fg-muted">{fmtBytes(cap.total_bytes)}</div>
+                      <Show when={isColVisible("device")}>
+                        <div
+                          class="px-2 truncate text-fg-muted"
+                          title={deviceName(cap.device_id) ?? cap.device_id ?? t()("captures.device_unknown")}
+                        >
+                          {deviceName(cap.device_id) ?? t()("captures.device_unknown")}
+                        </div>
+                      </Show>
+                      <Show when={isColVisible("method")}>
+                        <div class="px-2 truncate">{cap.method}</div>
+                      </Show>
+                      <Show when={isColVisible("status")}>
+                        <div
+                          class={`px-2 truncate ${statusColor(cap.status, cap.error_kind)}`}
+                          title={errorHint(cap.error_kind)}
+                        >
+                          {cap.error_kind === "pinning" ? (
+                            <Lock size={12} />
+                          ) : cap.error_kind === "tls_handshake" ? (
+                            <ShieldAlert size={12} />
+                          ) : (
+                            cap.status ?? "—"
+                          )}
+                        </div>
+                      </Show>
+                      <Show when={isColVisible("host")}>
+                        <div class="px-2 truncate">{cap.server_host}</div>
+                      </Show>
+                      <Show when={isColVisible("path")}>
+                        <div class="px-2 truncate">{cap.url_path}</div>
+                      </Show>
+                      <Show when={isColVisible("ms")}>
+                        <div class="px-2 truncate text-fg-muted">{cap.duration_ms ?? "—"}</div>
+                      </Show>
+                      <Show when={isColVisible("bytes")}>
+                        <div class="px-2 truncate text-fg-muted">{fmtBytes(cap.total_bytes)}</div>
+                      </Show>
                     </div>
                   );
                 }}
