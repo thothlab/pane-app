@@ -42,6 +42,7 @@ pub async fn start(
             ca: ca_material,
             pac_listen: Some(pac_listen),
             heartbeat_listen: Some(heartbeat_listen),
+            registry: state.registry.clone(),
         })
         .await
         .map_err(to_api("engine_start"))?;

@@ -5,7 +5,7 @@
 //!   term  := '!'? atom
 //!   atom  := key ':' value | bareword
 //!   value := single | single ',' single (',' single)*
-//!   key   := host | method | status | mime | path | size | duration | error
+//!   key   := host | method | status | mime | path | size | duration | error | device
 //!
 //! Bareword without `:` is treated as substring search across host AND path
 //! (joined by OR) — this is what users expect when they type a word into
@@ -43,6 +43,7 @@ pub fn compile_to_sql(input: &str) -> Result<(String, Vec<Box<dyn ToSql>>)> {
             "size" => range_or_eq("total_bytes", value, negate, &mut params)?,
             "duration" => range_or_eq("duration_ms", value, negate, &mut params)?,
             "error" => eq_clause("error_kind", value, negate, &mut params),
+            "device" => eq_clause("device_id", value, negate, &mut params),
             "__bare" => bareword_clause(value, negate, &mut params),
             other => return Err(anyhow!("unknown filter key: {other}")),
         };
@@ -309,6 +310,19 @@ mod tests {
     fn error_kind_filter() {
         let (sql, _) = compile_to_sql("!error:tls_handshake").unwrap();
         assert!(sql.contains("error_kind <> ?"));
+    }
+
+    #[test]
+    fn device_filter_exact_match() {
+        let (sql, p) = compile_to_sql("device:abc-123").unwrap();
+        assert_eq!(sql, "device_id = ?");
+        assert_eq!(p.len(), 1);
+    }
+
+    #[test]
+    fn device_filter_negation() {
+        let (sql, _) = compile_to_sql("!device:abc-123").unwrap();
+        assert!(sql.contains("device_id <> ?"));
     }
 
     #[test]

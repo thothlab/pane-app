@@ -164,7 +164,12 @@ impl AndroidPlatform {
         Ok(devices)
     }
 
-    pub async fn add_usb(&self, serial: &str, ca: &CaMaterial) -> Result<DeviceDto> {
+    /// `mac_port` is the device-specific Mac-side proxy port allocated by the
+    /// `DevicePortRegistry`. The device-side reverse target stays `tcp:8888`
+    /// (the phone's `http_proxy` is always `127.0.0.1:8888`); only the local
+    /// forwarding port differs per device, so the proxy can attribute each
+    /// connection back to its device. First device gets 8888 (backward-compat).
+    pub async fn add_usb(&self, serial: &str, ca: &CaMaterial, mac_port: u16) -> Result<DeviceDto> {
         // Probe root + version.
         let rooted = run("adb", &["-s", serial, "shell", "which", "su"])
             .await
@@ -242,8 +247,17 @@ impl AndroidPlatform {
         // and clear what we just wrote. (Watchdog only clears after
         // a real established session breaks, so the actual race
         // window is tiny — but ordering this way costs nothing.)
-        if let Err(e) = run("adb", &["-s", serial, "reverse", "tcp:8888", "tcp:8888"]).await {
-            tracing::error!(error = %e, serial, "adb reverse 8888 failed — device cannot reach proxy");
+        // Device-side stays tcp:8888 (the phone's http_proxy never changes);
+        // the Mac-side target is this device's assigned pool port so the proxy
+        // can tell devices apart by the local port a connection lands on.
+        let mac_port_spec = format!("tcp:{mac_port}");
+        if let Err(e) = run(
+            "adb",
+            &["-s", serial, "reverse", "tcp:8888", &mac_port_spec],
+        )
+        .await
+        {
+            tracing::error!(error = %e, serial, mac_port, "adb reverse 8888 failed — device cannot reach proxy");
             last_error = Some(format!("adb reverse failed: {e}"));
         }
         if let Err(e) = run("adb", &["-s", serial, "reverse", "tcp:8889", "tcp:8889"]).await {

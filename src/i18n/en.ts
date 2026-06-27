@@ -98,6 +98,9 @@ const en = {
     column_path: "Path",
     column_ms: "ms",
     column_bytes: "bytes",
+    column_device: "Device",
+    device_filter_all: "All devices",
+    device_unknown: "—",
     filter_placeholder: "google · host:api.foo.com,api.bar.com · status:200,500..599 · !error:tls_handshake",
     filter_help:
       "Bare word: matches host OR path. E.g. 'google'.\nkey:value — host, path, method, status, mime, size, duration, error.\nWildcards: * inside the value (e.g. host:*google*).\nComma in value ORs alternatives (e.g. host:a.com,b.com, method:POST,PUT, status:200,500..599).\nNegate with ! (e.g. !error:tls_handshake, !host:cdn.*). Negated list means 'none of': !host:a,b → neither a nor b.\nRange: status:500..599 — size:0..1024 — duration:..200.\nMultiple tokens are ANDed (e.g. host:rc3.test.dev-og.com method:post).",

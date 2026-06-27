@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 
 use pane_ca::CaStore;
 use pane_devices::DeviceManager;
-use pane_engine::EngineHandle;
+use pane_engine::{DevicePortRegistry, EngineHandle};
 use pane_storage::Storage;
 
 pub struct AppState {
@@ -17,6 +17,10 @@ pub struct AppState {
     pub ca: Arc<CaStore>,
     pub devices: Arc<DeviceManager>,
     pub proxy_handle: Mutex<Option<EngineHandle>>,
+    /// Shared serial↔port↔device_id registry. Owned here so both the device
+    /// wiring (DeviceManager) and the proxy engine (via EngineConfig) see the
+    /// same map.
+    pub registry: DevicePortRegistry,
 }
 
 impl AppState {
@@ -29,13 +33,15 @@ impl AppState {
 
         let storage = Arc::new(Storage::open(&data_dir)?);
         let ca = Arc::new(CaStore::open_or_init(&data_dir, &storage)?);
-        let devices = Arc::new(DeviceManager::new(storage.clone()));
+        let registry = DevicePortRegistry::new();
+        let devices = Arc::new(DeviceManager::new(storage.clone(), registry.clone()));
 
         Ok(Self {
             storage,
             ca,
             devices,
             proxy_handle: Mutex::new(None),
+            registry,
         })
     }
 }

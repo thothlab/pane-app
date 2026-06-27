@@ -91,6 +91,7 @@ export interface CaptureDto {
   duration_ms: number | null;
   state: string;
   error_kind: string | null;
+  device_id: string | null;
   req_headers?: HeaderDto[];
   res_headers?: HeaderDto[];
 }

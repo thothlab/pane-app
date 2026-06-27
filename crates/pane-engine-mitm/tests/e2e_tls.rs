@@ -137,6 +137,7 @@ async fn end_to_end_https_mitm() {
             ca: ca.clone(),
             pac_listen: None,
             heartbeat_listen: None,
+            registry: pane_engine::DevicePortRegistry::new(),
         })
         .await
         .unwrap();

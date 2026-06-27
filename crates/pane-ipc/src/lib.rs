@@ -157,6 +157,9 @@ pub struct CaptureDto {
     pub duration_ms: Option<u64>,
     pub state: String,
     pub error_kind: Option<String>,
+    /// Persisted device-row id of the device this capture came from, or `None`
+    /// for old captures, iOS, and connections on unattributed proxy ports.
+    pub device_id: Option<String>,
     pub req_headers: Option<Vec<HeaderDto>>,
     pub res_headers: Option<Vec<HeaderDto>>,
 }

@@ -13,13 +13,17 @@
 //! follow-up tasks; the trait surface is engine-agnostic so a richer engine
 //! (mitmproxy-rs once stable) can drop in without rewiring callers.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use pane_engine::{EngineConfig, EngineEvent, EngineHandle, ProxyEngine};
+use pane_engine::{
+    DevicePortRegistry, EngineConfig, EngineEvent, EngineHandle, ProxyEngine, PROXY_PORT_POOL,
+};
 use pane_storage::Storage;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
+use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
 mod heartbeat;
@@ -62,53 +66,73 @@ impl MitmEngine {
 #[async_trait]
 impl ProxyEngine for MitmEngine {
     async fn start(&self, cfg: EngineConfig) -> anyhow::Result<EngineHandle> {
-        let listener = TcpListener::bind(cfg.listen).await?;
-        tracing::info!(listen = %cfg.listen, "proxy engine listening");
-
-        let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-        let storage = self.storage.clone();
-        let events = self.events_tx.clone();
         let ca = Arc::new(cfg.ca);
         let leaf_cache = Arc::new(leaf::LeafCache::new(ca.clone()));
 
-        // Single ServerConfig reused across connections. The cert resolver is
-        // SNI-keyed and caches per host inside LeafCache, so no per-connection
-        // setup beyond the TLS handshake itself. ALPN is restricted to HTTP/1.1:
-        // we don't parse h2 yet, and offering only http/1.1 forces clients to
-        // downgrade rather than open an unintelligible h2 connection.
+        // Single ServerConfig reused across connections and across every pool
+        // port. The cert resolver is SNI-keyed and caches per host inside
+        // LeafCache, so no per-connection setup beyond the TLS handshake
+        // itself. ALPN is restricted to HTTP/1.1: we don't parse h2 yet, and
+        // offering only http/1.1 forces clients to downgrade rather than open
+        // an unintelligible h2 connection.
         let mut server_cfg = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_cert_resolver(leaf_cache.clone());
         server_cfg.alpn_protocols = vec![b"http/1.1".to_vec()];
-        let tls_acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server_cfg));
+        let tls_acceptor = TlsAcceptor::from(Arc::new(server_cfg));
 
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = shutdown_rx.recv() => {
-                        tracing::info!("proxy engine shutting down");
-                        break;
+        // One TCP listener per pool port so each USB device (routed via its own
+        // `adb reverse tcp:8888 tcp:<pool_port>`) lands on a distinct local
+        // port we can map back to a device_id. `cfg.listen` is the canonical
+        // 8888 entry; the rest of the pool are spares. PAC/heartbeat stay on
+        // their own dedicated ports and are untouched here.
+        //
+        // Shutdown: the external handle exposes an mpsc (one `()` = stop). We
+        // fan that single signal out to every accept loop via a broadcast — an
+        // mpsc receiver can't be cloned across N loops.
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+        let (stop_tx, _stop_rx0) = broadcast::channel::<()>(1);
+        {
+            let stop_tx = stop_tx.clone();
+            tokio::spawn(async move {
+                let _ = shutdown_rx.recv().await;
+                let _ = stop_tx.send(());
+            });
+        }
+
+        // Canonical listen port (production: 8888 == PROXY_PORT_POOL[0]; tests:
+        // an ephemeral port) is bound first and is fatal — it's what the device
+        // (or test client) connects to. The rest of the attribution pool is
+        // best-effort: a spare already in use just means that slot's device
+        // won't get individual attribution.
+        let host = cfg.listen.ip();
+        let base_port = cfg.listen.port();
+        let mut ports = vec![base_port];
+        ports.extend(PROXY_PORT_POOL.iter().copied().filter(|p| *p != base_port));
+
+        for (idx, port) in ports.into_iter().enumerate() {
+            let addr = SocketAddr::new(host, port);
+            let listener = match TcpListener::bind(addr).await {
+                Ok(l) => l,
+                Err(e) => {
+                    if idx == 0 {
+                        return Err(e.into());
                     }
-                    accept = listener.accept() => {
-                        match accept {
-                            Ok((stream, peer)) => {
-                                let storage = storage.clone();
-                                let events = events.clone();
-                                let tls_acceptor = tls_acceptor.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) = proxy_loop::handle(stream, peer, storage, events, tls_acceptor).await {
-                                        tracing::warn!(error = %e, "connection handler error");
-                                    }
-                                });
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, "accept failed");
-                            }
-                        }
-                    }
+                    tracing::warn!(error = %e, %addr, "pool proxy port failed to bind; skipping");
+                    continue;
                 }
-            }
-        });
+            };
+            tracing::info!(%addr, "proxy engine listening");
+            spawn_accept_loop(
+                listener,
+                port,
+                cfg.registry.clone(),
+                self.storage.clone(),
+                self.events_tx.clone(),
+                tls_acceptor.clone(),
+                stop_tx.subscribe(),
+            );
+        }
 
         // Spin up the PAC server if requested. Failure here is logged
         // but doesn't abort proxy startup — without PAC the device gets
@@ -159,6 +183,51 @@ impl ProxyEngine for MitmEngine {
     fn events(&self) -> broadcast::Receiver<EngineEvent> {
         self.events_tx.subscribe()
     }
+}
+
+/// Spawn one accept loop for a single pool port. Each accepted connection is
+/// handed `local_port` + the shared registry so `proxy_loop::handle` can
+/// resolve which device it belongs to. Stops when `stop_rx` fires.
+#[allow(clippy::too_many_arguments)]
+fn spawn_accept_loop(
+    listener: TcpListener,
+    local_port: u16,
+    registry: DevicePortRegistry,
+    storage: Arc<Storage>,
+    events: broadcast::Sender<EngineEvent>,
+    tls_acceptor: TlsAcceptor,
+    mut stop_rx: broadcast::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = stop_rx.recv() => {
+                    tracing::info!(port = local_port, "proxy accept loop shutting down");
+                    break;
+                }
+                accept = listener.accept() => {
+                    match accept {
+                        Ok((stream, peer)) => {
+                            let registry = registry.clone();
+                            let storage = storage.clone();
+                            let events = events.clone();
+                            let tls_acceptor = tls_acceptor.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = proxy_loop::handle(
+                                    stream, peer, local_port, registry, storage, events, tls_acceptor,
+                                ).await {
+                                    tracing::warn!(error = %e, "connection handler error");
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "accept failed");
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 pub(crate) fn new_capture_id() -> Uuid {

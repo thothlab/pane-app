@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+mod registry;
+pub use registry::{DevicePortRegistry, PROXY_PORT_POOL};
+
 pub struct EngineConfig {
     pub listen: SocketAddr,
     pub ca: CaMaterial,
@@ -28,6 +31,10 @@ pub struct EngineConfig {
     /// unplugged — it clears `http_proxy` on the device so the user
     /// doesn't get stranded with no internet.
     pub heartbeat_listen: Option<SocketAddr>,
+    /// Shared serial↔port↔device_id registry. The proxy binds the whole port
+    /// pool (8888 + the spares) and uses this to resolve which device a given
+    /// connection's local port belongs to, so captures can be attributed.
+    pub registry: DevicePortRegistry,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

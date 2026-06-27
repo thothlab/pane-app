@@ -1,4 +1,4 @@
-import { type Component, createSignal, createMemo, createEffect, onMount, onCleanup, For, Show } from "solid-js";
+import { type Component, createSignal, createMemo, createEffect, createResource, onMount, onCleanup, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle } from "lucide-solid";
@@ -65,6 +65,7 @@ const COLUMNS = [
   { key: "method", labelKey: "captures.column_method", width: 80 },
   { key: "status", labelKey: "captures.column_status", width: 72 },
   { key: "host", labelKey: "captures.column_host", width: 220 },
+  { key: "device", labelKey: "captures.column_device", width: 140 },
   { key: "path", labelKey: "captures.column_path", width: 320 },
   { key: "ms", labelKey: "captures.column_ms", width: 64 },
   { key: "bytes", labelKey: "captures.column_bytes", width: 72 },
@@ -108,6 +109,36 @@ const CapturesView: Component = () => {
   const navigate = useNavigate();
   const [captures, setCaptures] = createSignal<CaptureDto[]>([]);
   const [filterError, setFilterError] = createSignal<string | null>(null);
+
+  // Known devices, for resolving capture.device_id → display_name in the
+  // table and populating the device-filter dropdown. Same source the Devices
+  // view uses (api.devices.list). Refreshed on mount; the list is small and
+  // changes rarely, so we don't poll it.
+  const [devices, { refetch: refetchDevices }] = createResource(() =>
+    api.devices.list(),
+  );
+  const deviceName = (id: string | null): string | null => {
+    if (!id) return null;
+    const d = (devices() ?? []).find((x) => x.id === id);
+    return d?.display_name ?? null;
+  };
+  // Dropdown shows "All devices" + every known device. Selecting a device
+  // injects `device:<id>` into the filter (replacing any existing device:
+  // token); "All" strips it. Reflects the current filter so the <select>
+  // stays in sync when the user edits the raw filter text.
+  const selectedDeviceId = createMemo(() => {
+    const m = filter().match(/(?:^|\s)device:(\S+)/);
+    return m ? m[1]! : "";
+  });
+  const onPickDevice = (id: string) => {
+    // Drop any existing device: token, then append the new one (unless "All").
+    const stripped = filter()
+      .replace(/(?:^|\s)!?device:\S+/g, "")
+      .trim();
+    const next = id ? (stripped ? `${stripped} device:${id}` : `device:${id}`) : stripped;
+    setFilter(next);
+    debouncedRefresh(true);
+  };
   // Auto-follow tail: when true, new captures yank the list to the bottom.
   // The user's preference is persisted; manual scroll up/down also adjusts
   // it implicitly (Android Studio Logcat-style — scrolling away pauses
@@ -839,6 +870,18 @@ const CapturesView: Component = () => {
         <Show when={filterError()}>
           <span class="text-xs text-danger">{filterError()}</span>
         </Show>
+        <select
+          class="text-xs px-2 py-1 rounded bg-bg-muted text-fg outline-none focus:ring-1 focus:ring-accent max-w-[180px]"
+          value={selectedDeviceId()}
+          onFocus={() => void refetchDevices()}
+          onChange={(e) => onPickDevice(e.currentTarget.value)}
+          title={t()("captures.column_device")}
+        >
+          <option value="">{t()("captures.device_filter_all")}</option>
+          <For each={devices() ?? []}>
+            {(d) => <option value={d.id}>{d.display_name}</option>}
+          </For>
+        </select>
         <button
           class={`text-xs px-2 py-1 rounded inline-flex items-center gap-1 ${
             autoFollow()
@@ -955,6 +998,12 @@ const CapturesView: Component = () => {
                         )}
                       </div>
                       <div class="px-2 truncate">{cap.server_host}</div>
+                      <div
+                        class="px-2 truncate text-fg-muted"
+                        title={deviceName(cap.device_id) ?? cap.device_id ?? t()("captures.device_unknown")}
+                      >
+                        {deviceName(cap.device_id) ?? t()("captures.device_unknown")}
+                      </div>
                       <div class="px-2 truncate">{cap.url_path}</div>
                       <div class="px-2 truncate text-fg-muted">{cap.duration_ms ?? "—"}</div>
                       <div class="px-2 truncate text-fg-muted">{fmtBytes(cap.total_bytes)}</div>
@@ -1216,6 +1265,7 @@ const VALID_FILTER_KEYS = new Set([
   "size",
   "duration",
   "error",
+  "device",
 ]);
 
 /// Render the filter input's text with per-token colours. Mirrors the input

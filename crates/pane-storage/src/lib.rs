@@ -313,7 +313,7 @@ impl Storage {
         let sql = format!(
             "SELECT id, session_id, started_at, ended_at, client_addr, server_host, server_port,
                     scheme, http_version, method, url_path, status, req_body_id, res_body_id,
-                    total_bytes, duration_ms, state, error_kind
+                    total_bytes, duration_ms, state, error_kind, device_id
              FROM (
                SELECT * FROM capture
                WHERE {where_sql}
@@ -337,7 +337,7 @@ impl Storage {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, started_at, ended_at, client_addr, server_host, server_port,
                     scheme, http_version, method, url_path, status, req_body_id, res_body_id,
-                    total_bytes, duration_ms, state, error_kind
+                    total_bytes, duration_ms, state, error_kind, device_id
              FROM capture WHERE id=?1",
         )?;
         let mut cap = stmt.query_row(params![id.to_string()], Self::map_capture_row)?;
@@ -396,6 +396,7 @@ impl Storage {
             duration_ms: r.get::<_, Option<i64>>(15)?.map(|v| v as u64),
             state: r.get(16)?,
             error_kind: r.get(17)?,
+            device_id: r.get(18)?,
             req_headers: None,
             res_headers: None,
         })
