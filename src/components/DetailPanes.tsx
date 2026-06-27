@@ -196,7 +196,7 @@ const HeaderRow: Component<{ header: { name: string; value: string } }> = (p) =>
     flash("pair");
   };
   return (
-    <div class="group flex gap-2 py-0.5 hover:bg-bg-subtle rounded px-1 -mx-1">
+    <div class="group flex items-start gap-2 py-0.5 hover:bg-bg-subtle rounded px-1 -mx-1">
       <button
         class="text-accent hover:underline text-left shrink-0"
         title={t()("detail.copy_header_name")}
