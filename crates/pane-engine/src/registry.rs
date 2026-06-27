@@ -16,12 +16,17 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-/// Mac-side data-proxy port pool. The first device keeps `8888` for backward
-/// compatibility (PAC still advertises `PROXY 127.0.0.1:8888` device-side, and
-/// the device's own `http_proxy` stays `127.0.0.1:8888`). Ports `8889`/`8890`
-/// are reserved for the shared PAC and heartbeat services and are NOT in the
-/// pool. Eight devices is well past any realistic desk setup.
-pub const PROXY_PORT_POOL: [u16; 8] = [8888, 8891, 8892, 8893, 8894, 8895, 8896, 8897];
+/// Mac-side data-proxy port pool for ATTRIBUTED (per-device) traffic.
+///
+/// `8888` is deliberately NOT in the pool: it's the canonical proxy port the
+/// engine always binds, and it carries direct Mac-local traffic (e.g. a
+/// desktop browser pointed at `127.0.0.1:8888`). Leaving it unassigned means
+/// such traffic resolves to `device_id = NULL` ("—") instead of being
+/// mislabelled as whichever device happened to grab 8888 first. Each USB
+/// device instead reverses `tcp:8888 tcp:<pool port>` so its traffic lands on
+/// a distinct port we can attribute. `8889`/`8890` are the shared PAC and
+/// heartbeat services. Eight devices is well past any realistic desk setup.
+pub const PROXY_PORT_POOL: [u16; 8] = [8891, 8892, 8893, 8894, 8895, 8896, 8897, 8898];
 
 #[derive(Default)]
 struct Inner {
@@ -51,9 +56,10 @@ impl DevicePortRegistry {
     /// still reserves the port but leaves it unattributed until a later assign
     /// supplies the id.
     ///
-    /// Pool exhaustion (9th+ device) falls back to `8888` — attribution is lost
-    /// for that device, but it still gets a working proxy. The pool caps at 8 by
-    /// design so this is a safety net, not an expected path.
+    /// Pool exhaustion (9th+ device) falls back to the first pool port — that
+    /// device shares a port (and thus attribution) with device #1, but still
+    /// gets a working proxy. The pool caps at 8 by design, so this is a safety
+    /// net, not an expected path.
     pub fn assign(&self, serial: &str, device_id: Option<String>) -> u16 {
         let mut inner = self.inner.lock();
         let port = match inner.serial_to_port.get(serial) {
@@ -104,7 +110,15 @@ mod tests {
         let p1 = r.assign("A", Some("dev-a".into()));
         let p2 = r.assign("A", Some("dev-a".into()));
         assert_eq!(p1, p2);
-        assert_eq!(p1, 8888, "first device keeps 8888");
+        assert_eq!(p1, 8891, "first device gets the first pool port (8888 reserved)");
+    }
+
+    #[test]
+    fn devices_never_get_the_reserved_8888() {
+        let r = DevicePortRegistry::new();
+        assert!(!PROXY_PORT_POOL.contains(&8888), "8888 must stay out of the pool");
+        let a = r.assign("A", None);
+        assert_ne!(a, 8888, "device must not be attributed to the Mac-local port");
     }
 
     #[test]
@@ -113,8 +127,8 @@ mod tests {
         let a = r.assign("A", None);
         let b = r.assign("B", None);
         assert_ne!(a, b);
-        assert_eq!(a, 8888);
-        assert_eq!(b, 8891);
+        assert_eq!(a, 8891);
+        assert_eq!(b, 8892);
     }
 
     #[test]
