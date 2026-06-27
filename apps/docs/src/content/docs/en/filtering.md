@@ -52,12 +52,24 @@ When more than one device is connected, each capture is tagged with its
 source device. The **Device** column shows the short model (e.g. "RS35"); the dropdown to
 the right of the search bar shows the full name ("CipherLab RS35"). Picking
 a device shows only its requests (it injects the short `device:RS35` into
-the filter), "All devices" clears it. You can also type it: `device:RS35`
-matches by name/serial (substring).
+the filter). You can also type it: `device:RS35` matches by name/serial
+(substring).
+
+Dropdown items:
+
+- **Not selected** — filter cleared; shows everything currently flowing
+  through Pane.
+- **&lt;device&gt;** (RS35…) — that device's traffic only.
+- **This computer** — capture the Mac's own browser/system traffic. On
+  pick, Pane adds its CA to the login keychain once (system password
+  prompt) and points the macOS system proxy at `127.0.0.1:8888`; the list
+  filters to Mac traffic (labelled "This computer"). The system proxy is
+  reverted on Stop proxy and on quit. Caveat: Chrome→Google often uses QUIC
+  (UDP) which bypasses an HTTP proxy — test on a regular HTTPS site.
 
 How attribution works: each USB device routes through its own Mac-side
-proxy port, and the backend resolves the source from that port. Old
-captures and unattributed devices show as "—".
+proxy port (8891+), and port `8888` is reserved for the Mac's own traffic.
+Old captures and unattributed devices show as "—".
 
 ## Saving filters
 
