@@ -18,6 +18,7 @@ left to right, all space-separated terms must match (AND).
 | `size:` | response total bytes, single or range | `size:0`, `size:1000..` |
 | `duration:` | request duration in ms | `duration:1000..` (slow), `duration:..50` (fast) |
 | `error:` | exact `error_kind` value | `error:tls_handshake`, `error:pinning` |
+| `device:` | exact source device id | `device:<id>` |
 
 Keys are **case-insensitive** — `host:`, `Host:` and `HOST:` all
 resolve to the same clause. Useful when iOS autocapitalises the first
@@ -44,6 +45,18 @@ docs                          # matches host:docs.example.com OR path:/docs
 ```
 
 Quote phrases that contain spaces or special characters: `"some phrase"`.
+
+## Filtering by device
+
+When more than one device is connected, each capture is tagged with its
+source device. The list has a **Device** column (device name), and a
+dropdown to the right of the search bar: picking a device shows only its
+requests (it injects `device:<id>` into the filter), "All devices" clears
+it.
+
+How attribution works: each USB device routes through its own Mac-side
+proxy port, and the backend resolves the source from that port. Old
+captures and unattributed devices show as "—".
 
 ## Saving filters
 
