@@ -63,6 +63,14 @@ captures and unattributed devices show as "—".
 
 The ☆ button on the right of the search bar saves the current filter to
 the sidebar. Pinned filters live above non-pinned and survive restarts.
+Saving under a name that already exists **updates** that filter instead of
+creating a duplicate (names are unique within their tab — captures/logcat).
+
+## Table columns
+
+Right-click the table header for a column list — hide the ones you don't
+need (the "#" column always stays). The choice is remembered across
+restarts.
 
 ## Syntax highlighting
 
