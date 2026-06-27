@@ -531,8 +531,26 @@ impl Storage {
     // ---------- Filters ----------
 
     pub fn save_filter(&self, args: SaveFilterArgs) -> Result<FilterDto> {
-        let id = args.id.unwrap_or_else(Uuid::new_v4);
         let conn = self.conn.lock();
+        // Resolve the target row id. An explicit id (the UI detected an
+        // update) wins. Otherwise reuse any existing filter with the same
+        // (name, kind) so re-saving under an existing name overwrites it
+        // instead of creating a duplicate — the UI's name-collision check
+        // can miss when its filter list hasn't finished loading yet, so the
+        // dedup is enforced here at the data layer regardless of timing.
+        let id = match args.id {
+            Some(id) => id,
+            None => conn
+                .query_row(
+                    "SELECT id FROM saved_filter
+                     WHERE lower(trim(name)) = lower(trim(?1)) AND kind = ?2",
+                    params![&args.name, &args.kind],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?
+                .and_then(|s| Uuid::parse_str(&s).ok())
+                .unwrap_or_else(Uuid::new_v4),
+        };
         conn.execute(
             "INSERT INTO saved_filter (id, name, query, color, pinned, kind)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -1043,5 +1061,60 @@ impl Storage {
 
     pub fn conn(&self) -> &Mutex<Connection> {
         &self.conn
+    }
+}
+
+#[cfg(test)]
+mod filter_dedup_tests {
+    use super::*;
+    use pane_ipc::SaveFilterArgs;
+    use tempfile::tempdir;
+
+    fn args(name: &str, query: &str, kind: &str) -> SaveFilterArgs {
+        SaveFilterArgs {
+            id: None,
+            name: name.into(),
+            query: query.into(),
+            color: "#fff".into(),
+            pinned: false,
+            kind: kind.into(),
+        }
+    }
+
+    #[test]
+    fn resaving_same_name_updates_not_duplicates() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let a = s.save_filter(args("rc1", "host:rc1", "captures")).unwrap();
+        // Re-save under the same name (no id, as a fresh save would) — must
+        // reuse the row, not create a second "rc1".
+        let b = s
+            .save_filter(args("rc1", "host:rc1 status:200", "captures"))
+            .unwrap();
+        assert_eq!(a.id, b.id, "same name+kind must reuse the row");
+        let list = s.list_filters(Some("captures")).unwrap();
+        assert_eq!(list.iter().filter(|f| f.name == "rc1").count(), 1);
+        assert_eq!(
+            list.iter().find(|f| f.name == "rc1").unwrap().query,
+            "host:rc1 status:200"
+        );
+    }
+
+    #[test]
+    fn same_name_different_kind_stays_separate() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let a = s.save_filter(args("dev", "host:dev", "captures")).unwrap();
+        let b = s.save_filter(args("dev", "tag:dev", "logcat")).unwrap();
+        assert_ne!(a.id, b.id, "different kinds are independent scopes");
+    }
+
+    #[test]
+    fn name_match_is_case_and_whitespace_insensitive() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let a = s.save_filter(args("RC1", "host:rc1", "captures")).unwrap();
+        let b = s.save_filter(args("  rc1 ", "host:x", "captures")).unwrap();
+        assert_eq!(a.id, b.id, "trim + lowercase name should match");
     }
 }
