@@ -153,20 +153,36 @@ const CapturesView: Component = () => {
     const d = (devices() ?? []).find((x) => x.id === id);
     return d?.display_name ?? null;
   };
-  // Dropdown shows "All devices" + every known device. Selecting a device
-  // injects `device:<id>` into the filter (replacing any existing device:
-  // token); "All" strips it. Reflects the current filter so the <select>
-  // stays in sync when the user edits the raw filter text.
-  const selectedDeviceId = createMemo(() => {
-    const m = filter().match(/(?:^|\s)device:(\S+)/);
-    return m ? m[1]! : "";
+  // Short, human label for the table cell and the filter token. display_name
+  // is "<vendor> <model> · Android <ver> · <serial-tail>"; the head before
+  // the first " · " (e.g. "CipherLab RS35") is short and still readable.
+  const deviceHead = (full: string): string => full.split(" · ")[0]!.trim();
+  const shortDeviceName = (id: string | null): string | null => {
+    const full = deviceName(id);
+    return full ? deviceHead(full) : null;
+  };
+  // The filter matches device by name/serial substring (see filter_dsl), so
+  // the token is the short head — not the UUID. Quote it when it has spaces.
+  const deviceFilterToken = (head: string): string =>
+    head.includes(" ") ? `"${head}"` : head;
+
+  // Dropdown shows "All devices" + every known device by its short head.
+  // Selecting injects `device:<head>` into the filter (replacing any
+  // existing device: token); "All" strips it. Reflects the current filter
+  // so the <select> stays in sync when the user edits the raw filter text.
+  const selectedDeviceHead = createMemo(() => {
+    // Match device:"quoted value" OR device:bareword.
+    const m = filter().match(/(?:^|\s)device:("([^"]*)"|\S+)/);
+    if (!m) return "";
+    return (m[2] !== undefined ? m[2] : m[1]!).trim();
   });
-  const onPickDevice = (id: string) => {
-    // Drop any existing device: token, then append the new one (unless "All").
+  const onPickDevice = (head: string) => {
+    // Drop any existing device: token (quoted or bare), then append the new.
     const stripped = filter()
-      .replace(/(?:^|\s)!?device:\S+/g, "")
+      .replace(/(?:^|\s)!?device:("[^"]*"|\S+)/g, "")
       .trim();
-    const next = id ? (stripped ? `${stripped} device:${id}` : `device:${id}`) : stripped;
+    const tok = head ? `device:${deviceFilterToken(head)}` : "";
+    const next = tok ? (stripped ? `${stripped} ${tok}` : tok) : stripped;
     setFilter(next);
     debouncedRefresh(true);
   };
@@ -946,14 +962,18 @@ const CapturesView: Component = () => {
         </Show>
         <select
           class="text-xs px-2 py-1 rounded bg-bg-muted text-fg outline-none focus:ring-1 focus:ring-accent max-w-[180px]"
-          value={selectedDeviceId()}
+          value={selectedDeviceHead()}
           onFocus={() => void refetchDevices()}
           onChange={(e) => onPickDevice(e.currentTarget.value)}
           title={t()("captures.column_device")}
         >
           <option value="">{t()("captures.device_filter_all")}</option>
           <For each={devices() ?? []}>
-            {(d) => <option value={d.id}>{d.display_name}</option>}
+            {(d) => (
+              <option value={deviceHead(d.display_name)} title={d.display_name}>
+                {deviceHead(d.display_name)}
+              </option>
+            )}
           </For>
         </select>
         <button
@@ -1101,7 +1121,7 @@ const CapturesView: Component = () => {
                           class="px-2 truncate text-fg-muted"
                           title={deviceName(cap.device_id) ?? cap.device_id ?? t()("captures.device_unknown")}
                         >
-                          {deviceName(cap.device_id) ?? t()("captures.device_unknown")}
+                          {shortDeviceName(cap.device_id) ?? t()("captures.device_unknown")}
                         </div>
                       </Show>
                       <Show when={isColVisible("method")}>

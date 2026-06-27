@@ -43,7 +43,7 @@ pub fn compile_to_sql(input: &str) -> Result<(String, Vec<Box<dyn ToSql>>)> {
             "size" => range_or_eq("total_bytes", value, negate, &mut params)?,
             "duration" => range_or_eq("duration_ms", value, negate, &mut params)?,
             "error" => eq_clause("error_kind", value, negate, &mut params),
-            "device" => eq_clause("device_id", value, negate, &mut params),
+            "device" => device_clause(value, negate, &mut params),
             "__bare" => bareword_clause(value, negate, &mut params),
             other => return Err(anyhow!("unknown filter key: {other}")),
         };
@@ -199,6 +199,32 @@ fn mime_clause(value: &str, neg: bool, params: &mut Vec<Box<dyn ToSql>>) -> Stri
     join_alternatives(parts, neg)
 }
 
+/// `device:foo` matches against the device's human name or serial (not the
+/// opaque device_id UUID), resolving through the `device` table — so the user
+/// can type `device:RS35` instead of pasting a UUID. Substring, `*` glob and
+/// comma-list all behave like the other text keys.
+fn device_clause(value: &str, neg: bool, params: &mut Vec<Box<dyn ToSql>>) -> String {
+    let parts: Vec<String> = split_values(value)
+        .into_iter()
+        .map(|v| {
+            let pattern = if v.contains('*') {
+                v.replace('*', "%")
+            } else {
+                format!("%{v}%")
+            };
+            // Two params: one for display_name, one for serial.
+            params.push(Box::new(pattern.clone()));
+            params.push(Box::new(pattern));
+            let op = if neg { "NOT IN" } else { "IN" };
+            format!(
+                "capture.device_id {op} (SELECT id FROM device \
+                 WHERE display_name LIKE ? OR serial LIKE ?)"
+            )
+        })
+        .collect();
+    join_alternatives(parts, neg)
+}
+
 fn range_or_eq(
     col: &str,
     value: &str,
@@ -313,16 +339,26 @@ mod tests {
     }
 
     #[test]
-    fn device_filter_exact_match() {
-        let (sql, p) = compile_to_sql("device:abc-123").unwrap();
-        assert_eq!(sql, "device_id = ?");
-        assert_eq!(p.len(), 1);
+    fn device_filter_matches_name_or_serial() {
+        let (sql, p) = compile_to_sql("device:RS35").unwrap();
+        assert!(sql.contains("capture.device_id IN (SELECT id FROM device"));
+        assert!(sql.contains("display_name LIKE ?"));
+        assert!(sql.contains("serial LIKE ?"));
+        // One pattern bound twice (display_name + serial).
+        assert_eq!(p.len(), 2);
     }
 
     #[test]
     fn device_filter_negation() {
-        let (sql, _) = compile_to_sql("!device:abc-123").unwrap();
-        assert!(sql.contains("device_id <> ?"));
+        let (sql, _) = compile_to_sql("!device:RS35").unwrap();
+        assert!(sql.contains("capture.device_id NOT IN (SELECT id FROM device"));
+    }
+
+    #[test]
+    fn device_filter_quoted_value_with_space() {
+        let (sql, p) = compile_to_sql("device:\"CipherLab RS35\"").unwrap();
+        assert!(sql.contains("capture.device_id IN (SELECT id FROM device"));
+        assert_eq!(p.len(), 2);
     }
 
     #[test]
