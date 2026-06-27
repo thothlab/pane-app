@@ -836,7 +836,7 @@ const CapturesView: Component = () => {
           <pre
             ref={(el) => (filterOverlay = el)}
             aria-hidden="true"
-            class="absolute inset-0 pointer-events-none text-sm font-mono whitespace-pre overflow-hidden pr-6 m-0 flex items-center"
+            class="absolute left-0 right-6 top-0 bottom-0 pointer-events-none text-sm font-mono whitespace-pre overflow-hidden m-0 flex items-center"
           >
             <span class="flex-shrink-0">
               <FilterHighlight text={filter()} />
@@ -871,7 +871,7 @@ const CapturesView: Component = () => {
           <Show when={filter().trim()}>
             <button
               type="button"
-              class="absolute right-0 text-fg-muted hover:text-warn p-0.5 rounded hover:bg-bg-muted"
+              class="absolute right-0 bg-bg-subtle text-fg-muted hover:text-warn pl-1 p-0.5 rounded hover:bg-bg-muted"
               title={t()("captures.save_filter_title")}
               aria-label={t()("captures.save_filter")}
               onClick={openSave}
