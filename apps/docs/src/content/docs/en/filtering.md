@@ -49,11 +49,11 @@ Quote phrases that contain spaces or special characters: `"some phrase"`.
 ## Filtering by device
 
 When more than one device is connected, each capture is tagged with its
-source device. The list has a **Device** column (short name, e.g. "CipherLab RS35"), and
-a dropdown to the right of the search bar: picking a device shows only its
-requests (it injects a short `device:<name>` into the filter), "All
-devices" clears it. You can also type it: `device:RS35` matches by
-name/serial (substring).
+source device. The **Device** column shows the short model (e.g. "RS35"); the dropdown to
+the right of the search bar shows the full name ("CipherLab RS35"). Picking
+a device shows only its requests (it injects the short `device:RS35` into
+the filter), "All devices" clears it. You can also type it: `device:RS35`
+matches by name/serial (substring).
 
 How attribution works: each USB device routes through its own Mac-side
 proxy port, and the backend resolves the source from that port. Old

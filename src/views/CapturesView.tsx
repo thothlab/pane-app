@@ -153,35 +153,42 @@ const CapturesView: Component = () => {
     const d = (devices() ?? []).find((x) => x.id === id);
     return d?.display_name ?? null;
   };
-  // Short, human label for the table cell and the filter token. display_name
-  // is "<vendor> <model> · Android <ver> · <serial-tail>"; the head before
-  // the first " · " (e.g. "CipherLab RS35") is short and still readable.
+  // display_name is "<vendor> <model> · Android <ver> · <serial-tail>".
+  // `deviceHead` = "<vendor> <model>" (e.g. "CipherLab RS35") — shown in the
+  // dropdown. `deviceModel` drops the vendor (first word) → just "RS35",
+  // used in the table cell and the filter token. Single-word heads (vendor
+  // unknown) keep the whole head as the model.
   const deviceHead = (full: string): string => full.split(" · ")[0]!.trim();
+  const deviceModel = (full: string): string => {
+    const head = deviceHead(full);
+    const parts = head.split(/\s+/);
+    return parts.length > 1 ? parts.slice(1).join(" ") : head;
+  };
   const shortDeviceName = (id: string | null): string | null => {
     const full = deviceName(id);
-    return full ? deviceHead(full) : null;
+    return full ? deviceModel(full) : null;
   };
   // The filter matches device by name/serial substring (see filter_dsl), so
-  // the token is the short head — not the UUID. Quote it when it has spaces.
-  const deviceFilterToken = (head: string): string =>
-    head.includes(" ") ? `"${head}"` : head;
+  // the token is the short model — not the UUID. Quote it when it has spaces.
+  const deviceFilterToken = (model: string): string =>
+    model.includes(" ") ? `"${model}"` : model;
 
-  // Dropdown shows "All devices" + every known device by its short head.
-  // Selecting injects `device:<head>` into the filter (replacing any
-  // existing device: token); "All" strips it. Reflects the current filter
-  // so the <select> stays in sync when the user edits the raw filter text.
-  const selectedDeviceHead = createMemo(() => {
+  // Dropdown lists "All devices" + every known device by its FULL head
+  // ("CipherLab RS35"), but selecting injects the short model token
+  // (`device:RS35`), replacing any existing device: token. The <select>
+  // value is the model so it re-syncs when the user edits the filter text.
+  const selectedDeviceModel = createMemo(() => {
     // Match device:"quoted value" OR device:bareword.
     const m = filter().match(/(?:^|\s)device:("([^"]*)"|\S+)/);
     if (!m) return "";
     return (m[2] !== undefined ? m[2] : m[1]!).trim();
   });
-  const onPickDevice = (head: string) => {
+  const onPickDevice = (model: string) => {
     // Drop any existing device: token (quoted or bare), then append the new.
     const stripped = filter()
       .replace(/(?:^|\s)!?device:("[^"]*"|\S+)/g, "")
       .trim();
-    const tok = head ? `device:${deviceFilterToken(head)}` : "";
+    const tok = model ? `device:${deviceFilterToken(model)}` : "";
     const next = tok ? (stripped ? `${stripped} ${tok}` : tok) : stripped;
     setFilter(next);
     debouncedRefresh(true);
@@ -962,7 +969,7 @@ const CapturesView: Component = () => {
         </Show>
         <select
           class="text-xs px-2 py-1 rounded bg-bg-muted text-fg outline-none focus:ring-1 focus:ring-accent max-w-[180px]"
-          value={selectedDeviceHead()}
+          value={selectedDeviceModel()}
           onFocus={() => void refetchDevices()}
           onChange={(e) => onPickDevice(e.currentTarget.value)}
           title={t()("captures.column_device")}
@@ -970,7 +977,7 @@ const CapturesView: Component = () => {
           <option value="">{t()("captures.device_filter_all")}</option>
           <For each={devices() ?? []}>
             {(d) => (
-              <option value={deviceHead(d.display_name)} title={d.display_name}>
+              <option value={deviceModel(d.display_name)} title={d.display_name}>
                 {deviceHead(d.display_name)}
               </option>
             )}
