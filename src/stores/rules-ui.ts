@@ -160,3 +160,32 @@ export function clearRuleDraft(key: string): void {
     /* ignore */
   }
 }
+
+// ── Unsaved-changes guard ──────────────────────────────────────────
+// Module-level dirty flag and pending-navigation callback. Only one
+// RuleEditor is ever mounted at a time, so these scalars are enough.
+// `ruleEditorDirty` drives the Save button colour and the guard check.
+// `ruleEditorPendingNav` holds the deferred action while the modal
+// is visible; null means the modal is closed.
+
+const [ruleEditorDirty, setRuleEditorDirty] = createSignal(false);
+const [ruleEditorPendingNav, setRuleEditorPendingNav] = createSignal<
+  (() => void) | null
+>(null);
+
+let _editorSaveFn: (() => Promise<void>) | null = null;
+
+export function registerEditorSaveFn(fn: (() => Promise<void>) | null): void {
+  _editorSaveFn = fn;
+}
+
+export async function triggerEditorSave(): Promise<void> {
+  if (_editorSaveFn) await _editorSaveFn();
+}
+
+export {
+  ruleEditorDirty,
+  setRuleEditorDirty,
+  ruleEditorPendingNav,
+  setRuleEditorPendingNav,
+};

@@ -1,4 +1,5 @@
-import { type Component, createSignal, createMemo, For, Index, Show, onMount } from "solid-js";
+import { type Component, createSignal, createMemo, For, Index, Show, onMount, onCleanup } from "solid-js";
+import { useBeforeLeave } from "@solidjs/router";
 import {
   Plus,
   Trash2,
@@ -47,6 +48,12 @@ import {
   loadRuleDraft,
   saveRuleDraft,
   clearRuleDraft,
+  ruleEditorDirty,
+  setRuleEditorDirty,
+  ruleEditorPendingNav,
+  setRuleEditorPendingNav,
+  registerEditorSaveFn,
+  triggerEditorSave,
 } from "@/stores/rules-ui";
 import type {
   RuleDto,
@@ -404,10 +411,49 @@ const RulesView: Component = () => {
     }
   };
 
+  // Show the unsaved-changes modal if the editor is dirty; otherwise run
+  // `action` immediately. The modal's Save/Cancel buttons drive
+  // `saveAndProceed` and `cancelNav`.
+  const guard = (action: () => void) => {
+    if (ruleEditorDirty()) {
+      setRuleEditorPendingNav(() => action);
+    } else {
+      action();
+    }
+  };
+
+  const cancelNav = () => setRuleEditorPendingNav(null);
+
+  const discardAndProceed = () => {
+    const ed = editing();
+    if (ed) clearRuleDraft(ruleDraftKey(ed.id === "new" ? null : ed.id, ed.collectionId));
+    setRuleEditorDirty(false);
+    const action = ruleEditorPendingNav();
+    setRuleEditorPendingNav(null);
+    action?.();
+  };
+
+  const saveAndProceed = async () => {
+    await triggerEditorSave();
+    if (!ruleEditorDirty()) {
+      const action = ruleEditorPendingNav();
+      setRuleEditorPendingNav(null);
+      action?.();
+    }
+  };
+
+  // Intercept tab/route navigation away from this view when dirty.
+  useBeforeLeave((e) => {
+    if (ruleEditorDirty()) {
+      e.preventDefault();
+      setRuleEditorPendingNav(() => () => e.retry(true));
+    }
+  });
+
   const startNewRule = (collectionId: string | null) =>
-    setEditing({ kind: "rule", collectionId, id: "new" });
+    guard(() => setEditing({ kind: "rule", collectionId, id: "new" }));
   const startEditRule = (r: RuleDto) =>
-    setEditing({ kind: "rule", collectionId: r.collection_id, id: r.id });
+    guard(() => setEditing({ kind: "rule", collectionId: r.collection_id, id: r.id }));
   const cancelEdit = () => setEditing(null);
 
   const onRuleSaved = async (saved: RuleDto) => {
@@ -416,8 +462,19 @@ const RulesView: Component = () => {
   };
 
   const isCollapsed = (k: string) => collapsed()[k] === true;
-  const toggleSection = (k: string) =>
-    setCollapsed({ ...collapsed(), [k]: !collapsed()[k] });
+  const toggleSection = (k: string) => {
+    const next = { ...collapsed(), [k]: !collapsed()[k] };
+    const collapsing = !collapsed()[k];
+    const ed = editing();
+    if (collapsing && ed && ruleEditorDirty()) {
+      const inThisSection = k === (ed.collectionId ?? UNGROUPED_KEY);
+      if (inThisSection) {
+        guard(() => setCollapsed(next));
+        return;
+      }
+    }
+    setCollapsed(next);
+  };
 
   // Drag handlers shared by every CollectionSection.
   const onDragStartRule = (id: string) => setDraggingRuleId(id);
@@ -655,6 +712,39 @@ const RulesView: Component = () => {
           </div>
         </Show>
       </div>
+
+      <Show when={ruleEditorPendingNav()}>
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div class="bg-bg border border-border rounded-lg p-5 shadow-xl max-w-sm w-full mx-4 space-y-4">
+            <div class="flex items-start gap-3">
+              <AlertTriangle size={28} class="text-danger shrink-0 mt-0.5" />
+              <div class="font-medium text-sm">{t()("rules.unsaved_changes_prompt")}</div>
+            </div>
+            <div class="flex justify-between gap-2">
+              <button
+                class="text-sm px-3 py-1.5 rounded hover:bg-bg-muted text-fg-muted"
+                onClick={cancelNav}
+              >
+                {t()("rules.close_dialog")}
+              </button>
+              <div class="flex gap-2">
+                <button
+                  class="text-sm px-3 py-1.5 rounded hover:bg-bg-muted text-fg-muted"
+                  onClick={discardAndProceed}
+                >
+                  {t()("rules.no")}
+                </button>
+                <button
+                  class="text-sm px-3 py-1.5 rounded bg-accent text-white hover:opacity-90"
+                  onClick={() => void saveAndProceed()}
+                >
+                  {t()("rules.yes")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
     </div>
   );
 };
@@ -675,7 +765,7 @@ const CollectionSection: Component<{
   onToggleCollection: (enable: boolean) => void;
   onDeleteRule: (r: RuleDto) => void;
   editing: Editing;
-  onSaved: (r: RuleDto) => void;
+  onSaved: (r: RuleDto) => void | Promise<void>;
   onCancel: () => void;
   onLiveSync: (id: string, enabled: boolean) => void;
   onStartRename: (c: RuleCollectionDto) => void;
@@ -1280,7 +1370,7 @@ const JsonFieldEditor: Component<{
           {expanded() ? t()("rules.json_collapse") : t()("rules.json_expand")}
         </button>
       </div>
-      <div class={`w-full ${expanded() ? "h-[70vh] min-h-[400px]" : "h-28 min-h-20"}`}>
+      <div class={`w-full ${expanded() ? "h-[70vh] min-h-[400px]" : "h-14 min-h-10"}`}>
         <JsonEditor
           value={p.value}
           onInput={p.onInput}
@@ -1318,7 +1408,7 @@ const RuleEditor: Component<{
   initial: RuleDto | null;
   defaultCollectionId: string | null;
   onCancel: () => void;
-  onSaved: (saved: RuleDto) => void;
+  onSaved: (saved: RuleDto) => void | Promise<void>;
   // Reflect a live (non-Save) enabled toggle in the parent list so the
   // collection-header switch re-renders in sync — without remounting this
   // open editor (a full refetch would, and could race the async body load).
@@ -1371,14 +1461,11 @@ const RuleEditor: Component<{
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
   const [bodyLoading, setBodyLoading] = createSignal(false);
-  // Goes true on the first user edit and back to false after a successful
-  // save. Drives the Save button colour so the user can tell at a glance
-  // whether the open editor has unsaved changes in *this* session — a
-  // restored localStorage draft does NOT start red because the user
-  // hasn't typed anything yet in the current editor instance, and stale
-  // pre-fix drafts (the createEffect-on-mount snapshots) would otherwise
-  // keep the button perma-red for existing rules.
-  const [dirty, setDirty] = createSignal(false);
+  // `ruleEditorDirty` (module-level) goes true on the first user edit and
+  // back to false after save. Drives the Save button colour and the
+  // unsaved-changes guard. Reset to false on every fresh mount so a
+  // restored localStorage draft doesn't start the button red — the user
+  // hasn't typed anything yet in this editor instance.
 
   // Persisting the in-progress draft is tied to actual user edits (one
   // funnel: `patch`). The earlier `createEffect`-based approach fired on
@@ -1389,7 +1476,7 @@ const RuleEditor: Component<{
   const patch = (q: Partial<DraftState>) => {
     const next = { ...d(), ...q };
     setD(next);
-    setDirty(true);
+    setRuleEditorDirty(true);
     saveRuleDraft(draftKey, next);
   };
 
@@ -1401,6 +1488,8 @@ const RuleEditor: Component<{
   // we restored a draft above — the draft's body text is what the
   // user last had, which beats whatever's on disk.
   onMount(async () => {
+    registerEditorSaveFn(save);
+    setRuleEditorDirty(false);
     if (hadInitialDraft) return;
     const id = existingBodyId();
     if (!id) return;
@@ -1424,14 +1513,19 @@ const RuleEditor: Component<{
     }
   });
 
-  // Explicit user dismiss — both the ChevronUp ("collapse without
-  // saving") and the Cancel button funnel through here. Clearing the
-  // draft on dismiss preserves the obvious semantics: navigation pauses
-  // the work (draft survives), but an explicit close discards it.
+  // ChevronUp ("collapse"): navigational intent — warns if dirty.
   const dismiss = () => {
-    clearRuleDraft(draftKey);
-    p.onCancel();
+    if (ruleEditorDirty()) {
+      setRuleEditorPendingNav(() => p.onCancel);
+    } else {
+      clearRuleDraft(draftKey);
+      p.onCancel();
+    }
   };
+
+  onCleanup(() => {
+    registerEditorSaveFn(null);
+  });
 
   // The `enabled` flag behaves like the standalone RuleRow checkbox: for an
   // already-saved rule it commits immediately so the collapsed row and the
@@ -1499,8 +1593,8 @@ const RuleEditor: Component<{
       // Saved state is authoritative now — drop the in-progress draft
       // so the editor doesn't reopen on the stale pre-save snapshot.
       clearRuleDraft(draftKey);
-      setDirty(false);
-      p.onSaved(saved);
+      setRuleEditorDirty(false);
+      await p.onSaved(saved);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     } finally {
@@ -1679,7 +1773,7 @@ const RuleEditor: Component<{
                     }}
                   />
                   <select
-                    class="bg-bg border border-border rounded px-1 py-1 text-xs shrink-0"
+                    class="bg-bg-muted text-fg rounded px-2 py-1 text-xs shrink-0 border border-transparent outline-none focus:ring-1 focus:ring-accent"
                     value={c().op}
                     onChange={(e) => {
                       const arr = d().match_conditions.slice();
@@ -1928,7 +2022,7 @@ const RuleEditor: Component<{
           {t()("rules.cancel")}
         </button>
         <button
-          class={`text-sm px-3 py-1.5 rounded text-white hover:opacity-90 inline-flex items-center gap-1 disabled:opacity-50 ${dirty() ? "bg-danger" : "bg-accent"}`}
+          class={`text-sm px-3 py-1.5 rounded text-white hover:opacity-90 inline-flex items-center gap-1 disabled:opacity-50 ${ruleEditorDirty() ? "bg-danger" : "bg-accent"}`}
           onClick={save}
           disabled={busy() || bodyLoading()}
         >
