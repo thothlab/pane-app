@@ -468,8 +468,23 @@ const RulesView: Component = () => {
     guard(() => setEditing({ kind: "rule", collectionId: r.collection_id, id: r.id }));
   const cancelEdit = () => setEditing(null);
 
-  const onRuleSaved = async (saved: RuleDto) => {
-    await refresh();
+  const onRuleSaved = (saved: RuleDto) => {
+    // Don't `refresh()` here. A full refresh replaces every rule AND every
+    // collection object with freshly-deserialised ones, so the open editor's
+    // row — and its whole `CollectionSection` (rendered inside the outer
+    // `<For each={collections()}>`) — gets recreated. That remounted the
+    // RuleEditor, whose onMount re-loads the response body, making the panel
+    // flash and jump on every Save.
+    //
+    // Instead patch the saved rule in place, preserving its object identity
+    // (same trick as `syncRuleEnabled`) so the reference-keyed `<For>` reuses
+    // the row, and leave `collections()` untouched (a save never changes them)
+    // so the outer section list stays stable too.
+    setRules((prev) =>
+      prev.some((r) => r.id === saved.id)
+        ? prev.map((r) => (r.id === saved.id ? Object.assign(r, saved) : r))
+        : [...prev, saved],
+    );
     setEditing({ kind: "rule", collectionId: saved.collection_id, id: saved.id });
   };
 
@@ -1051,37 +1066,34 @@ const CollectionSection: Component<{
             <div class="text-xs text-fg-muted italic px-2 py-2">{t()("rules.empty_collection")}</div>
           </Show>
 
-          {/* `<Index>` (keyed by position), NOT `<For>` (keyed by object
-              reference): refresh() after a save replaces every RuleDto with a
-              freshly-deserialised object, so a reference-keyed list recreates
-              the open editor's row — remounting RuleEditor, which re-loads the
-              body and makes the panel flash/jump. Index reuses the row DOM and
-              just updates the accessor, so the editor stays mounted. */}
-          <Index each={p.rules}>
+          {/* `<For>` keyed by object reference: the open editor's row must NOT
+              be recreated on a save/refresh, so callers preserve rule object
+              identity (see `onRuleSaved` / `syncRuleEnabled`). */}
+          <For each={p.rules}>
             {(rule) => (
               <Show
-                when={p.editing?.kind === "rule" && p.editing.id === rule().id}
+                when={p.editing?.kind === "rule" && p.editing.id === rule.id}
                 fallback={
                   <RuleRow
-                    rule={rule()}
-                    isDragging={p.draggingRuleId === rule().id}
-                    onToggle={() => p.onToggleRule(rule())}
-                    onEdit={() => p.onEditRule(rule())}
-                    onCopy={() => p.onCopyRule(rule())}
-                    onExport={() => p.onExportRule(rule())}
-                    onDelete={() => p.onDeleteRule(rule())}
-                    onDragStart={() => p.onDragStartRule(rule().id)}
+                    rule={rule}
+                    isDragging={p.draggingRuleId === rule.id}
+                    onToggle={() => p.onToggleRule(rule)}
+                    onEdit={() => p.onEditRule(rule)}
+                    onCopy={() => p.onCopyRule(rule)}
+                    onExport={() => p.onExportRule(rule)}
+                    onDelete={() => p.onDeleteRule(rule)}
+                    onDragStart={() => p.onDragStartRule(rule.id)}
                     onDragEnd={p.onDragEndRule}
                     onReorder={(draggedId, position) =>
-                      p.onReorderRule(draggedId, rule().id, position)
+                      p.onReorderRule(draggedId, rule.id, position)
                     }
                   />
                 }
               >
                 <EditorErrorBoundary onClose={p.onCancel}>
                   <RuleEditor
-                    initial={rule()}
-                    defaultCollectionId={rule().collection_id}
+                    initial={rule}
+                    defaultCollectionId={rule.collection_id}
                     onCancel={p.onCancel}
                     onSaved={p.onSaved}
                     onLiveSync={p.onLiveSync}
@@ -1089,7 +1101,7 @@ const CollectionSection: Component<{
                 </EditorErrorBoundary>
               </Show>
             )}
-          </Index>
+          </For>
         </div>
       </Show>
     </section>
