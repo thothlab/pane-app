@@ -313,6 +313,7 @@ const ru: Dict = {
     json_expand_title: "Развернуть редактор",
     json_collapse: "Свернуть",
     json_collapse_title: "Свернуть редактор",
+    json_resize_title: "Потяните за угол, чтобы изменить высоту",
     json_body_empty: "Тело пустое",
     json_invalid: "Невалидный JSON",
     empty_state:

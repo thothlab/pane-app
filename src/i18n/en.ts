@@ -315,6 +315,7 @@ const en = {
     json_expand_title: "Expand editor",
     json_collapse: "Collapse",
     json_collapse_title: "Collapse editor",
+    json_resize_title: "Drag to resize height",
     json_body_empty: "Body is empty",
     json_invalid: "Invalid JSON",
     empty_state:

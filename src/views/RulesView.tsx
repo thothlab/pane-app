@@ -1252,6 +1252,10 @@ function normalisePatch(p: RulePatchOpDto): RulePatchOpDto {
   return { op: p.op, path: p.path, value };
 }
 
+/// Smallest height (px) the body editor can be dragged down to — matches
+/// the collapsed `min-h-10` so the corner grip can't hide the field.
+const MIN_BODY_HEIGHT = 40;
+
 /// JSON editor field: the syntax-highlighted `JsonEditor` plus the Format
 /// (pretty-print) and Expand/Collapse controls and a format-error flash.
 /// Shared by the response-body and request-body-match fields so the two
@@ -1273,13 +1277,58 @@ const JsonFieldEditor: Component<{
       }
     })(),
   );
+  // Custom drag-resized height in px. `null` ⇒ fall back to the class-based
+  // expand/collapse presets. Persisted under its own key so a hand-sized
+  // editor survives reloads. Set by the corner grip; cleared whenever
+  // Expand/Collapse is clicked so those presets keep working unchanged.
+  const heightKey = `${p.expandKey}-h`;
+  const [dragHeight, setDragHeightRaw] = createSignal<number | null>(
+    (() => {
+      try {
+        const n = parseInt(localStorage.getItem(heightKey) ?? "", 10);
+        return Number.isFinite(n) && n >= MIN_BODY_HEIGHT ? n : null;
+      } catch {
+        return null;
+      }
+    })(),
+  );
+  const setDragHeight = (v: number | null) => {
+    setDragHeightRaw(v);
+    try {
+      if (v == null) localStorage.removeItem(heightKey);
+      else localStorage.setItem(heightKey, String(v));
+    } catch {
+      /* private mode — signal still works, just no persistence */
+    }
+  };
   const setExpanded = (v: boolean) => {
     setExpandedRaw(v);
+    setDragHeight(null); // preset wins; resume class-based sizing
     try {
       localStorage.setItem(p.expandKey, v ? "1" : "0");
     } catch {
       /* private mode — signal still works, just no persistence */
     }
+  };
+  let wrapperEl: HTMLDivElement | undefined;
+  const startBodyResize = (ev: MouseEvent) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const startY = ev.clientY;
+    const startH = wrapperEl?.getBoundingClientRect().height ?? MIN_BODY_HEIGHT;
+    const onMove = (e: MouseEvent) => {
+      setDragHeight(Math.max(MIN_BODY_HEIGHT, Math.round(startH + (e.clientY - startY))));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "ns-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   };
   const [formatErr, setFormatErr] = createSignal<string | null>(null);
   const loadFromFile = async () => {
@@ -1370,13 +1419,32 @@ const JsonFieldEditor: Component<{
           {expanded() ? t()("rules.json_collapse") : t()("rules.json_expand")}
         </button>
       </div>
-      <div class={`w-full ${expanded() ? "h-[70vh] min-h-[400px]" : "h-14 min-h-10"}`}>
+      <div
+        ref={wrapperEl}
+        class={`relative w-full ${
+          dragHeight() != null
+            ? ""
+            : expanded()
+              ? "h-[70vh] min-h-[400px]"
+              : "h-14 min-h-10"
+        }`}
+        style={dragHeight() != null ? { height: `${dragHeight()}px` } : undefined}
+      >
         <JsonEditor
           value={p.value}
           onInput={p.onInput}
           placeholder={p.placeholder}
           disabled={p.disabled}
         />
+        {/* Drag the bottom-right corner to set a custom height. Sits above
+            the editor; clicking Expand/Collapse clears it (see setExpanded). */}
+        <div
+          class="group absolute bottom-0 right-0 w-4 h-4 z-20 cursor-ns-resize flex items-end justify-end p-0.5"
+          title={t()("rules.json_resize_title")}
+          onMouseDown={startBodyResize}
+        >
+          <div class="w-2 h-2 border-b-2 border-r-2 border-fg-muted/40 group-hover:border-accent rounded-br-sm" />
+        </div>
       </div>
     </div>
   );
