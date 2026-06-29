@@ -328,6 +328,8 @@ const ru: Dict = {
     header_name_placeholder: "имя (вставьте «name: value» — разобьётся)",
     header_value_placeholder: "значение",
     add_header: "+ добавить заголовок",
+    clear_headers: "× удалить все",
+    clear_headers_title: "Удалить все заголовки ответа",
     paste_header: "+ вставить из буфера",
     paste_header_title:
       "Прочитать буфер обмена, распарсить «name: value» и добавить как новый заголовок",

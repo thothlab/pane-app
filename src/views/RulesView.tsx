@@ -2068,6 +2068,15 @@ const RuleEditor: Component<{
               >
                 {t()("rules.paste_header")}
               </button>
+              <Show when={d().res_headers.length > 0}>
+                <button
+                  class="text-xs text-danger hover:underline"
+                  title={t()("rules.clear_headers_title")}
+                  onClick={() => patch({ res_headers: [] })}
+                >
+                  {t()("rules.clear_headers")}
+                </button>
+              </Show>
             </div>
           </div>
           </Show>

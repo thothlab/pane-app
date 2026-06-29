@@ -331,6 +331,8 @@ const en = {
     header_value_placeholder: "value",
     add_header: "+ add header",
     paste_header: "+ paste header",
+    clear_headers: "× clear all",
+    clear_headers_title: "Remove all response headers",
     paste_header_title:
       "Read clipboard, parse \"name: value\", insert as a new header",
     body_mime_label: "Body mime",
