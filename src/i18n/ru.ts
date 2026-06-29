@@ -324,6 +324,7 @@ const ru: Dict = {
     response_section: "Ответ",
     status_label: "Статус",
     headers_label: "Заголовки",
+    headers_count: "Заголовков: {{count}} (нажмите, чтобы развернуть)",
     header_name_placeholder: "имя (вставьте «name: value» — разобьётся)",
     header_value_placeholder: "значение",
     add_header: "+ добавить заголовок",

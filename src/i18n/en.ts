@@ -326,6 +326,7 @@ const en = {
     response_section: "Response",
     status_label: "Status",
     headers_label: "Headers",
+    headers_count: "{{count}} headers (click to expand)",
     header_name_placeholder: "name (paste \"name: value\" to split)",
     header_value_placeholder: "value",
     add_header: "+ add header",

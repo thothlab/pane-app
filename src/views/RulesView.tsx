@@ -1529,6 +1529,25 @@ const RuleEditor: Component<{
   const [busy, setBusy] = createSignal(false);
   const [err, setErr] = createSignal<string | null>(null);
   const [bodyLoading, setBodyLoading] = createSignal(false);
+  // Collapse the (often long) response-headers list to reclaim vertical
+  // space. Persisted globally, like the JSON-body expand flags.
+  const [headersCollapsed, setHeadersCollapsedRaw] = createSignal(
+    (() => {
+      try {
+        return localStorage.getItem("pane.rules.res-headers-collapsed") === "1";
+      } catch {
+        return false;
+      }
+    })(),
+  );
+  const setHeadersCollapsed = (v: boolean) => {
+    setHeadersCollapsedRaw(v);
+    try {
+      localStorage.setItem("pane.rules.res-headers-collapsed", v ? "1" : "0");
+    } catch {
+      /* private mode — signal still works, just no persistence */
+    }
+  };
   // `ruleEditorDirty` (module-level) goes true on the first user edit and
   // back to false after save. Drives the Save button colour and the
   // unsaved-changes guard. Reset to false on every fresh mount so a
@@ -1953,7 +1972,23 @@ const RuleEditor: Component<{
             }}
           />
         </FieldRow>
-        <FieldRow label={t()("rules.headers_label")}>
+        <FieldRow
+          label={t()("rules.headers_label")}
+          collapsed={headersCollapsed()}
+          onToggleCollapsed={() => setHeadersCollapsed(!headersCollapsed())}
+        >
+          <Show
+            when={!headersCollapsed()}
+            fallback={
+              <button
+                type="button"
+                class="text-xs text-fg-muted hover:text-fg pt-1"
+                onClick={() => setHeadersCollapsed(false)}
+              >
+                {t()("rules.headers_count", { count: d().res_headers.length })}
+              </button>
+            }
+          >
           <div class="flex-1 space-y-1">
             <Index each={d().res_headers}>
               {(h, i) => (
@@ -2035,6 +2070,7 @@ const RuleEditor: Component<{
               </button>
             </div>
           </div>
+          </Show>
         </FieldRow>
         <FieldRow label={t()("rules.body_mime_label")}>
           <input {...NO_AC}
@@ -2215,9 +2251,28 @@ const Checkbox: Component<{
   </button>
 );
 
-const FieldRow: Component<{ label: string; help?: { path: string; title?: string }; children: any }> = (p) => (
+const FieldRow: Component<{
+  label: string;
+  help?: { path: string; title?: string };
+  // When provided, the label gets a chevron toggle (collapsible section).
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+  children: any;
+}> = (p) => (
   <div class="flex items-start gap-3">
     <div class="w-40 text-xs text-fg-muted pt-1.5 shrink-0 inline-flex items-center gap-1">
+      <Show when={p.onToggleCollapsed}>
+        <button
+          type="button"
+          class="text-fg-muted hover:text-fg shrink-0 -ml-0.5"
+          aria-label={p.collapsed ? t()("rules.expand") : t()("rules.collapse")}
+          onClick={() => p.onToggleCollapsed!()}
+        >
+          <Show when={p.collapsed} fallback={<ChevronDown size={14} />}>
+            <ChevronRight size={14} />
+          </Show>
+        </button>
+      </Show>
       {p.label}
       <Show when={p.help}>
         {(h) => <HelpButton path={h().path} title={h().title} size={12} />}
