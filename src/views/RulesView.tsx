@@ -1051,31 +1051,37 @@ const CollectionSection: Component<{
             <div class="text-xs text-fg-muted italic px-2 py-2">{t()("rules.empty_collection")}</div>
           </Show>
 
-          <For each={p.rules}>
+          {/* `<Index>` (keyed by position), NOT `<For>` (keyed by object
+              reference): refresh() after a save replaces every RuleDto with a
+              freshly-deserialised object, so a reference-keyed list recreates
+              the open editor's row — remounting RuleEditor, which re-loads the
+              body and makes the panel flash/jump. Index reuses the row DOM and
+              just updates the accessor, so the editor stays mounted. */}
+          <Index each={p.rules}>
             {(rule) => (
               <Show
-                when={p.editing?.kind === "rule" && p.editing.id === rule.id}
+                when={p.editing?.kind === "rule" && p.editing.id === rule().id}
                 fallback={
                   <RuleRow
-                    rule={rule}
-                    isDragging={p.draggingRuleId === rule.id}
-                    onToggle={() => p.onToggleRule(rule)}
-                    onEdit={() => p.onEditRule(rule)}
-                    onCopy={() => p.onCopyRule(rule)}
-                    onExport={() => p.onExportRule(rule)}
-                    onDelete={() => p.onDeleteRule(rule)}
-                    onDragStart={() => p.onDragStartRule(rule.id)}
+                    rule={rule()}
+                    isDragging={p.draggingRuleId === rule().id}
+                    onToggle={() => p.onToggleRule(rule())}
+                    onEdit={() => p.onEditRule(rule())}
+                    onCopy={() => p.onCopyRule(rule())}
+                    onExport={() => p.onExportRule(rule())}
+                    onDelete={() => p.onDeleteRule(rule())}
+                    onDragStart={() => p.onDragStartRule(rule().id)}
                     onDragEnd={p.onDragEndRule}
                     onReorder={(draggedId, position) =>
-                      p.onReorderRule(draggedId, rule.id, position)
+                      p.onReorderRule(draggedId, rule().id, position)
                     }
                   />
                 }
               >
                 <EditorErrorBoundary onClose={p.onCancel}>
                   <RuleEditor
-                    initial={rule}
-                    defaultCollectionId={rule.collection_id}
+                    initial={rule()}
+                    defaultCollectionId={rule().collection_id}
                     onCancel={p.onCancel}
                     onSaved={p.onSaved}
                     onLiveSync={p.onLiveSync}
@@ -1083,7 +1089,7 @@ const CollectionSection: Component<{
                 </EditorErrorBoundary>
               </Show>
             )}
-          </For>
+          </Index>
         </div>
       </Show>
     </section>
