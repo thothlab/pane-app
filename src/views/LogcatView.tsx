@@ -2105,8 +2105,12 @@ const LogcatView: Component = () => {
                 style={{
                   width: "760px",
                   height: "560px",
-                  "min-width": "360px",
-                  "min-height": "240px",
+                  // The header's right cluster (search box + Format + Copy +
+                  // close) is ~470px wide and can't wrap; below ~600px the
+                  // left meta gets squeezed to a 1-char-per-line column and the
+                  // header breaks. Floor the width so the toolbar always fits.
+                  "min-width": "600px",
+                  "min-height": "300px",
                   "max-width": "95vw",
                   "max-height": "92vh",
                   resize: "both",
