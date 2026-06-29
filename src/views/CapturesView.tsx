@@ -256,13 +256,6 @@ const CapturesView: Component = () => {
       /* storage unavailable */
     }
   };
-  // gridTemplate skips hidden columns; `colWidths` stays positionally
-  // aligned with COLUMNS (8 entries) so resize-by-index keeps working.
-  const gridTemplate = createMemo(() =>
-    COLUMNS.map((c, i) => (isColVisible(c.key) ? `${colWidths()[i]}px` : null))
-      .filter((p): p is string => p !== null)
-      .join(" "),
-  );
   // Index of the rightmost visible column — its header gets no resize
   // handle (nothing to its right to push against).
   const lastVisibleColIdx = createMemo(() => {
@@ -271,6 +264,23 @@ const CapturesView: Component = () => {
       if (isColVisible(c.key)) last = i;
     });
     return last;
+  });
+  // gridTemplate skips hidden columns; `colWidths` stays positionally
+  // aligned with COLUMNS (8 entries) so resize-by-index keeps working.
+  // The last visible column flexes (`minmax(width, 1fr)`) so it grows to
+  // fill the pane instead of leaving empty space — otherwise hiding
+  // columns left the rightmost one truncated with slack to its right.
+  const gridTemplate = createMemo(() => {
+    const lastIdx = lastVisibleColIdx();
+    return COLUMNS.map((c, i) =>
+      !isColVisible(c.key)
+        ? null
+        : i === lastIdx
+          ? `minmax(${colWidths()[i]}px, 1fr)`
+          : `${colWidths()[i]}px`,
+    )
+      .filter((p): p is string => p !== null)
+      .join(" ");
   });
 
   // Header context-menu (column toggles). Right-click the header row to
