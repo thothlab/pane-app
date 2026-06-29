@@ -15,6 +15,7 @@ const ru: Dict = {
     about: "О программе",
     docs_title: "Открыть документацию в браузере",
     filters: "Фильтры",
+    rename_filter: "Переименовать",
     delete_filter: "Удалить фильтр",
     delete_filter_confirm: "Удалить фильтр «{{name}}»?",
     apply_filter: "Применить «{{query}}»",

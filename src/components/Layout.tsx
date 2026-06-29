@@ -1,13 +1,13 @@
 import { type ParentComponent, createEffect, createMemo, createSignal, onMount, For, Show } from "solid-js";
 import { A } from "@solidjs/router";
-import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X, Shuffle, BookOpen, Download } from "lucide-solid";
+import { Activity, Smartphone, Settings, Info, Play, Square, Filter as FilterIcon, X, Pencil, Shuffle, BookOpen, Download } from "lucide-solid";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
 import { api } from "@/ipc/client";
 import { VerticalResizer } from "@/components/VerticalResizer";
 import { docsUrl } from "@/components/HelpButton";
 import { setFilter } from "@/stores/captures";
-import { filters, deleteFilter, refreshFilters } from "@/stores/saved-filters";
+import { filters, saveFilter, deleteFilter, refreshFilters } from "@/stores/saved-filters";
 import { t, tr } from "@/i18n";
 import {
   checkForUpdatesNow,
@@ -53,6 +53,27 @@ const Layout: ParentComponent = (props) => {
     } catch (e) {
       console.warn("status refresh failed", e);
     }
+  };
+
+  // Inline rename of a saved filter — mirrors LogcatView's sidebar.
+  const [editingId, setEditingId] = createSignal<string | null>(null);
+  const [editName, setEditName] = createSignal("");
+  const startRename = (f: { id: string; name: string }) => {
+    setEditName(f.name);
+    setEditingId(f.id);
+  };
+  const commitRename = (f: {
+    id: string;
+    name: string;
+    query: string;
+    color: string;
+    pinned: boolean;
+  }) => {
+    if (editingId() !== f.id) return; // already committed or cancelled
+    const name = editName().trim();
+    setEditingId(null);
+    if (!name || name === f.name) return;
+    void saveFilter({ id: f.id, name, query: f.query, color: f.color, pinned: f.pinned });
   };
 
   onMount(() => {
@@ -136,25 +157,74 @@ const Layout: ParentComponent = (props) => {
             </div>
             <For each={filters()}>
               {(f) => (
-                <div
-                  class="group px-2 py-1 rounded text-sm hover:bg-bg-muted cursor-pointer flex items-center gap-2"
-                  title={t()("nav.apply_filter", { query: f.query })}
-                  onClick={() => setFilter(f.query)}
-                >
-                  <FilterIcon size={14} style={{ color: f.color }} />
-                  <span class="truncate flex-1">{f.name}</span>
-                  <button
-                    class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0"
-                    title={t()("nav.delete_filter")}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm(tr("nav.delete_filter_confirm", { name: f.name }))) {
-                        void deleteFilter(f.id);
-                      }
-                    }}
+                <div class="group px-2 py-1 rounded text-sm hover:bg-bg-muted flex items-center gap-2">
+                  <FilterIcon size={14} style={{ color: f.color }} class="shrink-0" />
+                  <Show
+                    when={editingId() === f.id}
+                    fallback={
+                      <span
+                        class="truncate flex-1 cursor-pointer"
+                        title={t()("nav.apply_filter", { query: f.query })}
+                        onClick={() => setFilter(f.query)}
+                      >
+                        {f.name}
+                      </span>
+                    }
                   >
-                    <X size={12} />
-                  </button>
+                    <input
+                      type="text"
+                      autocapitalize="off"
+                      autocomplete="off"
+                      autocorrect="off"
+                      spellcheck={false}
+                      class="flex-1 min-w-0 bg-bg border border-border rounded px-1 py-0.5 text-sm"
+                      value={editName()}
+                      ref={(el) =>
+                        queueMicrotask(() => {
+                          el.focus();
+                          el.select();
+                        })
+                      }
+                      onInput={(e) => setEditName(e.currentTarget.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitRename(f);
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setEditingId(null);
+                        }
+                      }}
+                      onBlur={() => commitRename(f)}
+                    />
+                  </Show>
+                  <Show when={editingId() !== f.id}>
+                    <button
+                      type="button"
+                      class="opacity-0 group-hover:opacity-100 hover:text-accent shrink-0"
+                      title={t()("nav.rename_filter")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startRename(f);
+                      }}
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0"
+                      title={t()("nav.delete_filter")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(tr("nav.delete_filter_confirm", { name: f.name }))) {
+                          void deleteFilter(f.id);
+                        }
+                      }}
+                    >
+                      <X size={12} />
+                    </button>
+                  </Show>
                 </div>
               )}
             </For>

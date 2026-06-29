@@ -19,6 +19,7 @@ const en = {
     about: "About",
     docs_title: "Open documentation in browser",
     filters: "Filters",
+    rename_filter: "Rename",
     delete_filter: "Delete filter",
     delete_filter_confirm: "Delete filter \"{{name}}\"?",
     apply_filter: "Apply \"{{query}}\"",
