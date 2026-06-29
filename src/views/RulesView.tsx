@@ -1,4 +1,4 @@
-import { type Component, createSignal, createMemo, For, Index, Show, onMount, onCleanup } from "solid-js";
+import { type Component, createSignal, createMemo, For, Index, Show, ErrorBoundary, onMount, onCleanup } from "solid-js";
 import { useBeforeLeave } from "@solidjs/router";
 import {
   Plus,
@@ -134,6 +134,9 @@ const RulesView: Component = () => {
   const collapsed = rulesCollapsed;
   const setCollapsed = setRulesCollapsed;
   const [loading, setLoading] = createSignal(true);
+  // Surfaces a failed rules/collections load instead of silently leaving an
+  // empty list (the previous behaviour swallowed the rejection).
+  const [loadError, setLoadError] = createSignal<string | null>(null);
 
   // Inline collection-creation form. `creatingName === null` means hidden.
   // `creatingCallback` is invoked with the newly-created id (used when the
@@ -156,9 +159,18 @@ const RulesView: Component = () => {
   const [draggingCollectionId, setDraggingCollectionId] = createSignal<string | null>(null);
 
   const refresh = async () => {
-    const [r, c] = await Promise.all([api.rules.list(), api.collections.list()]);
-    setRules(r);
-    setCollections(c);
+    try {
+      const [r, c] = await Promise.all([api.rules.list(), api.collections.list()]);
+      setRules(r);
+      setCollections(c);
+      setLoadError(null);
+    } catch (e) {
+      // Keep the previous list on screen rather than blanking it, and show a
+      // retry banner. Without this the rejection was swallowed and the list
+      // just vanished (e.g. on remount after a tab switch).
+      console.error("rules refresh failed", e);
+      setLoadError((e as { message?: string })?.message ?? String(e));
+    }
   };
 
   onMount(async () => {
@@ -595,6 +607,22 @@ const RulesView: Component = () => {
       </header>
 
       <div class="overflow-auto p-4 space-y-4">
+        <Show when={loadError()}>
+          {(msg) => (
+            <div class="flex items-center gap-2 border border-danger/40 bg-danger/10 text-danger rounded px-3 py-2 text-sm">
+              <AlertTriangle size={14} class="shrink-0" />
+              <span class="flex-1 min-w-0 truncate" title={msg()}>
+                {t()("rules.load_error", { error: msg() })}
+              </span>
+              <button
+                class="shrink-0 px-2 py-0.5 rounded border border-danger/40 hover:bg-danger/15"
+                onClick={() => void refresh()}
+              >
+                {t()("rules.load_error_retry")}
+              </button>
+            </div>
+          )}
+        </Show>
         <Show when={creatingName() !== null}>
           <div class="border border-accent/40 rounded p-3 bg-bg-subtle/40 flex items-center gap-2">
             <FolderPlus size={14} class="text-accent shrink-0" />
@@ -1009,12 +1037,14 @@ const CollectionSection: Component<{
       <Show when={!p.collapsed}>
         <div class="px-3 pb-3 space-y-2">
           <Show when={editingNewHere()}>
-            <RuleEditor
-              initial={null}
-              defaultCollectionId={p.collection?.id ?? null}
-              onCancel={p.onCancel}
-              onSaved={p.onSaved}
-            />
+            <EditorErrorBoundary onClose={p.onCancel}>
+              <RuleEditor
+                initial={null}
+                defaultCollectionId={p.collection?.id ?? null}
+                onCancel={p.onCancel}
+                onSaved={p.onSaved}
+              />
+            </EditorErrorBoundary>
           </Show>
 
           <Show when={p.rules.length === 0 && !editingNewHere()}>
@@ -1042,13 +1072,15 @@ const CollectionSection: Component<{
                   />
                 }
               >
-                <RuleEditor
-                  initial={rule}
-                  defaultCollectionId={rule.collection_id}
-                  onCancel={p.onCancel}
-                  onSaved={p.onSaved}
-                  onLiveSync={p.onLiveSync}
-                />
+                <EditorErrorBoundary onClose={p.onCancel}>
+                  <RuleEditor
+                    initial={rule}
+                    defaultCollectionId={rule.collection_id}
+                    onCancel={p.onCancel}
+                    onSaved={p.onSaved}
+                    onLiveSync={p.onLiveSync}
+                  />
+                </EditorErrorBoundary>
               </Show>
             )}
           </For>
@@ -1057,6 +1089,31 @@ const CollectionSection: Component<{
     </section>
   );
 };
+
+// Contains a render crash inside the inline editor to just its own row,
+// instead of letting it take down the whole rules `<For>` (which made the
+// list "disappear"). Shows the error and a button to close the editor so
+// the user can recover and the cause is visible.
+const EditorErrorBoundary: Component<{ onClose: () => void; children: any }> = (p) => (
+  <ErrorBoundary
+    fallback={(err) => (
+      <div class="border border-danger/40 bg-danger/10 text-danger rounded p-3 text-xs space-y-2">
+        <div class="font-medium">{t()("rules.editor_crash")}</div>
+        <div class="font-mono break-all opacity-80">
+          {String((err as { message?: string })?.message ?? err)}
+        </div>
+        <button
+          class="px-2 py-1 rounded border border-danger/40 hover:bg-danger/15"
+          onClick={() => p.onClose()}
+        >
+          {t()("rules.close_dialog")}
+        </button>
+      </div>
+    )}
+  >
+    {p.children}
+  </ErrorBoundary>
+);
 
 const RuleRow: Component<{
   rule: RuleDto;
@@ -1612,6 +1669,15 @@ const RuleEditor: Component<{
 
   onCleanup(() => {
     registerEditorSaveFn(null);
+    // The editor is unmounting (closed, deleted, or the whole Rules view
+    // navigated away). `ruleEditorDirty` / `ruleEditorPendingNav` are
+    // module-level and otherwise survive this unmount — a dirty editor that
+    // disappeared would leave the list's nav-guard armed, so every Edit
+    // click would pop the unsaved-changes modal instead of opening the
+    // editor, and a stale pending-nav modal could reappear on remount.
+    // Clear both so a closed editor always leaves a clean slate.
+    setRuleEditorDirty(false);
+    setRuleEditorPendingNav(null);
   });
 
   // The `enabled` flag behaves like the standalone RuleRow checkbox: for an
