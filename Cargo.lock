@@ -3281,7 +3281,7 @@ dependencies = [
 
 [[package]]
 name = "pane"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "alloc-stdlib",
  "anyhow",
@@ -3320,7 +3320,7 @@ dependencies = [
 
 [[package]]
 name = "pane-android"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3340,7 +3340,7 @@ dependencies = [
 
 [[package]]
 name = "pane-ca"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3364,7 +3364,7 @@ dependencies = [
 
 [[package]]
 name = "pane-devices"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3387,7 +3387,7 @@ dependencies = [
 
 [[package]]
 name = "pane-engine"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3403,7 +3403,7 @@ dependencies = [
 
 [[package]]
 name = "pane-engine-mitm"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3434,7 +3434,7 @@ dependencies = [
 
 [[package]]
 name = "pane-ios"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "pane-ca",
@@ -3451,7 +3451,7 @@ dependencies = [
 
 [[package]]
 name = "pane-ipc"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3462,7 +3462,7 @@ dependencies = [
 
 [[package]]
 name = "pane-mobileconfig"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3471,7 +3471,7 @@ dependencies = [
 
 [[package]]
 name = "pane-pinning"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "once_cell",
@@ -3482,7 +3482,7 @@ dependencies = [
 
 [[package]]
 name = "pane-setup-server"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3498,7 +3498,7 @@ dependencies = [
 
 [[package]]
 name = "pane-storage"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3522,7 +3522,7 @@ dependencies = [
 
 [[package]]
 name = "pane-web"
-version = "0.1.182"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
