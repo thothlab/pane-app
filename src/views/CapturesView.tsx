@@ -1199,60 +1199,75 @@ const CapturesView: Component = () => {
             <div class="relative" style={{ height: `${virtualizer.getTotalSize()}px` }}>
               <For each={virtualizer.getVirtualItems()}>
                 {(row) => {
-                  const cap = captures()[row.index];
+                  // Reactive row read. `<For>` keys by virtual-item
+                  // reference, and the virtualizer hands back the SAME
+                  // cached vi objects while `count` is pinned (the tail is
+                  // capped at 500), so this callback never re-runs on a
+                  // refresh. A plain `const cap = captures()[row.index]`
+                  // then freezes to whatever occupied the slot at creation
+                  // time; once the tail shifts by one, a frozen row shows
+                  // the same capture as its fresh neighbour → two rows with
+                  // the same id ("задвоение", both highlight on click).
+                  // Wrapping in a memo makes every slot re-read the current
+                  // capture at its index. Same fix LogcatView already uses.
+                  const cap = createMemo(() => captures()[row.index]);
                   return (
-                    <div
-                      class={`grid absolute left-0 right-0 items-center cursor-pointer border-b border-border/30 ${rowColor(cap.status, cap.error_kind)} ${
-                        selectedId() === cap.id ? "bg-bg-muted" : "hover:bg-bg-subtle"
-                      }`}
-                      style={{
-                        transform: `translateY(${row.start}px)`,
-                        height: "32px",
-                        "grid-template-columns": gridTemplate(),
-                      }}
-                      onClick={() => setSelectedId(cap.id)}
-                      onDblClick={() => navigate(`/replay/${cap.id}`)}
-                      onContextMenu={(e) => openAddMenu(e, cap.id)}
-                    >
-                      <div class="px-2 truncate text-fg-muted">{row.index + 1}</div>
-                      <Show when={isColVisible("device")}>
+                    <Show when={cap()}>
+                      {(c) => (
                         <div
-                          class="px-2 truncate text-fg-muted"
-                          title={deviceName(cap.device_id) ?? cap.device_id ?? t()("captures.device_unknown")}
+                          class={`grid absolute left-0 right-0 items-center cursor-pointer border-b border-border/30 ${rowColor(c().status, c().error_kind)} ${
+                            selectedId() === c().id ? "bg-bg-muted" : "hover:bg-bg-subtle"
+                          }`}
+                          style={{
+                            transform: `translateY(${row.start}px)`,
+                            height: "32px",
+                            "grid-template-columns": gridTemplate(),
+                          }}
+                          onClick={() => setSelectedId(c().id)}
+                          onDblClick={() => navigate(`/replay/${c().id}`)}
+                          onContextMenu={(e) => openAddMenu(e, c().id)}
                         >
-                          {shortDeviceName(cap.device_id) ?? t()("captures.device_unknown")}
+                          <div class="px-2 truncate text-fg-muted">{row.index + 1}</div>
+                          <Show when={isColVisible("device")}>
+                            <div
+                              class="px-2 truncate text-fg-muted"
+                              title={deviceName(c().device_id) ?? c().device_id ?? t()("captures.device_unknown")}
+                            >
+                              {shortDeviceName(c().device_id) ?? t()("captures.device_unknown")}
+                            </div>
+                          </Show>
+                          <Show when={isColVisible("method")}>
+                            <div class="px-2 truncate">{c().method}</div>
+                          </Show>
+                          <Show when={isColVisible("status")}>
+                            <div
+                              class={`px-2 truncate ${statusColor(c().status, c().error_kind)}`}
+                              title={errorHint(c().error_kind)}
+                            >
+                              {c().error_kind === "pinning" ? (
+                                <Lock size={12} />
+                              ) : c().error_kind === "tls_handshake" ? (
+                                <ShieldAlert size={12} />
+                              ) : (
+                                c().status ?? "—"
+                              )}
+                            </div>
+                          </Show>
+                          <Show when={isColVisible("host")}>
+                            <div class="px-2 truncate">{c().server_host}</div>
+                          </Show>
+                          <Show when={isColVisible("path")}>
+                            <div class="px-2 truncate">{c().url_path}</div>
+                          </Show>
+                          <Show when={isColVisible("ms")}>
+                            <div class="px-2 truncate text-fg-muted">{c().duration_ms ?? "—"}</div>
+                          </Show>
+                          <Show when={isColVisible("bytes")}>
+                            <div class="px-2 truncate text-fg-muted">{fmtBytes(c().total_bytes)}</div>
+                          </Show>
                         </div>
-                      </Show>
-                      <Show when={isColVisible("method")}>
-                        <div class="px-2 truncate">{cap.method}</div>
-                      </Show>
-                      <Show when={isColVisible("status")}>
-                        <div
-                          class={`px-2 truncate ${statusColor(cap.status, cap.error_kind)}`}
-                          title={errorHint(cap.error_kind)}
-                        >
-                          {cap.error_kind === "pinning" ? (
-                            <Lock size={12} />
-                          ) : cap.error_kind === "tls_handshake" ? (
-                            <ShieldAlert size={12} />
-                          ) : (
-                            cap.status ?? "—"
-                          )}
-                        </div>
-                      </Show>
-                      <Show when={isColVisible("host")}>
-                        <div class="px-2 truncate">{cap.server_host}</div>
-                      </Show>
-                      <Show when={isColVisible("path")}>
-                        <div class="px-2 truncate">{cap.url_path}</div>
-                      </Show>
-                      <Show when={isColVisible("ms")}>
-                        <div class="px-2 truncate text-fg-muted">{cap.duration_ms ?? "—"}</div>
-                      </Show>
-                      <Show when={isColVisible("bytes")}>
-                        <div class="px-2 truncate text-fg-muted">{fmtBytes(cap.total_bytes)}</div>
-                      </Show>
-                    </div>
+                      )}
+                    </Show>
                   );
                 }}
               </For>
