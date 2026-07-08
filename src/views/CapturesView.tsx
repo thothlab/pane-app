@@ -1,4 +1,4 @@
-import { type Component, createSignal, createMemo, createEffect, createResource, onMount, onCleanup, For, Show } from "solid-js";
+import { type Component, createSignal, createMemo, createEffect, createResource, onMount, onCleanup, on, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown } from "lucide-solid";
@@ -518,6 +518,33 @@ const CapturesView: Component = () => {
     getScrollElement: () => scrollEl ?? null,
     estimateSize: () => 32,
     overscan: 10,
+  });
+
+  // Re-anchor the virtual window to the top when the user changes the
+  // filter while NOT tailing (scrolled up). captures() is replaced
+  // wholesale on a filter change, but the virtualizer keeps its old scroll
+  // offset — which points into rows the new result set no longer contains —
+  // so getVirtualItems() returns that stale range and the visible cells
+  // freeze on hosts captured *before* the filter was typed (the list looks
+  // like it "only filters old hosts"). We go through scrollToIndex, not a
+  // raw scrollEl.scrollTop write: the virtualizer only sees a manual
+  // scrollTop on the next async scroll event, so its render range lags a
+  // frame — and with tailing off no such event ever fires, leaving the
+  // window frozen for good. scrollToIndex updates the offset signal in the
+  // same pass. (When tailing, the captures() effect above re-anchors to the
+  // bottom instead, so we skip.)
+  let anchorTopOnNextResult = false;
+  createEffect(on(filter, () => { anchorTopOnNextResult = true; }, { defer: true }));
+  createEffect(() => {
+    void captures();
+    if (!anchorTopOnNextResult) return;
+    anchorTopOnNextResult = false;
+    if (autoFollow() || !scrollEl || captures().length === 0) return;
+    queueMicrotask(() => {
+      if (!scrollEl) return;
+      ignoreNextScroll = true;
+      virtualizer.scrollToIndex(0, { align: "start" });
+    });
   });
 
   // ── Add-to-Rules context menu ──────────────────────────────────────
