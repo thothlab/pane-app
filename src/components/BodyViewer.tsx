@@ -38,16 +38,46 @@ function detectKind(mime: string | null | undefined, text: string | null): Kind 
   return "text";
 }
 
+// The Tree/Pretty/Raw toggle is an APP-WIDE preference, not per-request:
+// switching the Request/Response tab or selecting another capture remounts
+// the BodyViewer, and the user wants their last choice to stick across all
+// of them. A module-level signal is shared by every instance; persisted to
+// localStorage so it also survives reloads.
+const BODY_VIEW_MODE_KEY = "pane.body.view-mode";
+function loadBodyViewMode(): Mode {
+  try {
+    const v = localStorage.getItem(BODY_VIEW_MODE_KEY);
+    if (v === "tree" || v === "pretty" || v === "raw") return v;
+  } catch {
+    /* storage disabled */
+  }
+  return "tree";
+}
+const [bodyViewMode, setBodyViewModeRaw] = createSignal<Mode>(loadBodyViewMode());
+function setBodyViewMode(m: Mode) {
+  setBodyViewModeRaw(m);
+  try {
+    localStorage.setItem(BODY_VIEW_MODE_KEY, m);
+  } catch {
+    /* storage disabled */
+  }
+}
+
 const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> = (p) => {
   const text = createMemo(() => decodeBase64Utf8(p.body.bytes_base64));
   const kind = createMemo(() => detectKind(p.body.mime, text()));
 
-  const defaultMode = (): Mode => {
-    const k = kind();
-    if (k === "json" || k === "xml") return "tree";
-    return "raw";
-  };
-  const [mode, setMode] = createSignal<Mode>(defaultMode());
+  const mode = bodyViewMode;
+  const setMode = setBodyViewMode;
+  // Honour the app-wide preference, but if it's "tree" and this body can't
+  // render as a tree (not JSON/XML), fall back to raw for DISPLAY only —
+  // without clobbering the stored preference, so a JSON body opened later
+  // still comes up in tree.
+  const effectiveMode = createMemo<Mode>(() => {
+    const m = mode();
+    if (m === "tree" && kind() !== "json" && kind() !== "xml") return "raw";
+    return m;
+  });
 
   const pretty = createMemo(() => {
     const t = text();
@@ -67,7 +97,7 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
 
   const [copied, setCopied] = createSignal(false);
   const copyAll = async () => {
-    const t = mode() === "pretty" ? pretty() : (text() ?? "");
+    const t = effectiveMode() === "pretty" ? pretty() : (text() ?? "");
     await writeClipboard(t);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
@@ -97,7 +127,7 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
               {t()("body.load_full")} ({Math.ceil(p.body.total_size / 1024)} KB)
             </button>
           </Show>
-          <ModeToggle mode={mode()} setMode={setMode} kind={kind()} />
+          <ModeToggle mode={effectiveMode()} setMode={setMode} kind={kind()} />
           <button
             class="text-xs px-2 py-1 rounded hover:bg-bg-muted flex items-center gap-1"
             title={t()("body.copy_full_title")}
@@ -127,13 +157,13 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
         </Show>
 
         <Show when={text() !== null}>
-          <Show when={mode() === "tree" && kind() === "json"}>
+          <Show when={effectiveMode() === "tree" && kind() === "json"}>
             <JsonTree raw={text()!} truncated={p.body.truncated} />
           </Show>
-          <Show when={mode() === "tree" && kind() === "xml"}>
+          <Show when={effectiveMode() === "tree" && kind() === "xml"}>
             <XmlTree raw={text()!} />
           </Show>
-          <Show when={mode() === "pretty"}>
+          <Show when={effectiveMode() === "pretty"}>
             {/*
               Same tokenizer as the rules JsonEditor — XML/text bodies
               stay plain since the regex would only catch noise. JSON
@@ -149,7 +179,7 @@ const BodyViewer: Component<{ body: CaptureBodyDto; onLoadFull?: () => void }> =
               <pre class="whitespace-pre-wrap break-all leading-snug">{highlightJson(pretty())}</pre>
             </Show>
           </Show>
-          <Show when={mode() === "raw"}>
+          <Show when={effectiveMode() === "raw"}>
             <pre class="whitespace-pre-wrap break-all leading-snug">{text()!}</pre>
           </Show>
         </Show>
