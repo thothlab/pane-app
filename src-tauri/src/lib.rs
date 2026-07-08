@@ -143,6 +143,24 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 device_watchdog(app_handle).await;
             });
+
+            // Logcat retention: prune persisted logcat rows older than 24h and
+            // trim each device to a per-device row cap. Runs once on startup,
+            // then every 5 min. async_runtime::spawn (not tokio::spawn) for the
+            // same reason as the watchdog above.
+            let retention_state = app.state::<AppState>().storage.clone();
+            tauri::async_runtime::spawn(async move {
+                const RETENTION_MS: i64 = 24 * 60 * 60 * 1000;
+                const PER_DEVICE_CAP: i64 = 2_000_000;
+                loop {
+                    if let Err(e) =
+                        retention_state.prune_logcat(RETENTION_MS, PER_DEVICE_CAP)
+                    {
+                        tracing::warn!(error = %e, "logcat: prune failed");
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                }
+            });
             Ok(())
         })
         .build(tauri::generate_context!())

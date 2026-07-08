@@ -20,8 +20,10 @@
 //!     (Query string, not path — easier with vite's index.html mount;
 //!     a tiny dispatcher in `src/main.tsx` reads `location.search` and
 //!     mounts `LogcatView` instead of the main `App`.)
-//!   - Per-batch event: `logcat://batch`, payload `Vec<LogEntry>`,
-//!     emitted only on that webview window (no firehose to main).
+//!   - Each parsed batch is persisted to SQLite (`logcat_entry`), then a
+//!     lightweight `logcat://appended` ping (payload = batch count) is emitted
+//!     on that webview window. The window reads rows back via `logcat_query`;
+//!     the firehose never crosses IPC.
 
 use std::collections::HashMap;
 
@@ -120,14 +122,17 @@ pub async fn logcat_open(
                     message: e.message.clone(),
                 })
                 .collect();
+            let n = rows.len();
             if let Err(e) =
                 storage_for_db.insert_logcat_batch(&serial_db, created_at_ms, &rows)
             {
                 tracing::warn!(error = %e, "logcat: db insert failed");
             }
-            // Tauri 2 instance-method emit — webview-scoped. (Phase 1 keeps the
-            // current in-memory UI working; Phase 3 switches to a lighter ping.)
-            if let Err(e) = win_for_emit.emit("logcat://batch", &entries) {
+            // The DB is the source of truth; the webview reads it via
+            // logcat_query. Emit only a lightweight "rows appended" ping
+            // (batch count) so the window knows to re-query / bump its badge —
+            // no firehose over IPC. Webview-scoped (Tauri 2 instance emit).
+            if let Err(e) = win_for_emit.emit("logcat://appended", n) {
                 tracing::warn!(error = %e, "logcat: emit failed (window gone?)");
             }
         }

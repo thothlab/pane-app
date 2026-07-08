@@ -5,12 +5,14 @@ import {
   createSignal,
   For,
   type JSX,
+  on,
   onCleanup,
   onMount,
   Show,
 } from "solid-js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { api } from "@/ipc/client";
 import { save } from "@tauri-apps/plugin-dialog";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import {
@@ -61,6 +63,8 @@ const FILTER_PALETTE = [
 export type LogLevel = "verbose" | "debug" | "info" | "warn" | "error" | "fatal" | "silent";
 
 export interface LogEntry {
+  /** DB rowid — stable identity across re-queries (selection keys on it). */
+  id: number;
   timestamp: string;
   pid: number;
   tid: number;
@@ -69,12 +73,10 @@ export interface LogEntry {
   message: string;
 }
 
-// Hard cap to bound memory on a chatty device. 100k entries × ~200B
-// average = ~20 MB resident — fits comfortably and gives ~5 min of
-// history even on a verbose firehose, so filtered-by-app views don't
-// lose context as the unfiltered firehose churns. Older entries shift
-// out FIFO.
-const MAX_ENTRIES = 100_000;
+// Max rows pulled per query. The DB holds the full ~24h per device; the view
+// only ever renders the newest N matching rows (index-backed DESC+LIMIT, so
+// the whole day is never scanned). Matches the query cap in pane-storage.
+const QUERY_LIMIT = 5000;
 
 const LEVEL_COLOR: Record<LogLevel, string> = {
   verbose: "text-fg-muted",
@@ -374,13 +376,12 @@ const LogcatView: Component = () => {
   });
 
   // ── Row selection (LogRabbit-style) ───────────────────────────────
-  // Selected entries, keyed by object identity (LogEntry has no id, but
-  // the same object stays in the buffer until it FIFO-drops, so the Set
-  // survives Tail churn — far safer than indices, which shift under
-  // saturation). Click selects a row, Shift-click extends a range from
-  // the anchor, ⌘/Ctrl-click toggles one. ⌘C copies the selected rows as
+  // Selected rows, keyed by DB id. Ids are stable across re-queries, so the
+  // selection survives a refresh (object identity would not — every query
+  // returns fresh objects). Click selects a row, Shift-click extends a range
+  // from the anchor, ⌘/Ctrl-click toggles one. ⌘C copies the selected rows as
   // full threadtime lines; ⇧⌘C copies just their messages.
-  const [selected, setSelected] = createSignal<Set<LogEntry>>(new Set());
+  const [selected, setSelected] = createSignal<Set<number>>(new Set());
   // Anchor index (into visible()) for Shift-range selection.
   let selectAnchor = -1;
   // Right-click row menu (Copy / Copy message / View message). Copy
@@ -628,26 +629,11 @@ const LogcatView: Component = () => {
   // in whatever the filter already shows.
   const searchLower = createMemo(() => search().trim().toLowerCase());
 
-  // The single source of truth for "does this entry pass the current
-  // filter?" — DSL predicate + app:<pkg> PID gate. Shared by visible() (the
-  // rendered table) and the "+N new" badge's pending count, so the badge
-  // reflects how many *filtered* rows will appear on Tail rather than the raw
-  // firehose total. A positive `app:X` whose package isn't running leaves
-  // `include` empty → every entry fails the `!include.has(e.pid)` gate →
-  // empty result, which surfaces the "app not running" state.
-  const filterPredicate = createMemo(() => {
-    const { predicate, appPackages } = matcher();
-    const { include, exclude, hasPositive } = appPids();
-    return (e: LogEntry): boolean => {
-      if (appPackages.length > 0) {
-        if (hasPositive && !include.has(e.pid)) return false;
-        if (exclude.has(e.pid)) return false;
-      }
-      return predicate(e);
-    };
-  });
-
-  const visible = createMemo(() => entries().filter(filterPredicate()));
+  // The DSL filter is now applied server-side (query_logcat compiles the same
+  // grammar to SQL), so `entries()` already holds only matching rows for the
+  // current filter + resolved app: PIDs. `visible()` is kept as the downstream
+  // handle (virtualizer, search, selection, tail) — a thin passthrough now.
+  const visible = createMemo(() => entries());
 
   // ── Search match navigation (Enter ↓ / Shift+Enter ↑) ─────────────
   // Indices into visible() of rows that contain the term in ANY visible
@@ -743,155 +729,143 @@ const LogcatView: Component = () => {
     });
   });
 
-  // Incoming batches are held here between rAF ticks and (when Follow
-  // is OFF) for as long as the user stays scrolled away from the
-  // bottom. Lifted to component scope so toggleAutoScroll() can
-  // drain them when the user re-engages Follow.
-  let pending: LogEntry[][] = [];
-  let pendingTotal = 0;
-  let flushScheduled = false;
-  let rafHandle: number | undefined;
-  // Surfaced in the status bar as a "+N new" badge so the user can
-  // see the stream is still alive while their view is frozen. Counts
-  // only entries that pass the active filter — i.e. the number of rows
-  // that will actually appear in the table when Tail re-engages, not
-  // the raw firehose total. Only updated while !autoScroll(); under
-  // Follow ON, pending drains within one rAF tick and a transient
-  // setter would flash the badge on every batch.
+  // "+N new" badge: while the view is frozen (Tail off) the DB keeps filling
+  // in the background; this shows how many *matching* rows have landed since
+  // the newest displayed one, without moving the view. Zeroed on every
+  // refresh (a refresh brings the view current).
   const [pendingCount, setPendingCount] = createSignal(0);
 
-  // Re-derive the filtered pending count from scratch over the whole
-  // `pending` buffer. Used for the cases where the running incremental
-  // total can't be patched cheaply: a FIFO drop from the front, the
-  // filter/search changing, or Tail being switched off (establishes the
-  // baseline). No-op under Follow ON — the badge is hidden then.
-  const recountPending = () => {
-    if (autoScroll()) return;
-    const pred = filterPredicate();
-    let n = 0;
-    for (const batch of pending) {
-      for (const e of batch) if (pred(e)) n++;
+  // Newest displayed row id (entries are ASC → newest last). The "newer than
+  // this" anchor for the badge count and for knowing where a tail left off.
+  const maxLoadedId = (): number => {
+    const e = entries();
+    return e.length > 0 ? e[e.length - 1]!.id : 0;
+  };
+
+  // Monotonic guard: a filter keystroke and a tail refresh can both have a
+  // query in flight; drop any response that isn't the latest (as CapturesView).
+  let refreshSeq = 0;
+
+  // Re-query the DB for the current device + DSL filter + resolved app: PIDs
+  // and replace the rendered rows. `force` bypasses the "don't yank a frozen
+  // view" gate (mount, filter change, resume, re-engage Tail).
+  const refresh = async (force = false): Promise<void> => {
+    if (paused()) return;
+    if (!force && !autoScroll() && entries().length > 0) return;
+    const seq = ++refreshSeq;
+    const { include, exclude } = appPids();
+    try {
+      const rows = await api.logcat.query(
+        serial,
+        filter() || undefined,
+        [...include],
+        [...exclude],
+        QUERY_LIMIT,
+      );
+      if (seq !== refreshSeq) return;
+      setEntries(rows);
+      setErrorMsg(null);
+      setPendingCount(0);
+    } catch (e: unknown) {
+      if (seq !== refreshSeq) return;
+      setErrorMsg((e as { message?: string })?.message ?? String(e));
     }
-    setPendingCount(n);
   };
 
-  // When the filter/search changes (or Tail flips off) while frozen,
-  // recompute the badge so it tracks the active filter over everything
-  // already held in `pending`.
-  createEffect(() => {
-    filterPredicate();
-    if (!autoScroll()) recountPending();
-  });
-
-  // Coalesce incoming batches through requestAnimationFrame: when
-  // adb logcat is first attached, the ring buffer dumps thousands
-  // of entries in 1–2 seconds (50–100+ IPC events/sec). Each event
-  // would trigger setEntries → visible() recompute → virtualizer
-  // recompute, monopolising the main thread and starving the OS
-  // resize-event queue. With rAF coalescing we collapse N batches
-  // arriving between two frames into a single setEntries call;
-  // the user sees the window resize react instantly while the
-  // logs still load smoothly behind it. Steady-state firehose
-  // (post-init) still benefits — 60Hz UI updates regardless of
-  // backend event rate.
-  //
-  // When !autoScroll() flush() early-returns without touching
-  // entries. This is the fix for the "constant flicker with Follow
-  // off" bug: committing FIFO-shifted batches rotates the buffer
-  // under the user's anchor, and the virtualizer's scroll-offset
-  // catches up async via the scroll event (WebKit queues those),
-  // so for one frame scrollTop and the rendered range disagree.
-  // Holding batches until the user re-engages Follow eliminates the
-  // churn entirely — same UX as IntelliJ logcat / Console.app.
-  const flush = () => {
-    flushScheduled = false;
-    rafHandle = undefined;
-    if (pending.length === 0) return;
-    if (!autoScroll()) return;
-    const merged: LogEntry[] =
-      pending.length === 1 ? pending[0]! : pending.flat();
-    pending = [];
-    pendingTotal = 0;
-    setPendingCount(0);
-    setEntries((prev) => {
-      const next = prev.length === 0 ? merged : prev.concat(merged);
-      return next.length > MAX_ENTRIES
-        ? next.slice(next.length - MAX_ENTRIES)
-        : next;
-    });
+  // Count matching rows newer than what's displayed — the frozen-view badge.
+  const updateBadge = async (): Promise<void> => {
+    const { include, exclude } = appPids();
+    try {
+      const n = await api.logcat.newCount(
+        serial,
+        filter() || undefined,
+        [...include],
+        [...exclude],
+        maxLoadedId(),
+      );
+      setPendingCount(n);
+    } catch {
+      /* transient — next tick retries */
+    }
   };
 
-  const scheduleFlush = () => {
-    if (flushScheduled) return;
-    flushScheduled = true;
-    rafHandle = requestAnimationFrame(flush);
+  // Debounce the reaction to the backend's "rows appended" ping so a firehose
+  // doesn't fire a query per 100ms batch. Tailing → re-query; frozen → badge.
+  let appendedTimer: ReturnType<typeof setTimeout> | undefined;
+  const onAppended = () => {
+    if (appendedTimer) clearTimeout(appendedTimer);
+    appendedTimer = setTimeout(() => {
+      if (paused()) return;
+      if (autoScroll()) void refresh(false);
+      else void updateBadge();
+    }, 250);
   };
 
-  // Subscribe to the per-window batched stream. Backend emits
-  // `logcat://batch` with payload Vec<LogEntry> every 100ms / 50
-  // entries (whichever first) on this WebviewWindow only — so the
-  // main window never sees the firehose.
+  // Debounced forced refresh for filter / app-pid changes.
+  let filterTimer: ReturnType<typeof setTimeout> | undefined;
+  const debouncedRefresh = (force = false) => {
+    if (filterTimer) clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => void refresh(force), 250);
+  };
+
+  // A filter change replaces the whole result set — re-enable Tail so the view
+  // re-anchors to the newest matches (and the virtual window can't freeze on a
+  // stale offset), reset the search cursor, and re-query.
+  createEffect(
+    on(
+      filter,
+      () => {
+        setSearchCur(-1);
+        setAutoScroll(true);
+        debouncedRefresh(true);
+      },
+      { defer: true },
+    ),
+  );
+
+  // Re-query when app:→PID resolution changes (10s pid poll), without touching
+  // Tail state. appPids() returns a fresh object each run, so this also acts as
+  // a ~10s periodic refresh backstop.
+  createEffect(on(appPids, () => debouncedRefresh(true), { defer: true }));
+
+  // The backend persists every batch to SQLite, then emits a lightweight
+  // `logcat://appended` ping (payload = batch count) on this WebviewWindow.
+  // We don't carry the firehose over IPC anymore — the ping just tells us to
+  // re-query (tailing) or bump the badge (frozen).
   onMount(() => {
-    let unlistenBatch: UnlistenFn | undefined;
+    let unlistenAppended: UnlistenFn | undefined;
     let unlistenError: UnlistenFn | undefined;
 
-    listen<LogEntry[]>("logcat://batch", (e) => {
-      if (paused()) return;
-      pending.push(e.payload);
-      pendingTotal += e.payload.length;
-      // Cap pending at MAX_ENTRIES so a user who scrolls up and
-      // walks away doesn't blow out memory. FIFO drop from the
-      // front — same as the entries() ring buffer.
-      let didDrop = false;
-      while (pendingTotal > MAX_ENTRIES && pending.length > 0) {
-        const dropped = pending.shift()!;
-        pendingTotal -= dropped.length;
-        didDrop = true;
-      }
-      // Update the filtered "+N new" badge while frozen. A drop
-      // invalidates the running total (we don't track how many of the
-      // dropped batch matched), so recount fully on that rare path;
-      // otherwise just add this batch's matches.
-      if (!autoScroll()) {
-        if (didDrop) {
-          recountPending();
-        } else {
-          const pred = filterPredicate();
-          let add = 0;
-          for (const en of e.payload) if (pred(en)) add++;
-          if (add > 0) setPendingCount(pendingCount() + add);
-        }
-      }
-      scheduleFlush();
-    }).then((u) => (unlistenBatch = u));
+    listen<number>("logcat://appended", () => onAppended()).then(
+      (u) => (unlistenAppended = u),
+    );
 
     listen<{ message: string }>("logcat://error", (e) => {
       setErrorMsg(e.payload.message);
     }).then((u) => (unlistenError = u));
 
-    // Kick the backend. logcat_open is idempotent — if the window
-    // already had a stream (e.g. it was reopened from the main app),
-    // this returns immediately without double-spawn.
+    // Kick the backend. logcat_open is idempotent — if the window already had
+    // a stream (e.g. reopened from the main app), it returns without
+    // double-spawn. Either way, load the persisted history for this device.
     invoke("logcat_open", { serial, appLabel: appLabel ?? null }).catch((err) => {
       setErrorMsg(typeof err === "string" ? err : (err?.message ?? String(err)));
     });
+    void refresh(true);
 
     onCleanup(() => {
-      unlistenBatch?.();
+      unlistenAppended?.();
       unlistenError?.();
-      if (rafHandle !== undefined) cancelAnimationFrame(rafHandle);
+      if (appendedTimer) clearTimeout(appendedTimer);
+      if (filterTimer) clearTimeout(filterTimer);
     });
   });
 
-  // Auto-scroll to bottom when new entries arrive and the user hasn't
+  // Auto-scroll to bottom when a refresh brings new rows and the user hasn't
   // scrolled up.
   //
-  // Depend on the full `visible()` reference, not just its length.
-  // Once the ring buffer hits MAX_ENTRIES, length is pinned at the
-  // cap and FIFO turnover only changes the array reference — depending
-  // on length alone would freeze auto-scroll at saturation, which was
-  // the "logcat stopped updating" bug users hit on long-running
-  // sessions.
+  // Depend on the full `visible()` reference (a fresh array each refresh), not
+  // just its length — at the QUERY_LIMIT cap the length is pinned and only the
+  // reference changes, and depending on length alone would freeze auto-scroll.
   //
   // We go through virtualizer.scrollToIndex rather than setting
   // scrollEl.scrollTop directly: a manual scrollTop write fires the
@@ -947,28 +921,30 @@ const LogcatView: Component = () => {
         cur + scrollEl.clientHeight >= scrollEl.scrollHeight - 4;
       if (atBottom) {
         setAutoScroll(true);
-        scheduleFlush();
+        void refresh(true);
       }
     }
     lastScrollTop = cur;
   };
 
-  const togglePause = () => setPaused(!paused());
+  // Pause freezes the VIEW (refresh early-returns); the backend keeps writing
+  // to the DB. Resume re-queries to catch up.
+  const togglePause = () => {
+    const next = !paused();
+    setPaused(next);
+    if (!next) void refresh(true);
+  };
   const clearAll = () => {
-    pending = [];
-    pendingTotal = 0;
     setPendingCount(0);
     setEntries([]);
     // The scroll port is about to collapse to 0 height; reset the
     // baseline now so the post-collapse scroll event compares a
     // 0 against a 0 instead of a 0 against the old (huge) value.
-    // Belt-and-braces with the visible().length > 0 guard in
-    // onScroll — that one already blocks the OFF flip, this one
-    // keeps lastScrollTop coherent for whatever scroll happens
-    // next.
     lastScrollTop = 0;
-    setSelected(new Set<LogEntry>());
+    setSelected(new Set<number>());
     selectAnchor = -1;
+    // Delete this device's rows from the DB, then reload (empty).
+    void api.logcat.clear(serial).then(() => refresh(true));
   };
 
   // LogRabbit-style WHOLE-ROW selection (not text selection — rows are
@@ -976,15 +952,15 @@ const LogcatView: Component = () => {
   // are translateY'd, so native cross-row text selection is janky and
   // copies cell-by-cell; a row model sidesteps that entirely.
   //
-  // The visible() entries within [a, b] (inclusive), by identity.
-  const rangeSet = (a: number, b: number): Set<LogEntry> => {
+  // The ids of visible() entries within [a, b] (inclusive).
+  const rangeSet = (a: number, b: number): Set<number> => {
     const list = visible();
     const lo = Math.min(a, b);
     const hi = Math.max(a, b);
-    const out = new Set<LogEntry>();
+    const out = new Set<number>();
     for (let i = lo; i <= hi; i++) {
       const en = list[i];
-      if (en) out.add(en);
+      if (en) out.add(en.id);
     }
     return out;
   };
@@ -1002,12 +978,12 @@ const LogcatView: Component = () => {
       setSelected(rangeSet(selectAnchor, index));
     } else if (ev.metaKey || ev.ctrlKey) {
       const next = new Set(selected());
-      if (next.has(entry)) next.delete(entry);
-      else next.add(entry);
+      if (next.has(entry.id)) next.delete(entry.id);
+      else next.add(entry.id);
       setSelected(next);
       selectAnchor = index;
     } else {
-      setSelected(new Set([entry]));
+      setSelected(new Set([entry.id]));
       selectAnchor = index;
       rowDragging = true;
     }
@@ -1028,8 +1004,8 @@ const LogcatView: Component = () => {
     rowDragging = false;
     const entry = visible()[index];
     if (!entry) return;
-    if (!selected().has(entry)) {
-      setSelected(new Set([entry]));
+    if (!selected().has(entry.id)) {
+      setSelected(new Set([entry.id]));
       selectAnchor = index;
     }
     menuViewEntry = entry;
@@ -1063,7 +1039,7 @@ const LogcatView: Component = () => {
     // View the whole selection (the right-clicked row was folded into it
     // by onRowContextMenu), in visible() order; fall back to the clicked
     // row if somehow nothing is selected.
-    const rows = visible().filter((en) => selected().has(en));
+    const rows = visible().filter((en) => selected().has(en.id));
     if (rows.length > 0) openDetail(rows);
     else if (menuViewEntry) openDetail([menuViewEntry]);
     closeRowMenu();
@@ -1079,7 +1055,7 @@ const LogcatView: Component = () => {
   const copySelected = (messageOnly: boolean): boolean => {
     const sel = selected();
     if (sel.size === 0) return false;
-    const ordered = visible().filter((en) => sel.has(en));
+    const ordered = visible().filter((en) => sel.has(en.id));
     if (ordered.length === 0) return false;
     const text = ordered
       .map((en) => (messageOnly ? en.message : formatEntryLine(en)))
@@ -1101,12 +1077,10 @@ const LogcatView: Component = () => {
   };
 
 
-  /// Serialize the currently-visible entries (after filter + follow-app
-  /// constraints) into a plain-text `.log` file. Format mirrors what
-  /// `adb logcat -v threadtime` emits so the result drops into any
-  /// log viewer (Android Studio, logbook, grep) unmodified.
+  /// Export the FULL filtered history for this device (uncapped — not just the
+  /// loaded window) to a `.log` file. The backend streams matching rows and
+  /// formats them as threadtime, so it drops into any log viewer unmodified.
   const exportLog = async () => {
-    const lines = visible().map(formatEntryLine);
     const defaultName = appLabel
       ? `${appLabel}-${Date.now()}.log`
       : `logcat-${serial}-${Date.now()}.log`;
@@ -1115,12 +1089,15 @@ const LogcatView: Component = () => {
       filters: [{ name: "Log", extensions: ["log"] }],
     });
     if (!path) return;
+    const { include, exclude } = appPids();
     try {
-      // Backend command (Rust std::fs::write) instead of plugin-fs —
-      // plugin-fs's write_text_file requires a per-capability scope
-      // rule whitelisting the path, which doesn't make sense for a
-      // user-chosen save dialog target. Same pattern as ca.save_to_file.
-      await invoke("logcat_write_export", { path, content: lines.join("\n") + "\n" });
+      await api.logcat.export(
+        serial,
+        filter() || undefined,
+        [...include],
+        [...exclude],
+        path,
+      );
     } catch (e: unknown) {
       setErrorMsg(
         tr("logcat.export_failed", {
@@ -1134,13 +1111,11 @@ const LogcatView: Component = () => {
     const next = !autoScroll();
     setAutoScroll(next);
     if (next) {
-      // Re-engaging Follow: drain any batches that piled up while
-      // we were holding them, then snap to the bottom. The drain
-      // commits into entries() on the next rAF and the auto-scroll
-      // createEffect catches the visible() change to scroll to
-      // the new bottom; the explicit scroll here just covers the
-      // case where pending was empty.
-      scheduleFlush();
+      // Re-engaging Follow: re-query to catch up on anything that landed while
+      // frozen, then snap to the bottom. The refresh commits into entries()
+      // and the auto-scroll effect scrolls to the new bottom; the explicit
+      // scroll here covers the already-current case.
+      void refresh(true);
       const count = visible().length;
       if (scrollEl && count > 0) {
         virtualizer.scrollToIndex(count - 1, { align: "end" });
@@ -1170,7 +1145,7 @@ const LogcatView: Component = () => {
       }
       if (e.key === "Escape" && selected().size > 0) {
         e.preventDefault();
-        setSelected(new Set<LogEntry>());
+        setSelected(new Set<number>());
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c") {
@@ -1927,11 +1902,10 @@ const LogcatView: Component = () => {
             <For each={virtualizer.getVirtualItems()}>
               {(vi) => {
                 // Wrap the row entry in a memo so it tracks visible()
-                // changes — at MAX_ENTRIES the virtualizer keeps
-                // returning the same vi objects (count is pinned),
-                // so the <For> callback never re-runs. Without this
-                // memo, e was captured once and the row content
-                // froze even though entries() kept turning over.
+                // changes — the virtualizer can keep returning the same
+                // vi objects across a re-query, so the <For> callback
+                // never re-runs. Without this memo, e was captured once
+                // and the row content froze even though entries() changed.
                 const e = createMemo(() => visible()[vi.index]);
                 return (
                   <Show when={e()}>
@@ -1953,7 +1927,7 @@ const LogcatView: Component = () => {
                       return (
                         <div
                           class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 select-none cursor-default ${
-                            selected().has(entry())
+                            selected().has(entry().id)
                               ? "bg-accent/25"
                               : "hover:bg-bg-muted/40"
                           } ${
@@ -2022,16 +1996,15 @@ const LogcatView: Component = () => {
           and the digits in one fixed spot. `pl-5` (= row's `px-3` + the
           first cell's `px-2`) aligns the counter's left edge with the
           start of the first column above it. The `+` suffix appears
-          when the in-memory ring buffer has hit MAX_ENTRIES, signalling
-          that older entries have been dropped FIFO and the visible
-          total is the cap, not the actual log volume since attach. */}
+          when the query hit QUERY_LIMIT, signalling that the DB holds
+          older matching rows beyond the loaded window. */}
       <div class="flex items-center pl-5 pr-3 py-1 border-t border-border bg-bg-subtle text-fg-muted text-xs tabular-nums">
         <span>
           {tr("logcat.counter", {
             shown: String(visible().length),
             total:
-              entries().length >= MAX_ENTRIES
-                ? `${MAX_ENTRIES}+`
+              entries().length >= QUERY_LIMIT
+                ? `${QUERY_LIMIT}+`
                 : String(entries().length),
           })}
         </span>

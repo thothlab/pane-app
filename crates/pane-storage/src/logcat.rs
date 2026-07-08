@@ -180,11 +180,12 @@ impl Storage {
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
         for s in serials {
-            // The subquery is the id of the cap-th newest row; when a device
-            // has fewer than `cap` rows it returns NULL and `id < NULL` is
-            // never true — a correct no-op, no guard needed.
+            // The subquery is the id of the (cap+1)-th newest row; deleting
+            // `id <=` it keeps exactly the newest `cap`. When a device has
+            // `cap` or fewer rows the subquery returns NULL and `id <= NULL`
+            // is never true — a correct no-op, no guard needed.
             deleted += tx.execute(
-                "DELETE FROM logcat_entry WHERE serial = ?1 AND id < (
+                "DELETE FROM logcat_entry WHERE serial = ?1 AND id <= (
                      SELECT id FROM logcat_entry WHERE serial = ?1
                      ORDER BY id DESC LIMIT 1 OFFSET ?2
                  )",
@@ -299,4 +300,99 @@ pub(crate) fn register_regexp(conn: &Connection) -> rusqlite::Result<()> {
             Ok(regex.is_match(&text))
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Storage;
+    use tempfile::tempdir;
+
+    fn ins(tag: &str, msg: &str, pid: u32, level: i64) -> LogcatInsert {
+        LogcatInsert {
+            device_ts: "07-09 12:00:00.000".into(),
+            pid,
+            tid: 1,
+            level,
+            tag: tag.into(),
+            message: msg.into(),
+        }
+    }
+
+    #[test]
+    fn insert_query_filter_regex_and_prune_roundtrip() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let rows = vec![
+            ins("AnalyticsEvent", "Сбор open", 100, 2), // info
+            ins("OkHttp", "GET /x", 100, 2),
+            ins("AnalyticsEvent", "Сбор close", 200, 4), // error
+        ];
+        assert_eq!(s.insert_logcat_batch("SERIAL_A", 1_000, &rows).unwrap(), 3);
+        // Another device — must stay isolated.
+        s.insert_logcat_batch("SERIAL_B", 1_000, &[ins("AnalyticsEvent", "other", 9, 2)])
+            .unwrap();
+
+        // tag filter, scoped to device A.
+        let got = s
+            .query_logcat("SERIAL_A", Some("tag:AnalyticsEvent"), &[], &[], 100)
+            .unwrap();
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|r| r.tag == "AnalyticsEvent"));
+        // Oldest-first ordering.
+        assert!(got[0].id < got[1].id);
+        assert_eq!(got[0].level, "info");
+        assert_eq!(got[1].level, "error");
+
+        // level range.
+        let errs = s
+            .query_logcat("SERIAL_A", Some("level:E"), &[], &[], 100)
+            .unwrap();
+        assert_eq!(errs.len(), 1);
+
+        // regex over message (exercises the REGEXP fn on the read conn).
+        let re = s
+            .query_logcat("SERIAL_A", Some("~close$"), &[], &[], 100)
+            .unwrap();
+        assert_eq!(re.len(), 1);
+        assert!(re[0].message.ends_with("close"));
+
+        // app: resolved PIDs come in as include list.
+        let by_pid = s
+            .query_logcat("SERIAL_A", None, &[200], &[], 100)
+            .unwrap();
+        assert_eq!(by_pid.len(), 1);
+        assert_eq!(by_pid[0].pid, 200);
+
+        // Device isolation.
+        assert_eq!(s.query_logcat("SERIAL_B", None, &[], &[], 100).unwrap().len(), 1);
+
+        // Badge count: everything newer than id 0.
+        assert_eq!(
+            s.count_logcat_new("SERIAL_A", None, &[], &[], 0).unwrap(),
+            3
+        );
+
+        // Retention: nothing older than "now - huge" ; then a tiny retention
+        // window (created_at=1000 is far in the past) drops all of A+B.
+        assert_eq!(s.prune_logcat(i64::MAX, i64::MAX).unwrap(), 0);
+        let deleted = s.prune_logcat(0, i64::MAX).unwrap();
+        assert_eq!(deleted, 4);
+        assert_eq!(s.query_logcat("SERIAL_A", None, &[], &[], 100).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn per_device_cap_trims_oldest() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let batch: Vec<LogcatInsert> = (0..10).map(|i| ins("T", &format!("m{i}"), 1, 2)).collect();
+        s.insert_logcat_batch("DEV", 10_000_000_000_000, &batch).unwrap();
+        // Keep only the newest 3 (retention window huge so only the cap bites).
+        s.prune_logcat(i64::MAX, 3).unwrap();
+        let got = s.query_logcat("DEV", None, &[], &[], 100).unwrap();
+        assert_eq!(got.len(), 3);
+        // The survivors are the last three inserted.
+        assert_eq!(got[0].message, "m7");
+        assert_eq!(got[2].message, "m9");
+    }
 }
