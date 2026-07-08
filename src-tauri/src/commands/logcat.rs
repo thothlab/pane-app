@@ -28,10 +28,17 @@ use std::collections::HashMap;
 use pane_android::logcat::{spawn as spawn_logcat, LogcatConfig, LogcatEvent};
 use pane_android::AndroidPlatform;
 use parking_lot::Mutex;
-use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tokio::sync::mpsc;
 
 use super::{to_api, CmdResult};
+use crate::state::AppState;
+use pane_ipc::{
+    ClearResult, LogcatClearArgs, LogcatExportArgs, LogcatNewCountArgs, LogcatQueryArgs,
+    LogcatRowDto,
+};
+use pane_storage::LogcatInsert;
+use time::OffsetDateTime;
 
 /// Tracks an open logcat session so a re-open call can detect and
 /// focus instead of re-spawning. Lives on `AppState` (initialised in
@@ -86,17 +93,40 @@ pub async fn logcat_open(
         .build()
         .map_err(to_api("window_build"))?;
 
-    // Spawn the adb logcat stream. The callback forwards parsed batches
-    // to the webview only (scoped emit), so the main window never sees
-    // the firehose.
+    // Spawn the adb logcat stream. The callback persists each batch to SQLite
+    // (durable, per-device) and forwards it to the webview only (scoped emit),
+    // so the main window never sees the firehose.
     let win_for_emit = window.clone();
+    let storage_for_db = app.state::<AppState>().storage.clone();
+    let serial_db = serial.clone();
     let cfg = LogcatConfig {
         serial: serial.clone(),
         ..Default::default()
     };
     let shutdown_tx = spawn_logcat(cfg, move |ev| match ev {
         LogcatEvent::Batch(entries) => {
-            // Tauri 2 instance-method emit — webview-scoped.
+            // Persist first — the DB is the source of truth (Phase 3 makes the
+            // UI read from it). One created_at stamp shared across the batch.
+            let created_at_ms =
+                (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64;
+            let rows: Vec<LogcatInsert> = entries
+                .iter()
+                .map(|e| LogcatInsert {
+                    device_ts: e.timestamp.clone(),
+                    pid: e.pid,
+                    tid: e.tid,
+                    level: e.level as i64,
+                    tag: e.tag.clone(),
+                    message: e.message.clone(),
+                })
+                .collect();
+            if let Err(e) =
+                storage_for_db.insert_logcat_batch(&serial_db, created_at_ms, &rows)
+            {
+                tracing::warn!(error = %e, "logcat: db insert failed");
+            }
+            // Tauri 2 instance-method emit — webview-scoped. (Phase 1 keeps the
+            // current in-memory UI working; Phase 3 switches to a lighter ping.)
             if let Err(e) = win_for_emit.emit("logcat://batch", &entries) {
                 tracing::warn!(error = %e, "logcat: emit failed (window gone?)");
             }
@@ -159,6 +189,75 @@ pub async fn logcat_write_export(path: String, content: String) -> CmdResult<usi
     let bytes = content.len();
     std::fs::write(&path, content).map_err(to_api("io"))?;
     Ok(bytes)
+}
+
+/// Query persisted logcat rows for a device. `filter` is the raw DSL string;
+/// `include_pids`/`exclude_pids` are the frontend-resolved `app:` PIDs.
+#[tauri::command]
+pub async fn logcat_query(
+    state: State<'_, AppState>,
+    args: LogcatQueryArgs,
+) -> CmdResult<Vec<LogcatRowDto>> {
+    state
+        .storage
+        .query_logcat(
+            &args.serial,
+            args.filter.as_deref(),
+            &args.include_pids,
+            &args.exclude_pids,
+            args.limit,
+        )
+        .map_err(to_api("db"))
+}
+
+/// Count matching rows newer than `after_id` — the "+N new" badge while frozen.
+#[tauri::command]
+pub async fn logcat_new_count(
+    state: State<'_, AppState>,
+    args: LogcatNewCountArgs,
+) -> CmdResult<i64> {
+    state
+        .storage
+        .count_logcat_new(
+            &args.serial,
+            args.filter.as_deref(),
+            &args.include_pids,
+            &args.exclude_pids,
+            args.after_id,
+        )
+        .map_err(to_api("db"))
+}
+
+/// Delete all persisted rows for one device (the Clear button).
+#[tauri::command]
+pub async fn logcat_clear(
+    state: State<'_, AppState>,
+    args: LogcatClearArgs,
+) -> CmdResult<ClearResult> {
+    let n = state
+        .storage
+        .clear_logcat(&args.serial)
+        .map_err(to_api("db"))?;
+    Ok(ClearResult { deleted: n as u64 })
+}
+
+/// Export the full (uncapped) filtered set for a device to a file in
+/// threadtime format. Returns the number of lines written.
+#[tauri::command]
+pub async fn logcat_export(
+    state: State<'_, AppState>,
+    args: LogcatExportArgs,
+) -> CmdResult<usize> {
+    state
+        .storage
+        .export_logcat(
+            &args.serial,
+            args.filter.as_deref(),
+            &args.include_pids,
+            &args.exclude_pids,
+            &args.path,
+        )
+        .map_err(to_api("io"))
 }
 
 /// Full PID → process-name snapshot. Polled by the Logcat window

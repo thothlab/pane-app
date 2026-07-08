@@ -3507,6 +3507,7 @@ dependencies = [
  "pane-ipc",
  "parking_lot",
  "refinery",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

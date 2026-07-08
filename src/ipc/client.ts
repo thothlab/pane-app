@@ -12,6 +12,7 @@ import type {
   DeviceDto,
   DiscoveredDeviceDto,
   FilterDto,
+  LogcatRowDto,
   ProxyStatusDto,
   CollectionUpsertArgs,
   ReplayRecordDto,
@@ -120,5 +121,59 @@ export const api = {
       call<void>("collection_set_enabled", { args: { id, enabled } }),
     setPriority: (id: string, priority: number) =>
       call<void>("collection_set_priority", { args: { id, priority } }),
+  },
+  logcat: {
+    // `filter` is the raw DSL string; app: PIDs are resolved on the client and
+    // passed as include/exclude lists. Returns rows oldest→newest.
+    query: (
+      serial: string,
+      filter?: string,
+      includePids: number[] = [],
+      excludePids: number[] = [],
+      limit = 2000,
+    ) =>
+      call<LogcatRowDto[]>("logcat_query", {
+        args: {
+          serial,
+          filter,
+          include_pids: includePids,
+          exclude_pids: excludePids,
+          limit,
+        },
+      }),
+    newCount: (
+      serial: string,
+      filter: string | undefined,
+      includePids: number[],
+      excludePids: number[],
+      afterId: number,
+    ) =>
+      call<number>("logcat_new_count", {
+        args: {
+          serial,
+          filter,
+          include_pids: includePids,
+          exclude_pids: excludePids,
+          after_id: afterId,
+        },
+      }),
+    clear: (serial: string) =>
+      call<{ deleted: number }>("logcat_clear", { args: { serial } }),
+    export: (
+      serial: string,
+      filter: string | undefined,
+      includePids: number[],
+      excludePids: number[],
+      path: string,
+    ) =>
+      call<number>("logcat_export", {
+        args: {
+          serial,
+          filter,
+          include_pids: includePids,
+          exclude_pids: excludePids,
+          path,
+        },
+      }),
   },
 };

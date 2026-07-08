@@ -115,6 +115,20 @@ export interface FilterDto {
   kind: FilterKind;
 }
 
+/** One persisted logcat row from the DB. Mirrors the backend LogcatRowDto;
+ *  the `timestamp`/`pid`/`tid`/`level`/`tag`/`message` fields line up with
+ *  the in-memory `LogEntry` so the table renders either interchangeably. */
+export interface LogcatRowDto {
+  id: number;
+  created_at: number;
+  timestamp: string;
+  pid: number;
+  tid: number;
+  level: "verbose" | "debug" | "info" | "warn" | "error" | "fatal" | "silent";
+  tag: string;
+  message: string;
+}
+
 export interface RequestSpec {
   method: string;
   url: string;

@@ -55,6 +55,10 @@ pub fn run() {
             commands::logcat::logcat_open,
             commands::logcat::android_pid_names,
             commands::logcat::logcat_write_export,
+            commands::logcat::logcat_query,
+            commands::logcat::logcat_new_count,
+            commands::logcat::logcat_clear,
+            commands::logcat::logcat_export,
             // ca
             commands::ca::current,
             commands::ca::rotate,

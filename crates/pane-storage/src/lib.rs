@@ -6,10 +6,13 @@
 
 mod bodies;
 mod filter_dsl;
+mod logcat;
+mod logcat_filter_dsl;
 mod migrations;
 mod replay_impl;
 
 pub use bodies::BodyStore;
+pub use logcat::LogcatInsert;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -145,6 +148,11 @@ impl CaRecord {
 
 pub struct Storage {
     conn: Mutex<Connection>,
+    /// Dedicated connection reserved for logcat SELECTs. WAL lets it read
+    /// concurrently with the main write connection, so the firehose ingest
+    /// (on `conn`) doesn't serialize against the UI's filtered queries. The
+    /// REGEXP scalar function is registered only here.
+    logcat_read: Mutex<Connection>,
     data_dir: PathBuf,
     pub bodies: Arc<BodyStore>,
 }
@@ -162,9 +170,16 @@ impl Storage {
             .run(&mut conn)
             .context("migrations failed")?;
 
+        // Second connection for logcat reads (schema now exists). Give it a
+        // busy_timeout so a checkpoint/write burst yields a wait, not an error.
+        let logcat_read = Connection::open(&db_path)?;
+        logcat_read.busy_timeout(std::time::Duration::from_secs(5))?;
+        logcat::register_regexp(&logcat_read)?;
+
         let bodies = Arc::new(BodyStore::new(data_dir.join("bodies"))?);
         Ok(Self {
             conn: Mutex::new(conn),
+            logcat_read: Mutex::new(logcat_read),
             data_dir: data_dir.to_path_buf(),
             bodies,
         })

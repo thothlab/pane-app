@@ -137,6 +137,56 @@ pub struct HeaderDto {
     pub value: String,
 }
 
+/// One persisted logcat line, as returned to the Logcat window. Field names
+/// mirror the frontend `LogEntry` (plus `id`/`created_at`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogcatRowDto {
+    pub id: i64,
+    pub created_at: i64,
+    /// Device timestamp "MM-DD HH:MM:SS.mmm" (display only).
+    pub timestamp: String,
+    pub pid: u32,
+    pub tid: u32,
+    /// Lowercase level union ("verbose".."silent"), matching `LogEntry.level`.
+    pub level: String,
+    pub tag: String,
+    pub message: String,
+}
+
+/// `filter` is the raw DSL string (tag/msg/level/pid/regex/bareword);
+/// `include_pids`/`exclude_pids` carry the frontend-resolved `app:` PIDs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogcatQueryArgs {
+    pub serial: String,
+    pub filter: Option<String>,
+    pub include_pids: Vec<u32>,
+    pub exclude_pids: Vec<u32>,
+    pub limit: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogcatNewCountArgs {
+    pub serial: String,
+    pub filter: Option<String>,
+    pub include_pids: Vec<u32>,
+    pub exclude_pids: Vec<u32>,
+    pub after_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogcatClearArgs {
+    pub serial: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogcatExportArgs {
+    pub serial: String,
+    pub filter: Option<String>,
+    pub include_pids: Vec<u32>,
+    pub exclude_pids: Vec<u32>,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureDto {
     pub id: Uuid,
