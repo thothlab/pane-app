@@ -27,22 +27,45 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
 
   const DEFAULT_BODY_LIMIT = 4 * 1024 * 1024; // 4 MB
 
-  createEffect(async () => {
+  // Load the full capture (headers + body ids) whenever the selection
+  // changes. Kept separate from the body load below so each effect tracks
+  // exactly one concern synchronously.
+  let fullGen = 0;
+  createEffect(() => {
     const c = props.capture;
     if (!c) {
       setFull(null);
+      return;
+    }
+    const gen = ++fullGen;
+    void api.captures.get(c.id).then((f) => {
+      if (gen === fullGen) setFull(f);
+    });
+  });
+
+  // (Re)load the body for the ACTIVE tab. Both full() and tab() are read
+  // synchronously so Solid tracks them — previously tab() was read only
+  // after an `await` inside a single async effect, so it was never a
+  // dependency and the body pane kept showing whichever tab was active when
+  // the row was selected (e.g. the 60B request body under the Response tab,
+  // even though the response's content-length was 17 KB). The generation
+  // guard drops out-of-order async results from rapid tab/row switching.
+  let bodyGen = 0;
+  createEffect(() => {
+    const f = full();
+    const activeTab = tab();
+    const bodyId =
+      activeTab === "response" ? f?.res_body_id
+      : activeTab === "request" ? f?.req_body_id
+      : null;
+    if (!f || !bodyId) {
       setBody(null);
       return;
     }
-    const f = await api.captures.get(c.id);
-    setFull(f);
-    if (tab() === "response" && f.res_body_id) {
-      setBody(await api.captures.body(f.res_body_id, DEFAULT_BODY_LIMIT));
-    } else if (tab() === "request" && f.req_body_id) {
-      setBody(await api.captures.body(f.req_body_id, DEFAULT_BODY_LIMIT));
-    } else {
-      setBody(null);
-    }
+    const gen = ++bodyGen;
+    void api.captures.body(bodyId, DEFAULT_BODY_LIMIT).then((b) => {
+      if (gen === bodyGen) setBody(b);
+    });
   });
 
   const loadFullBody = async () => {
