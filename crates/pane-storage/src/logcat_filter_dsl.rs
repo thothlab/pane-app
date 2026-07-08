@@ -59,13 +59,13 @@ pub fn compile_to_sql(input: &str) -> Result<(String, Vec<Box<dyn ToSql>>)> {
         match body.find(':') {
             None => {
                 // Bareword: substring across tag OR message.
-                let pat = like_pattern(body);
+                let pat = regex_pattern(body);
                 params.push(Box::new(pat.clone()));
                 params.push(Box::new(pat));
                 where_parts.push(if negate {
-                    r"(tag NOT LIKE ? ESCAPE '\' AND message NOT LIKE ? ESCAPE '\')".into()
+                    "(NOT (tag REGEXP ?) AND NOT (message REGEXP ?))".into()
                 } else {
-                    r"(tag LIKE ? ESCAPE '\' OR message LIKE ? ESCAPE '\')".into()
+                    "(tag REGEXP ? OR message REGEXP ?)".into()
                 });
             }
             Some(idx) => {
@@ -81,8 +81,8 @@ pub fn compile_to_sql(input: &str) -> Result<(String, Vec<Box<dyn ToSql>>)> {
                     continue;
                 }
                 let frag = match key.as_str() {
-                    "tag" => like_group("tag", &values, &mut params),
-                    "msg" | "message" => like_group("message", &values, &mut params),
+                    "tag" => text_group("tag", &values, &mut params),
+                    "msg" | "message" => text_group("message", &values, &mut params),
                     "level" => level_group(&values, &mut params)?,
                     "pid" => pid_group(&values, &mut params)?,
                     other => return Err(anyhow!("unknown filter key: {other}")),
@@ -129,29 +129,32 @@ fn split_values(value: &str) -> Vec<RawValue> {
     out
 }
 
-/// LIKE pattern faithful to the TS `makeSubstringMatcher`: `*` is the only
-/// glob, matching is anchor-free (substring). LIKE specials (`\ % _`) are
-/// escaped so underscores in messages don't act as wildcards; the pattern is
-/// wrapped in `%…%`, and `*`→`%`. Paired with `... LIKE ? ESCAPE '\'`.
-fn like_pattern(value: &str) -> String {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('%');
+/// Case-insensitive (Unicode) substring pattern faithful to the TS
+/// `makeSubstringMatcher`: `*` is the only glob, matching is anchor-free. We
+/// use REGEXP rather than LIKE so non-ASCII case folding works — SQLite `LIKE`
+/// is case-sensitive for anything outside A–Z, which would silently
+/// under-match Cyrillic tags/messages (the JS path used `.toLowerCase()`).
+/// `(?i)` gives Rust regex's Unicode-aware fold; regex metachars are escaped,
+/// `*`→`.*`. Paired with `col REGEXP ?`.
+fn regex_pattern(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 4);
+    out.push_str("(?i)");
     for c in value.chars() {
         match c {
-            '\\' => out.push_str(r"\\"),
-            '%' => out.push_str(r"\%"),
-            '_' => out.push_str(r"\_"),
-            '*' => out.push('%'),
+            '*' => out.push_str(".*"),
+            '.' | '^' | '$' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
             _ => out.push(c),
         }
     }
-    out.push('%');
     out
 }
 
-/// Positives OR, negatives (NOT LIKE) all-must-not, groups AND — over one
-/// string column. Params are pushed in the same order the `?`s appear.
-fn like_group(col: &str, values: &[RawValue], params: &mut Vec<Box<dyn ToSql>>) -> String {
+/// Positives OR, negatives (NOT REGEXP) all-must-not, groups AND — over one
+/// text column. Params are pushed in the same order the `?`s appear.
+fn text_group(col: &str, values: &[RawValue], params: &mut Vec<Box<dyn ToSql>>) -> String {
     let mut parts: Vec<String> = Vec::new();
     let pos: Vec<&RawValue> = values.iter().filter(|v| !v.negate).collect();
     let neg: Vec<&RawValue> = values.iter().filter(|v| v.negate).collect();
@@ -160,8 +163,8 @@ fn like_group(col: &str, values: &[RawValue], params: &mut Vec<Box<dyn ToSql>>) 
         let ors: Vec<String> = pos
             .iter()
             .map(|v| {
-                params.push(Box::new(like_pattern(&v.value)));
-                format!(r"{col} LIKE ? ESCAPE '\'")
+                params.push(Box::new(regex_pattern(&v.value)));
+                format!("{col} REGEXP ?")
             })
             .collect();
         parts.push(if ors.len() > 1 {
@@ -171,8 +174,8 @@ fn like_group(col: &str, values: &[RawValue], params: &mut Vec<Box<dyn ToSql>>) 
         });
     }
     for v in neg {
-        params.push(Box::new(like_pattern(&v.value)));
-        parts.push(format!(r"{col} NOT LIKE ? ESCAPE '\'"));
+        params.push(Box::new(regex_pattern(&v.value)));
+        parts.push(format!("NOT ({col} REGEXP ?)"));
     }
     join_and(parts)
 }
@@ -325,8 +328,8 @@ mod tests {
     #[test]
     fn bareword_matches_tag_or_message() {
         let s = sql("OkHttp");
-        assert!(s.contains("tag LIKE ?"));
-        assert!(s.contains("message LIKE ?"));
+        assert!(s.contains("tag REGEXP ?"));
+        assert!(s.contains("message REGEXP ?"));
         assert!(s.contains(" OR "));
         assert_eq!(nparams("OkHttp"), 2);
     }
@@ -334,8 +337,8 @@ mod tests {
     #[test]
     fn bareword_negation_uses_and() {
         let s = sql("!OkHttp");
-        assert!(s.contains("tag NOT LIKE ?"));
-        assert!(s.contains("message NOT LIKE ?"));
+        assert!(s.contains("NOT (tag REGEXP ?)"));
+        assert!(s.contains("NOT (message REGEXP ?)"));
         assert!(s.contains(" AND "));
     }
 
@@ -343,8 +346,8 @@ mod tests {
     fn tag_pos_neg_split() {
         // positives OR, negatives all-must-not, AND together
         let (s, p) = compile_to_sql("tag:!CatalogParser,!Spam,SSH").unwrap();
-        assert!(s.contains("tag LIKE ?"));
-        assert_eq!(s.matches("tag NOT LIKE ?").count(), 2);
+        assert!(s.contains("tag REGEXP ?"));
+        assert_eq!(s.matches("NOT (tag REGEXP ?)").count(), 2);
         assert!(s.contains(" AND "));
         assert_eq!(p.len(), 3);
     }
@@ -419,16 +422,16 @@ mod tests {
     fn app_combined_with_real_key() {
         // Only the tag token contributes; app is dropped.
         let s = sql("app:com.foo tag:OkHttp");
-        assert!(s.contains("tag LIKE ?"));
+        assert!(s.contains("tag REGEXP ?"));
         assert!(!s.contains("app"));
     }
 
     #[test]
     fn tokens_and_together_with_outer_negate() {
         let s = sql("tag:OkHttp !msg:keep-alive");
-        assert!(s.contains("tag LIKE ?"));
+        assert!(s.contains("tag REGEXP ?"));
         assert!(s.contains("NOT ("));
-        assert!(s.contains("message LIKE ?"));
+        assert!(s.contains("message REGEXP ?"));
         assert!(s.contains(" AND "));
     }
 
@@ -441,22 +444,41 @@ mod tests {
     fn quoted_token_kept_whole() {
         // "Pane Helper" is one tag value, space preserved.
         let (s, p) = compile_to_sql("tag:\"Pane Helper\"").unwrap();
-        assert!(s.contains("tag LIKE ?"));
+        assert!(s.contains("tag REGEXP ?"));
         assert_eq!(p.len(), 1);
     }
 
-    #[test]
-    fn underscore_escaped_not_wildcard() {
-        // The bound pattern must escape `_` so it matches literally.
+    fn param_text(p: &dyn ToSql) -> String {
         use rusqlite::types::{ToSqlOutput, Value, ValueRef};
-        let (_s, p) = compile_to_sql("msg:foo_bar").unwrap();
-        // Round-trip through ToSql to inspect the bound string (String binds
-        // as Borrowed, i64 as Owned — accept either text form).
-        let text = match p[0].as_ref().to_sql().unwrap() {
+        match p.to_sql().unwrap() {
             ToSqlOutput::Borrowed(ValueRef::Text(b)) => String::from_utf8_lossy(b).into_owned(),
             ToSqlOutput::Owned(Value::Text(t)) => t,
             other => panic!("expected text param, got {other:?}"),
-        };
-        assert!(text.contains(r"\_"), "expected escaped underscore, got {text}");
+        }
+    }
+
+    #[test]
+    fn pattern_is_case_insensitive_and_literal_underscore() {
+        let (_s, p) = compile_to_sql("msg:foo_bar").unwrap();
+        let text = param_text(p[0].as_ref());
+        // (?i) Unicode fold; `_` is a regex literal (not a wildcard, no escape).
+        assert!(text.starts_with("(?i)"), "expected case-insensitive flag, got {text}");
+        assert!(text.contains("foo_bar"), "expected literal underscore, got {text}");
+    }
+
+    #[test]
+    fn regex_metachars_escaped_in_substring() {
+        // A literal dot/paren in a value must not become a regex wildcard.
+        let (_s, p) = compile_to_sql("tag:a.b(c)").unwrap();
+        let text = param_text(p[0].as_ref());
+        assert!(text.contains(r"a\.b\(c\)"), "metachars must be escaped, got {text}");
+    }
+
+    #[test]
+    fn cyrillic_case_insensitive_matches() {
+        // The regression that motivated REGEXP over LIKE: lowercase Cyrillic
+        // query must match a capitalized occurrence.
+        let re = regex::Regex::new(&regex_pattern("сбор")).unwrap();
+        assert!(re.is_match("СборСредств_КарточкаСбора"));
     }
 }

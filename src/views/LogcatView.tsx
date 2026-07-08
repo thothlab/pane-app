@@ -801,16 +801,24 @@ const LogcatView: Component = () => {
     }, 250);
   };
 
-  // Debounced forced refresh for filter / app-pid changes.
+  // Debounced refresh. Force is sticky across a debounce window: if any caller
+  // within the window asked to force (a filter change), the coalesced refresh
+  // is forced — so a same-tick non-forced appPids refresh can't downgrade it.
   let filterTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingForce = false;
   const debouncedRefresh = (force = false) => {
+    pendingForce = pendingForce || force;
     if (filterTimer) clearTimeout(filterTimer);
-    filterTimer = setTimeout(() => void refresh(force), 250);
+    filterTimer = setTimeout(() => {
+      const f = pendingForce;
+      pendingForce = false;
+      void refresh(f);
+    }, 250);
   };
 
   // A filter change replaces the whole result set — re-enable Tail so the view
   // re-anchors to the newest matches (and the virtual window can't freeze on a
-  // stale offset), reset the search cursor, and re-query.
+  // stale offset), reset the search cursor, and force a re-query.
   createEffect(
     on(
       filter,
@@ -823,10 +831,12 @@ const LogcatView: Component = () => {
     ),
   );
 
-  // Re-query when app:→PID resolution changes (10s pid poll), without touching
-  // Tail state. appPids() returns a fresh object each run, so this also acts as
-  // a ~10s periodic refresh backstop.
-  createEffect(on(appPids, () => debouncedRefresh(true), { defer: true }));
+  // Re-query when app:→PID resolution changes. NOT forced: appPids() returns a
+  // fresh object on every 10s pid poll, so forcing here would yank a
+  // scrolled-up (frozen) reader every 10s. Non-forced respects the frozen gate
+  // — it refreshes while tailing and no-ops while frozen (the badge covers
+  // frozen). Doubles as a ~10s tail backstop if an appended ping is missed.
+  createEffect(on(appPids, () => debouncedRefresh(false), { defer: true }));
 
   // The backend persists every batch to SQLite, then emits a lightweight
   // `logcat://appended` ping (payload = batch count) on this WebviewWindow.
