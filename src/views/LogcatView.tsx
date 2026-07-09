@@ -789,16 +789,26 @@ const LogcatView: Component = () => {
     }
   };
 
-  // Debounce the reaction to the backend's "rows appended" ping so a firehose
-  // doesn't fire a query per 100ms batch. Tailing → re-query; frozen → badge.
-  let appendedTimer: ReturnType<typeof setTimeout> | undefined;
+  // React to the backend's "rows appended" ping.
+  //
+  // Tail mode: call refresh() immediately on each batch. The DB query is
+  // fast (indexed DESC+LIMIT, < 5ms); refreshSeq ensures only the latest
+  // result updates the UI, so rapid batches don't stack up visibly.
+  // We intentionally do NOT debounce here — a trailing-edge debounce with
+  // reset-on-call means the timer never fires while batches keep arriving
+  // every 100ms (the flush_interval), producing multi-second delays before
+  // the first update ("several seconds of silence, then a burst of rows").
+  //
+  // Frozen mode: badge updates are fine at a lower cadence (debounced).
+  let badgeTimer: ReturnType<typeof setTimeout> | undefined;
   const onAppended = () => {
-    if (appendedTimer) clearTimeout(appendedTimer);
-    appendedTimer = setTimeout(() => {
-      if (paused()) return;
-      if (autoScroll()) void refresh(false);
-      else void updateBadge();
-    }, 250);
+    if (paused()) return;
+    if (autoScroll()) {
+      void refresh(false);
+    } else {
+      if (badgeTimer) clearTimeout(badgeTimer);
+      badgeTimer = setTimeout(() => void updateBadge(), 250);
+    }
   };
 
   // Debounced refresh. Force is sticky across a debounce window: if any caller
@@ -865,7 +875,7 @@ const LogcatView: Component = () => {
     onCleanup(() => {
       unlistenAppended?.();
       unlistenError?.();
-      if (appendedTimer) clearTimeout(appendedTimer);
+      if (badgeTimer) clearTimeout(badgeTimer);
       if (filterTimer) clearTimeout(filterTimer);
     });
   });
