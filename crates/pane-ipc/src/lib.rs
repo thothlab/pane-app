@@ -164,6 +164,18 @@ pub struct LogcatQueryArgs {
     pub limit: u32,
 }
 
+/// "Load older on scroll-up": fetch the newest `limit` rows *older* than
+/// `before_id`, matching the same filter + resolved `app:` PIDs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogcatQueryOlderArgs {
+    pub serial: String,
+    pub filter: Option<String>,
+    pub include_pids: Vec<u32>,
+    pub exclude_pids: Vec<u32>,
+    pub before_id: i64,
+    pub limit: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogcatNewCountArgs {
     pub serial: String,

@@ -78,6 +78,16 @@ export interface LogEntry {
 // the whole day is never scanned). Matches the query cap in pane-storage.
 const QUERY_LIMIT = 5000;
 
+// Rows fetched per "load older on scroll-up" page. Smaller than QUERY_LIMIT
+// so each prepend is cheap and the scroll-anchor adjustment stays smooth;
+// the user pulls more history one page at a time as they keep scrolling up.
+const OLDER_PAGE = 2000;
+
+// Scroll-from-top threshold (px) that arms a load-older fetch. Once a page
+// is prepended the user is pushed well past this mark (the new rows sit
+// above them), so it can't runaway-chain.
+const OLDER_TRIGGER_PX = 200;
+
 const LEVEL_COLOR: Record<LogLevel, string> = {
   verbose: "text-fg-muted",
   debug: "text-accent",
@@ -766,6 +776,9 @@ const LogcatView: Component = () => {
       setEntries(rows);
       setErrorMsg(null);
       setPendingCount(0);
+      // A full refresh replaces the window with the newest N rows — older
+      // history may exist again below it, so re-arm load-older.
+      setNoMoreOlder(false);
     } catch (e: unknown) {
       if (seq !== refreshSeq) return;
       setErrorMsg((e as { message?: string })?.message ?? String(e));
@@ -789,22 +802,117 @@ const LogcatView: Component = () => {
     }
   };
 
+  // ── Load older history on scroll-up ───────────────────────────────
+  // The loaded window holds only the newest QUERY_LIMIT matching rows. When
+  // the user scrolls to the top we fetch the next page of OLDER matches
+  // (`id < firstLoadedId`) and prepend it, anchoring the scroll so the view
+  // doesn't jump. `noMoreOlder` latches once a short/empty page proves we've
+  // reached the start of this device's history (re-armed on every full
+  // refresh). `loadingOlder` (plain flag, not reactive — only guards) blocks
+  // concurrent fetches and is held until the scroll anchor is settled.
+  const [noMoreOlder, setNoMoreOlder] = createSignal(false);
+  let loadingOlder = false;
+  const loadOlder = async (): Promise<void> => {
+    if (loadingOlder || noMoreOlder()) return;
+    const cur = entries();
+    if (cur.length === 0) return;
+    const beforeId = cur[0]!.id;
+    if (beforeId <= 1) {
+      setNoMoreOlder(true);
+      return;
+    }
+    loadingOlder = true;
+    // Capture the current refresh generation WITHOUT bumping it: a concurrent
+    // refresh (filter change / resume / clear) increments refreshSeq and
+    // replaces the whole window, so if one lands while we're awaiting, drop
+    // this older page rather than prepend stale/wrong-filter rows.
+    const seq = refreshSeq;
+    const { include, exclude } = appPids();
+    try {
+      const older = await api.logcat.queryOlder(
+        serial,
+        filter() || undefined,
+        [...include],
+        [...exclude],
+        beforeId,
+        OLDER_PAGE,
+      );
+      if (seq !== refreshSeq) {
+        loadingOlder = false;
+        return;
+      }
+      if (older.length === 0) {
+        setNoMoreOlder(true);
+        loadingOlder = false;
+        return;
+      }
+      // A short page means we've hit the start — no point querying again.
+      if (older.length < OLDER_PAGE) setNoMoreOlder(true);
+      // Anchor the viewport: prepending grows the scroll height at the top,
+      // so bump scrollTop by exactly the added height to keep the same rows
+      // under the user's eyes. Rows are fixed-height (no measureElement), so
+      // the added height is precisely `count × estimateSize` — computed
+      // directly rather than diffing getTotalSize(), which would depend on the
+      // virtualizer having already recomputed by the time this microtask runs.
+      // Release the guard only after the anchor is applied, so the scrollTop
+      // write we trigger can't re-fire another load mid-adjust.
+      const prevTop = scrollEl?.scrollTop ?? 0;
+      const rowPx = Math.round(ROOT_PX[fontScale()] * ROW_PX_PER_ROOT);
+      const delta = older.length * rowPx;
+      setEntries([...older, ...entries()]);
+      queueMicrotask(() => {
+        if (scrollEl) {
+          scrollEl.scrollTop = prevTop + delta;
+          lastScrollTop = scrollEl.scrollTop;
+        }
+        loadingOlder = false;
+      });
+    } catch (e: unknown) {
+      if (seq === refreshSeq) {
+        setErrorMsg((e as { message?: string })?.message ?? String(e));
+      }
+      loadingOlder = false;
+    }
+  };
+
   // React to the backend's "rows appended" ping.
   //
-  // Tail mode: call refresh() immediately on each batch. The DB query is
-  // fast (indexed DESC+LIMIT, < 5ms); refreshSeq ensures only the latest
-  // result updates the UI, so rapid batches don't stack up visibly.
-  // We intentionally do NOT debounce here — a trailing-edge debounce with
-  // reset-on-call means the timer never fires while batches keep arriving
-  // every 100ms (the flush_interval), producing multi-second delays before
-  // the first update ("several seconds of silence, then a burst of rows").
+  // Tail mode: a LEADING-EDGE throttle. The first ping refreshes immediately
+  // (instant feedback), then further pings inside the window only set a
+  // trailing flag, so at most one extra refresh fires per TAIL_THROTTLE_MS.
+  // This matters at startup: the initial `adb logcat` dump of the device ring
+  // buffer arrives as dozens of batches back-to-back, and an immediate refresh
+  // per batch means dozens of full-window (5000-row) re-queries + re-renders —
+  // the visible startup stall. Throttling caps that to ~8 refreshes/s.
+  // Unlike the trailing-edge debounce this replaced (0c8ca52), the leading
+  // edge fires at once, so there's no "silence then burst" — the very first
+  // batch still paints without delay.
   //
   // Frozen mode: badge updates are fine at a lower cadence (debounced).
+  const TAIL_THROTTLE_MS = 120;
+  let tailTimer: ReturnType<typeof setTimeout> | undefined;
+  let tailTrailing = false;
   let badgeTimer: ReturnType<typeof setTimeout> | undefined;
   const onAppended = () => {
     if (paused()) return;
     if (autoScroll()) {
+      if (tailTimer) {
+        // A refresh fired within the window; coalesce this ping into a single
+        // trailing refresh when the window elapses.
+        tailTrailing = true;
+        return;
+      }
       void refresh(false);
+      const tick = () => {
+        if (tailTrailing) {
+          tailTrailing = false;
+          void refresh(false);
+          tailTimer = setTimeout(tick, TAIL_THROTTLE_MS);
+        } else {
+          tailTimer = undefined;
+        }
+      };
+      tailTimer = setTimeout(tick, TAIL_THROTTLE_MS);
     } else {
       if (badgeTimer) clearTimeout(badgeTimer);
       badgeTimer = setTimeout(() => void updateBadge(), 250);
@@ -876,6 +984,7 @@ const LogcatView: Component = () => {
       unlistenAppended?.();
       unlistenError?.();
       if (badgeTimer) clearTimeout(badgeTimer);
+      if (tailTimer) clearTimeout(tailTimer);
       if (filterTimer) clearTimeout(filterTimer);
     });
   });
@@ -943,6 +1052,17 @@ const LogcatView: Component = () => {
         setAutoScroll(true);
         void refresh(true);
       }
+    }
+    // Near the top while frozen and moving upward → pull an older page. The
+    // auto-scroll effect is inert here (Follow is off), so the prepend won't
+    // fight a tail-scroll; loadOlder anchors the viewport itself.
+    if (
+      !autoScroll() &&
+      cur <= lastScrollTop &&
+      cur < OLDER_TRIGGER_PX &&
+      visible().length > 0
+    ) {
+      void loadOlder();
     }
     lastScrollTop = cur;
   };

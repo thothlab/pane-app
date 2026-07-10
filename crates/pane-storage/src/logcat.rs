@@ -32,7 +32,8 @@ impl Storage {
     /// Insert one batch of logcat lines in a single transaction. `created_at_ms`
     /// (ingest wall clock) is stamped once by the caller and shared across the
     /// batch — it drives retention and ties-break within the same rowid burst.
-    /// Returns the number of rows written.
+    /// Uses INSERT OR IGNORE so re-dumped lines are dropped; returns the count
+    /// of *newly inserted* rows (excludes duplicates ignored by the dedup index).
     pub fn insert_logcat_batch(
         &self,
         serial: &str,
@@ -44,14 +45,21 @@ impl Storage {
         }
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
+        // OR IGNORE against the logcat_dedup unique index (V011): when adb
+        // re-dumps the device ring buffer (every window reopen / reconnect),
+        // the replayed lines collide with what's already stored and are
+        // dropped. `execute` returns rows-changed (0 on ignore), so summing
+        // gives the count of *actually new* rows — the caller uses it to skip
+        // the "rows appended" ping when a whole batch was a replay.
+        let mut inserted = 0usize;
         {
             let mut stmt = tx.prepare_cached(
-                "INSERT INTO logcat_entry
+                "INSERT OR IGNORE INTO logcat_entry
                      (serial, created_at, device_ts, pid, tid, level, tag, message)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
             for r in rows {
-                stmt.execute(params![
+                inserted += stmt.execute(params![
                     serial,
                     created_at_ms,
                     r.device_ts,
@@ -64,7 +72,7 @@ impl Storage {
             }
         }
         tx.commit()?;
-        Ok(rows.len())
+        Ok(inserted)
     }
 
     /// Query the most recent `limit` entries for `serial` matching `filter`
@@ -90,6 +98,40 @@ impl Storage {
              )
              ORDER BY id ASC"
         );
+        params.push(Box::new(limit));
+        let conn = self.logcat_read.lock();
+        let mut stmt = conn.prepare(&sql)?;
+        let refs: Vec<&dyn ToSql> = params.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt.query_map(refs.as_slice(), map_logcat_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Query the newest `limit` entries *older* than `before_id` for `serial`
+    /// (matching the same filter + app: PID lists). Powers "load older on
+    /// scroll-up": the frontend passes the id of its oldest loaded row and
+    /// prepends the result. Same two-step DESC+LIMIT→ASC ordering as
+    /// `query_logcat`; the only addition is the `id < ?` bound.
+    pub fn query_logcat_before(
+        &self,
+        serial: &str,
+        filter: Option<&str>,
+        include_pids: &[u32],
+        exclude_pids: &[u32],
+        before_id: i64,
+        limit: u32,
+    ) -> Result<Vec<LogcatRowDto>> {
+        let limit = limit.min(5000) as i64;
+        let (where_sql, mut params) = logcat_where(serial, filter, include_pids, exclude_pids)?;
+        let sql = format!(
+            "SELECT id, created_at, device_ts, pid, tid, level, tag, message
+             FROM (
+               SELECT * FROM logcat_entry
+               WHERE {where_sql} AND id < ?
+               ORDER BY id DESC LIMIT ?
+             )
+             ORDER BY id ASC"
+        );
+        params.push(Box::new(before_id));
         params.push(Box::new(limit));
         let conn = self.logcat_read.lock();
         let mut stmt = conn.prepare(&sql)?;
@@ -379,6 +421,116 @@ mod tests {
         let deleted = s.prune_logcat(0, i64::MAX).unwrap();
         assert_eq!(deleted, 4);
         assert_eq!(s.query_logcat("SERIAL_A", None, &[], &[], 100).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn insert_or_ignore_drops_redumped_lines() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let batch = vec![ins("T", "hello", 1, 2), ins("T", "world", 1, 2)];
+        // First ingest: both rows are new.
+        assert_eq!(s.insert_logcat_batch("DEV", 1_000, &batch).unwrap(), 2);
+        // adb re-dumps the same buffer (reopen/reconnect): every line collides
+        // with the dedup index → nothing new, so the caller skips the ping.
+        assert_eq!(s.insert_logcat_batch("DEV", 2_000, &batch).unwrap(), 0);
+        // A genuinely new line still lands.
+        assert_eq!(
+            s.insert_logcat_batch("DEV", 3_000, &[ins("T", "fresh", 1, 2)])
+                .unwrap(),
+            1
+        );
+        // The table holds exactly the 3 distinct lines, no duplicates.
+        assert_eq!(s.query_logcat("DEV", None, &[], &[], 100).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn migration_v011_dedups_then_indexes() {
+        // Reproduce a pre-V011 (duplicate-laden) table and run the REAL
+        // migration SQL against it — a fresh Storage would already have the
+        // unique index, so this is the only way to prove the migration's
+        // delete-then-index ordering survives a DB that already has dupes.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../migrations/V010__logcat.sql"))
+            .unwrap();
+        let insert = "INSERT INTO logcat_entry
+            (serial, created_at, device_ts, pid, tid, level, tag, message)
+            VALUES ('DEV', 1, '07-09 12:00:00.000', 1, 1, 2, 'T', 'hello')";
+        conn.execute(insert, []).unwrap(); // id 1
+        conn.execute(insert, []).unwrap(); // id 2 — duplicate
+        conn.execute(insert, []).unwrap(); // id 3 — duplicate
+        conn.execute(
+            "INSERT INTO logcat_entry
+             (serial, created_at, device_ts, pid, tid, level, tag, message)
+             VALUES ('DEV', 1, '07-09 12:00:00.000', 1, 1, 2, 'T', 'world')",
+            [],
+        )
+        .unwrap(); // id 4 — distinct (message differs)
+
+        // The unique index cannot be built while duplicates exist — this is
+        // exactly the failure the migration's DELETE-first ordering prevents.
+        assert!(conn
+            .execute_batch(
+                "CREATE UNIQUE INDEX probe ON logcat_entry
+                 (serial, device_ts, pid, tid, level, tag, message)"
+            )
+            .is_err());
+
+        // Apply V011: dedup then index.
+        conn.execute_batch(include_str!("../migrations/V011__logcat_dedup.sql"))
+            .unwrap();
+
+        // Duplicates collapsed to the earliest ingested (MIN id = 1); the
+        // distinct line survives.
+        let ids: Vec<i64> = {
+            let mut stmt = conn.prepare("SELECT id FROM logcat_entry ORDER BY id").unwrap();
+            stmt.query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(ids, vec![1, 4]);
+
+        // The index now enforces dedup: a replayed line is ignored.
+        let n = conn
+            .execute(
+                "INSERT OR IGNORE INTO logcat_entry
+                 (serial, created_at, device_ts, pid, tid, level, tag, message)
+                 VALUES ('DEV', 1, '07-09 12:00:00.000', 1, 1, 2, 'T', 'hello')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn query_before_paginates_older() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        // 100 rows, ids 1..=100 (rowid is monotonic per insert order).
+        let batch: Vec<LogcatInsert> = (0..100).map(|i| ins("T", &format!("m{i}"), 1, 2)).collect();
+        s.insert_logcat_batch("DEV", 1_000, &batch).unwrap();
+
+        // The 20 newest rows older than id 50 → ids 30..=49 (ASC).
+        let page = s
+            .query_logcat_before("DEV", None, &[], &[], 50, 20)
+            .unwrap();
+        assert_eq!(page.len(), 20);
+        assert_eq!(page[0].id, 30);
+        assert_eq!(page[19].id, 49);
+
+        // Filter is honoured on the older page too (all rows match here).
+        let filtered = s
+            .query_logcat_before("DEV", Some("tag:T"), &[], &[], 50, 5)
+            .unwrap();
+        assert_eq!(filtered.len(), 5);
+        assert_eq!(filtered[4].id, 49);
+
+        // Reaching the start returns a short page (fewer than requested).
+        let head = s
+            .query_logcat_before("DEV", None, &[], &[], 5, 20)
+            .unwrap();
+        assert_eq!(head.len(), 4); // ids 1..=4
+        assert_eq!(head[0].id, 1);
     }
 
     #[test]

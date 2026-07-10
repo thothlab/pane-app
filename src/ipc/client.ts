@@ -141,6 +141,26 @@ export const api = {
           limit,
         },
       }),
+    // "Load older on scroll-up": newest `limit` rows older than `beforeId`.
+    // Returns rows oldest→newest, ready to prepend to the loaded window.
+    queryOlder: (
+      serial: string,
+      filter: string | undefined,
+      includePids: number[],
+      excludePids: number[],
+      beforeId: number,
+      limit: number,
+    ) =>
+      call<LogcatRowDto[]>("logcat_query_older", {
+        args: {
+          serial,
+          filter,
+          include_pids: includePids,
+          exclude_pids: excludePids,
+          before_id: beforeId,
+          limit,
+        },
+      }),
     newCount: (
       serial: string,
       filter: string | undefined,

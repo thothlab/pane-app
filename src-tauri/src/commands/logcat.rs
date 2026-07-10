@@ -37,7 +37,7 @@ use super::{to_api, CmdResult};
 use crate::state::AppState;
 use pane_ipc::{
     ClearResult, LogcatClearArgs, LogcatExportArgs, LogcatNewCountArgs, LogcatQueryArgs,
-    LogcatRowDto,
+    LogcatQueryOlderArgs, LogcatRowDto,
 };
 use pane_storage::LogcatInsert;
 use time::OffsetDateTime;
@@ -122,18 +122,30 @@ pub async fn logcat_open(
                     message: e.message.clone(),
                 })
                 .collect();
-            let n = rows.len();
-            if let Err(e) =
-                storage_for_db.insert_logcat_batch(&serial_db, created_at_ms, &rows)
-            {
-                tracing::warn!(error = %e, "logcat: db insert failed");
-            }
+            // INSERT OR IGNORE returns how many rows were actually new. When
+            // adb re-dumps the device ring buffer on window reopen / reconnect,
+            // every replayed line collides with the dedup index and `inserted`
+            // is 0 — so we skip the ping entirely and the window doesn't churn
+            // through no-op re-queries of history it already shows from the DB.
+            let inserted = match storage_for_db.insert_logcat_batch(
+                &serial_db,
+                created_at_ms,
+                &rows,
+            ) {
+                Ok(n) => n,
+                Err(e) => {
+                    tracing::warn!(error = %e, "logcat: db insert failed");
+                    0
+                }
+            };
             // The DB is the source of truth; the webview reads it via
-            // logcat_query. Emit only a lightweight "rows appended" ping
-            // (batch count) so the window knows to re-query / bump its badge —
+            // logcat_query. Emit only a lightweight "rows appended" ping (count
+            // of new rows) so the window knows to re-query / bump its badge —
             // no firehose over IPC. Webview-scoped (Tauri 2 instance emit).
-            if let Err(e) = win_for_emit.emit("logcat://appended", n) {
-                tracing::warn!(error = %e, "logcat: emit failed (window gone?)");
+            if inserted > 0 {
+                if let Err(e) = win_for_emit.emit("logcat://appended", inserted) {
+                    tracing::warn!(error = %e, "logcat: emit failed (window gone?)");
+                }
             }
         }
         LogcatEvent::Error(msg) => {
@@ -210,6 +222,26 @@ pub async fn logcat_query(
             args.filter.as_deref(),
             &args.include_pids,
             &args.exclude_pids,
+            args.limit,
+        )
+        .map_err(to_api("db"))
+}
+
+/// Query the newest `limit` rows older than `before_id` — "load older on
+/// scroll-up". Same filter/PID contract as `logcat_query`.
+#[tauri::command]
+pub async fn logcat_query_older(
+    state: State<'_, AppState>,
+    args: LogcatQueryOlderArgs,
+) -> CmdResult<Vec<LogcatRowDto>> {
+    state
+        .storage
+        .query_logcat_before(
+            &args.serial,
+            args.filter.as_deref(),
+            &args.include_pids,
+            &args.exclude_pids,
+            args.before_id,
             args.limit,
         )
         .map_err(to_api("db"))
