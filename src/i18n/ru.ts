@@ -107,6 +107,8 @@ const ru: Dict = {
       "Слово без префикса: совпадает с host ИЛИ path. Например 'google'.\nkey:value — host, path, method, status, mime, size, duration, error.\nМаски: * внутри значения (например host:*google*).\nЗапятая в значении даёт OR-альтернативы (например host:a.com,b.com, method:POST,PUT, status:200,500..599).\nОтрицание через ! (например !error:tls_handshake, !host:cdn.*). Отрицание списка значит «ни одно из»: !host:a,b → ни a, ни b.\nДиапазоны: status:500..599 — size:0..1024 — duration:..200.\nНесколько токенов объединяются по AND (например host:rc3.test.dev-og.com method:post).",
     filter_help_title:
       "Синтаксис фильтра: host, method, status, path, маски, диапазоны, отрицание",
+    clear_filter: "Очистить фильтр",
+    clear_filter_title: "Очистить фильтр",
     save_filter: "Сохранить фильтр",
     save_filter_title: "Сохранить текущий фильтр в боковую панель",
     save_filter_name_placeholder: "Название (например my-backend)",
@@ -416,6 +418,8 @@ const ru: Dict = {
     col_message: "Сообщение",
     col_menu_title: "Колонки",
     col_menu_hint: "Правый клик — видимость колонок",
+    clear_filter: "Очистить фильтр",
+    clear_filter_title: "Очистить фильтр",
     save_filter: "Сохранить фильтр",
     save_filter_title: "Сохранить текущий фильтр",
     save_filter_name_placeholder: "Имя (напр. crashes)",

@@ -31,7 +31,7 @@ import {
   X,
 } from "lucide-solid";
 import { t, tr } from "@/i18n";
-import { compileLogcatFilter } from "@/lib/logcat-filter";
+import { compileLogcatFilter, resolveAppPids } from "@/lib/logcat-filter";
 import { savedFiltersFor } from "@/stores/saved-filters";
 import { fontScale, ROOT_PX } from "@/stores/font-scale";
 import { writeClipboard } from "@/lib/clipboard";
@@ -610,24 +610,12 @@ const LogcatView: Component = () => {
   // and `exclude` from negated values (e.g. `app:!bar`). An entry passes
   // when its pid is in `include` (or include is empty) AND not in
   // `exclude`. Both sets derive from the same pidNames snapshot so they
-  // can't disagree.
-  const appPids = createMemo(() => {
-    const apps = matcher().appPackages;
-    const empty = { include: new Set<number>(), exclude: new Set<number>(), hasPositive: false };
-    if (apps.length === 0) return empty;
-    const pos = apps.filter((a) => !a.negate).map((a) => a.pkg.trim().toLowerCase()).filter(Boolean);
-    const neg = apps.filter((a) => a.negate).map((a) => a.pkg.trim().toLowerCase()).filter(Boolean);
-    const include = new Set<number>();
-    const exclude = new Set<number>();
-    for (const [pid, names] of pidNames()) {
-      for (const name of names) {
-        const lower = name.toLowerCase();
-        if (pos.some((n) => lower.includes(n))) include.add(pid);
-        if (neg.some((n) => lower.includes(n))) exclude.add(pid);
-      }
-    }
-    return { include, exclude, hasPositive: pos.length > 0 };
-  });
+  // can't disagree. A positive `app:` that resolves to no live PID yields
+  // an include holding only APP_NO_MATCH_PID, so the query shows nothing
+  // (not the whole firehose) — see resolveAppPids.
+  const appPids = createMemo(() =>
+    resolveAppPids(matcher().appPackages, pidNames()),
+  );
 
   // Substring search applied AFTER the DSL filter. Lowercased once per
   // typed input and checked against tag / message / app-name; the
@@ -1689,7 +1677,7 @@ const LogcatView: Component = () => {
             sidesteps Solid reactivity entirely: a memoized HTML
             string is rendered via `innerHTML`, so the DOM update
             is a single deterministic assignment. */}
-        <div class="flex-1 relative flex items-center bg-bg-muted rounded focus-within:ring-1 focus-within:ring-accent">
+        <div class="flex-1 relative flex items-center">
           {/* Inset funnel icon — sits on the left edge of the field
               the same way the magnifier sits on the search field, so
               the two paired inputs look symmetric. `left-2` matches
@@ -1702,7 +1690,12 @@ const LogcatView: Component = () => {
           <div
             ref={(el) => (filterOverlayRef = el)}
             aria-hidden="true"
-            class="absolute inset-0 pointer-events-none text-xs font-mono overflow-hidden pl-7 pr-14 py-1 flex items-center"
+            // Box ends at right-14 (not inset-0 + pr-14): overflow-hidden
+            // clips the highlighted text at the box edge, so a long filter
+            // never paints into the icon strip on the right. Mirrors the
+            // Captures overlay (left-0 right-6). Reservation matches the
+            // input's pr-14 and the icon cluster's width.
+            class="absolute left-0 right-14 top-0 bottom-0 pointer-events-none text-xs font-mono overflow-hidden pl-7 py-1 flex items-center"
           >
             {/* Wrap the highlight HTML in a single inline span so
                 flexbox sees one item — without the wrapper, each
@@ -1741,14 +1734,28 @@ const LogcatView: Component = () => {
             autocorrect="off"
             spellcheck={false}
           />
-          {/* Right-aligned action cluster: star (save current filter —
-              only when the filter is non-empty). The saved list itself
-              now lives in the left sidebar, not a dropdown. */}
+          {/* Right-aligned action cluster: clear (×) then star (save current
+              filter) — both only when the filter is non-empty. The saved list
+              itself now lives in the left sidebar, not a dropdown. */}
           <div class="absolute right-1 inset-y-0 flex items-center gap-0.5 z-10">
             <Show when={filter().trim()}>
               <button
                 type="button"
-                class="p-1 rounded text-fg-muted hover:text-warn hover:bg-bg-subtle"
+                class="p-1 rounded text-fg-muted hover:text-fg hover:bg-bg-muted"
+                title={t()("logcat.clear_filter_title")}
+                aria-label={t()("logcat.clear_filter")}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setFilter("");
+                  filterInputRef?.focus();
+                }}
+              >
+                <X size={14} />
+              </button>
+              <button
+                type="button"
+                class="p-1 rounded text-fg-muted hover:text-warn hover:bg-bg-muted"
                 title={t()("logcat.save_filter_title")}
                 aria-label={t()("logcat.save_filter")}
                 onMouseDown={(e) => e.stopPropagation()}
@@ -1851,7 +1858,7 @@ const LogcatView: Component = () => {
         {/* Substring search — sits next to the DSL filter so the two are
             visually paired. Narrower than the filter (max-w-xs) since
             it's a simple term, not a query. Clears on Esc. */}
-        <div class="relative flex items-center bg-bg-muted rounded focus-within:ring-1 focus-within:ring-accent w-56">
+        <div class="relative flex items-center w-56">
           <SearchIcon size={12} class="text-fg-muted shrink-0 ml-2" />
           <input
             ref={(el) => (searchInputRef = el)}
@@ -1889,7 +1896,7 @@ const LogcatView: Component = () => {
             </span>
             <button
               type="button"
-              class="absolute right-1 inset-y-0 my-auto h-5 w-5 inline-flex items-center justify-center rounded text-fg-muted hover:text-fg hover:bg-bg-subtle"
+              class="absolute right-1 inset-y-0 my-auto h-5 w-5 inline-flex items-center justify-center rounded text-fg-muted hover:text-fg hover:bg-bg-muted"
               onClick={() => setSearch("")}
               title={t()("logcat.search_clear")}
               aria-label={t()("logcat.search_clear")}

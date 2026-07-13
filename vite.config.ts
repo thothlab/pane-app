@@ -1,9 +1,14 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import solid from "vite-plugin-solid";
 import path from "node:path";
 
 export default defineConfig({
   plugins: [solid()],
+  // Default tests to the `node` environment. vite-plugin-solid otherwise
+  // forces `jsdom` (which isn't a dependency), so any test file would fail
+  // the run. Component tests that need a DOM can opt in per-file with
+  // `// @vitest-environment jsdom` (and add jsdom then).
+  test: { environment: "node" },
   clearScreen: false,
   server: {
     port: 1420,

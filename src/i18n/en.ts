@@ -109,6 +109,8 @@ const en = {
     filter_help:
       "Bare word: matches host OR path. E.g. 'google'.\nkey:value — host, path, method, status, mime, size, duration, error.\nWildcards: * inside the value (e.g. host:*google*).\nComma in value ORs alternatives (e.g. host:a.com,b.com, method:POST,PUT, status:200,500..599).\nNegate with ! (e.g. !error:tls_handshake, !host:cdn.*). Negated list means 'none of': !host:a,b → neither a nor b.\nRange: status:500..599 — size:0..1024 — duration:..200.\nMultiple tokens are ANDed (e.g. host:rc3.test.dev-og.com method:post).",
     filter_help_title: "Filter syntax: host, method, status, path, glob, ranges, negation",
+    clear_filter: "Clear filter",
+    clear_filter_title: "Clear the filter",
     save_filter: "Save filter",
     save_filter_title: "Save current filter to sidebar",
     save_filter_name_placeholder: "Name (e.g. my-backend)",
@@ -417,6 +419,8 @@ const en = {
     col_message: "Message",
     col_menu_title: "Columns",
     col_menu_hint: "Right-click for column visibility",
+    clear_filter: "Clear filter",
+    clear_filter_title: "Clear the filter",
     save_filter: "Save filter",
     save_filter_title: "Save current filter",
     save_filter_name_placeholder: "Name (e.g. crashes)",

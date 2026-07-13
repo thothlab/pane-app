@@ -296,3 +296,48 @@ export function compileLogcatFilter(input: string): CompiledLogcatFilter {
   const predicate: Predicate = (e) => atoms.every((a) => a.pred(e));
   return { predicate, appPackages: apps };
 }
+
+/// An impossible PID used as a "match nothing" sentinel. When a positive
+/// `app:` term is present but resolves to zero live PIDs, the view must show
+/// NOTHING — not the unfiltered firehose. The logcat query applies the pid
+/// include-list only when it's non-empty (an empty list reads as "no app
+/// constraint"), so without this sentinel an unmatched `app:` would silently
+/// drop the constraint and surface every row. u32::MAX can never be a real
+/// Linux PID (they top out ~4.19M), so `pid IN (4294967295)` matches nothing
+/// regardless of what the table holds — safer than 0, which a malformed
+/// logcat line could plausibly carry.
+export const APP_NO_MATCH_PID = 0xffffffff;
+
+/// Resolve `app:<pkg>` references (from `compileLogcatFilter().appPackages`)
+/// against a PID→process-names snapshot into the include / exclude PID sets
+/// the logcat query consumes. Positive values contribute PIDs whose process
+/// name contains the (lowercased) package substring; negated values feed the
+/// exclude set. A positive term that matches no live PID yields
+/// `{ include: {APP_NO_MATCH_PID} }` so the query returns nothing rather than
+/// everything (see APP_NO_MATCH_PID). Pure — no signals — so it's unit-testable
+/// in isolation from the reactive view.
+export function resolveAppPids(
+  appPackages: AppPackageRef[],
+  pidNames: Map<number, Set<string>>,
+): { include: Set<number>; exclude: Set<number> } {
+  const include = new Set<number>();
+  const exclude = new Set<number>();
+  if (appPackages.length === 0) return { include, exclude };
+  const pos = appPackages
+    .filter((a) => !a.negate)
+    .map((a) => a.pkg.trim().toLowerCase())
+    .filter(Boolean);
+  const neg = appPackages
+    .filter((a) => a.negate)
+    .map((a) => a.pkg.trim().toLowerCase())
+    .filter(Boolean);
+  for (const [pid, names] of pidNames) {
+    for (const name of names) {
+      const lower = name.toLowerCase();
+      if (pos.some((n) => lower.includes(n))) include.add(pid);
+      if (neg.some((n) => lower.includes(n))) exclude.add(pid);
+    }
+  }
+  if (pos.length > 0 && include.size === 0) include.add(APP_NO_MATCH_PID);
+  return { include, exclude };
+}
