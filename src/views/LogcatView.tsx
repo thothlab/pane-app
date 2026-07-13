@@ -1093,15 +1093,20 @@ const LogcatView: Component = () => {
     return out;
   };
 
-  // True while the mouse is held down after starting a drag-select.
-  let rowDragging = false;
-
-  // mousedown begins selection: Shift extends a range from the anchor,
-  // ⌘/Ctrl toggles one row, a plain press selects one and arms a drag.
+  // mousedown selects a row: Shift extends a range from the anchor,
+  // ⌘/Ctrl toggles one row, a plain press selects one. A plain drag is
+  // left to the browser as a native text selection (cells are no longer
+  // `select-none`, so any part of any cell can be selected/copied like in
+  // Captures). Shift-click replaces the old drag-to-select-rows sweep, so
+  // there's no gesture left fighting the text drag; on Shift we
+  // preventDefault so the browser doesn't also spray a text selection
+  // while we range-select rows. ⌘C still prefers a live text selection and
+  // falls back to copying the selected rows.
   const onRowMouseDown = (ev: MouseEvent, index: number) => {
     if (ev.button !== 0) return; // left button only
     const entry = visible()[index];
     if (!entry) return;
+    if (ev.shiftKey) ev.preventDefault();
     if (ev.shiftKey && selectAnchor >= 0) {
       setSelected(rangeSet(selectAnchor, index));
     } else if (ev.metaKey || ev.ctrlKey) {
@@ -1113,15 +1118,7 @@ const LogcatView: Component = () => {
     } else {
       setSelected(new Set([entry.id]));
       selectAnchor = index;
-      rowDragging = true;
     }
-  };
-
-  // While dragging, hovering a row extends the range from the anchor —
-  // gives the click-and-drag-down full-row sweep LogRabbit has.
-  const onRowMouseEnter = (index: number) => {
-    if (!rowDragging || selectAnchor < 0) return;
-    setSelected(rangeSet(selectAnchor, index));
   };
 
   // Right-click opens the row menu. If the clicked row isn't already in
@@ -1129,7 +1126,6 @@ const LogcatView: Component = () => {
   // predictable; if it IS selected, the whole multi-selection is kept.
   const onRowContextMenu = (ev: MouseEvent, index: number) => {
     ev.preventDefault();
-    rowDragging = false;
     const entry = visible()[index];
     if (!entry) return;
     if (!selected().has(entry.id)) {
@@ -1309,14 +1305,8 @@ const LogcatView: Component = () => {
       }
     };
     window.addEventListener("keydown", onKey);
-    // End a row drag-select wherever the mouse is released.
-    const onUp = () => {
-      rowDragging = false;
-    };
-    window.addEventListener("mouseup", onUp);
     onCleanup(() => {
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("mouseup", onUp);
     });
   });
 
@@ -2073,7 +2063,7 @@ const LogcatView: Component = () => {
                       const isCurrentRow = () => vi.index === currentMatchRow();
                       return (
                         <div
-                          class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 select-none cursor-default ${
+                          class={`absolute left-0 right-0 grid font-mono whitespace-nowrap items-baseline px-3 py-px border-b border-border/30 cursor-default ${
                             selected().has(entry().id)
                               ? "bg-accent/25"
                               : "hover:bg-bg-muted/40"
@@ -2087,7 +2077,6 @@ const LogcatView: Component = () => {
                             "grid-template-columns": gridTemplate(),
                           }}
                           onMouseDown={(ev) => onRowMouseDown(ev, vi.index)}
-                          onMouseEnter={() => onRowMouseEnter(vi.index)}
                           onContextMenu={(ev) => onRowContextMenu(ev, vi.index)}
                           onDblClick={() => openDetail([entry()])}
                           title={t()("logcat.row_open_detail")}
