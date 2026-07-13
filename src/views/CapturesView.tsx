@@ -1,7 +1,7 @@
 import { type Component, createSignal, createMemo, createEffect, createResource, onMount, onCleanup, on, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
-import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown } from "lucide-solid";
+import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown, X } from "lucide-solid";
 import { api } from "@/ipc/client";
 import { listenToCaptures } from "@/ipc/events";
 import type {
@@ -919,7 +919,7 @@ const CapturesView: Component = () => {
           <pre
             ref={(el) => (filterOverlay = el)}
             aria-hidden="true"
-            class="absolute left-0 right-6 top-0 bottom-0 pointer-events-none text-sm font-mono whitespace-pre overflow-hidden m-0 flex items-center"
+            class="absolute left-0 right-12 top-0 bottom-0 pointer-events-none text-sm font-mono whitespace-pre overflow-hidden m-0 flex items-center"
           >
             <span class="flex-shrink-0">
               <FilterHighlight text={filter()} />
@@ -931,7 +931,7 @@ const CapturesView: Component = () => {
             autocapitalize="off"
             spellcheck={false}
             ref={(el) => (filterInput = el)}
-            class="w-full bg-transparent outline-none text-sm placeholder:text-fg-muted font-mono pr-6 text-transparent caret-fg relative"
+            class="w-full bg-transparent outline-none text-sm placeholder:text-fg-muted font-mono pr-12 text-transparent caret-fg relative"
             placeholder={t()("captures.filter_placeholder")}
             value={filter()}
             onInput={(e) => {
@@ -952,15 +952,33 @@ const CapturesView: Component = () => {
             title={t()("captures.filter_help")}
           />
           <Show when={filter().trim()}>
-            <button
-              type="button"
-              class="absolute right-0 bg-bg-subtle text-fg-muted hover:text-warn pl-1 p-0.5 rounded hover:bg-bg-muted"
-              title={t()("captures.save_filter_title")}
-              aria-label={t()("captures.save_filter")}
-              onClick={openSave}
-            >
-              <Star size={14} />
-            </button>
+            {/* Clear (×) then star (save), right-aligned. Both appear only
+                when the filter is non-empty; the overlay/input reserve
+                right-12 so long filters never paint under them. */}
+            <div class="absolute right-0 inset-y-0 flex items-center gap-0.5 bg-bg-subtle">
+              <button
+                type="button"
+                class="text-fg-muted hover:text-fg p-1 rounded hover:bg-bg-muted"
+                title={t()("captures.clear_filter_title")}
+                aria-label={t()("captures.clear_filter")}
+                onClick={() => {
+                  setFilter("");
+                  debouncedRefresh();
+                  filterInput?.focus();
+                }}
+              >
+                <X size={14} />
+              </button>
+              <button
+                type="button"
+                class="text-fg-muted hover:text-warn p-1 rounded hover:bg-bg-muted"
+                title={t()("captures.save_filter_title")}
+                aria-label={t()("captures.save_filter")}
+                onClick={openSave}
+              >
+                <Star size={14} />
+              </button>
+            </div>
           </Show>
           <Show when={saveOpen()}>
             <div
