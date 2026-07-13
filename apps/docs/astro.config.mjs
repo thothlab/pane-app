@@ -63,6 +63,11 @@ export default defineConfig({
               translations: { en: 'Filtering captures' },
               link: '/filtering/',
             },
+            {
+              label: 'Окно Logcat',
+              translations: { en: 'Logcat window' },
+              link: '/logcat/',
+            },
           ],
         },
         {
