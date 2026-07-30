@@ -50,3 +50,16 @@ pub async fn export_one(
         .export_one(args.id, &args.format)
         .map_err(to_api("export_failed"))
 }
+
+/// Write a text payload to a user-chosen path. Mirrors
+/// `rules_export_write` - routing the write through Rust keeps the
+/// renderer out of plugin-fs's per-capability scope rules. Used by the
+/// Captures multi-select "Export" action, which builds a concatenated
+/// OkHttp-style dump of the checked rows on the frontend and hands the
+/// finished text here.
+#[tauri::command]
+pub async fn captures_export_write(path: String, content: String) -> CmdResult<usize> {
+    let bytes = content.len();
+    std::fs::write(&path, content).map_err(to_api("io"))?;
+    Ok(bytes)
+}

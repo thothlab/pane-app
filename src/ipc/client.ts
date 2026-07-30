@@ -81,6 +81,8 @@ export const api = {
       call<{ deleted: number }>("clear", { args: { older_than: olderThan } }),
     exportOne: (id: string, format: "curl" | "har_single") =>
       call<{ text: string; mime: string }>("export_one", { args: { id, format } }),
+    exportWrite: (path: string, content: string) =>
+      call<number>("captures_export_write", { path, content }),
   },
   replay: {
     send: (request: RequestSpec, sourceId?: string) =>

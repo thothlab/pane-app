@@ -1,7 +1,8 @@
 import { type Component, createSignal, createMemo, createEffect, createResource, onMount, onCleanup, on, For, Show } from "solid-js";
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
-import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown, X } from "lucide-solid";
+import { save } from "@tauri-apps/plugin-dialog";
+import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown, X, CheckSquare, Download } from "lucide-solid";
 import { api } from "@/ipc/client";
 import { listenToCaptures } from "@/ipc/events";
 import type {
@@ -911,6 +912,164 @@ const CapturesView: Component = () => {
     void refresh(true);
   };
 
+  // ── Multi-select (Captures selection mode) ────────────────────────
+  // A toolbar toggle turns the list into a checkbox picker: a leading
+  // checkbox column appears, clicking any row (or its checkbox) toggles
+  // it, and the checked rows can be copied to the clipboard or exported
+  // to a text file as one concatenated OkHttp-style dump (the same shape
+  // the single-row "Copy" produces). "Cancel selection" leaves the mode
+  // and clears the set, hiding the column again.
+  //
+  // Selection is keyed by capture id so it survives the 1.5s list
+  // refresh. Every action operates on `selectedVisible` — the checked
+  // rows still present in the current (filtered) list — so rows filtered
+  // out or cleared simply drop from the batch instead of erroring.
+  const SEL_COL_WIDTH = 34;
+  const [selectionMode, setSelectionMode] = createSignal(false);
+  const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
+  const [selBusy, setSelBusy] = createSignal(false);
+
+  // Both the header and every row read THIS memo for their grid columns,
+  // and both gate the leading checkbox cell on the SAME selectionMode()
+  // — otherwise the header and body columns misalign by one.
+  const gridTemplateSel = createMemo(() =>
+    selectionMode() ? `${SEL_COL_WIDTH}px ${gridTemplate()}` : gridTemplate(),
+  );
+
+  const selectedVisible = createMemo(() =>
+    captures().filter((c) => selectedIds().has(c.id)),
+  );
+  const allVisibleSelected = createMemo(() => {
+    const rows = captures();
+    return rows.length > 0 && rows.every((c) => selectedIds().has(c.id));
+  });
+  const someVisibleSelected = createMemo(
+    () => selectedVisible().length > 0 && !allVisibleSelected(),
+  );
+
+  // `indeterminate` is a DOM property, not an attribute — drive it via a
+  // ref + effect (the JSX `prop:` namespace isn't in the TS types here).
+  let selectAllRef: HTMLInputElement | undefined;
+  createEffect(() => {
+    const v = someVisibleSelected();
+    if (selectAllRef) selectAllRef.indeterminate = v;
+  });
+
+  const toggleSelectionMode = () => {
+    if (selectionMode()) {
+      setSelectionMode(false);
+      setSelectedIds(new Set<string>());
+    } else {
+      setSelectionMode(true);
+    }
+  };
+  const toggleRow = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const toggleAllVisible = () => {
+    const rows = captures();
+    const deselect = allVisibleSelected();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const c of rows) {
+        if (deselect) next.delete(c.id);
+        else next.add(c.id);
+      }
+      return next;
+    });
+  };
+
+  // Concatenate the checked rows into one dump. Per-row failures (a row
+  // cleared mid-export) are skipped so one dead id can't sink the batch;
+  // `ok` reports how many actually made it in.
+  const DUMP_SEPARATOR = `\n\n${"=".repeat(72)}\n\n`;
+  const buildSelectedDump = async (
+    rows: CaptureDto[],
+  ): Promise<{ text: string; ok: number }> => {
+    const dumps: string[] = [];
+    for (const c of rows) {
+      try {
+        dumps.push(await buildHttpDump(c.id));
+      } catch {
+        /* row gone (e.g. cleared) — skip it, keep the rest */
+      }
+    }
+    return { text: dumps.join(DUMP_SEPARATOR), ok: dumps.length };
+  };
+
+  const copySelected = async () => {
+    const rows = selectedVisible();
+    if (rows.length === 0 || selBusy()) return;
+    setSelBusy(true);
+    try {
+      const { text, ok } = await buildSelectedDump(rows);
+      if (ok === 0) {
+        setAddToast(tr("captures.copy_selected_none"));
+        setTimeout(() => setAddToast(null), 3500);
+        return;
+      }
+      await writeClipboard(text);
+      setAddToast(
+        tr("captures.copy_selected_done", {
+          count: String(ok),
+          bytes: String(text.length),
+        }),
+      );
+      setTimeout(() => setAddToast(null), 2500);
+    } catch (e: unknown) {
+      setAddToast(
+        tr("captures.copy_selected_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+      );
+      setTimeout(() => setAddToast(null), 3500);
+    } finally {
+      setSelBusy(false);
+    }
+  };
+
+  const exportSelected = async () => {
+    const rows = selectedVisible();
+    if (rows.length === 0 || selBusy()) return;
+    // Ask for the path first (before the expensive dump build) so a
+    // cancelled dialog costs nothing.
+    const path = await save({
+      defaultPath: `captures-${rows.length}-${Date.now()}.txt`,
+      filters: [
+        { name: tr("captures.export_file_filter"), extensions: ["txt"] },
+      ],
+    });
+    if (!path) return;
+    setSelBusy(true);
+    try {
+      const { text, ok } = await buildSelectedDump(rows);
+      if (ok === 0) {
+        setAddToast(tr("captures.export_selected_none"));
+        setTimeout(() => setAddToast(null), 3500);
+        return;
+      }
+      await api.captures.exportWrite(path, text);
+      setAddToast(
+        tr("captures.export_selected_done", { count: String(ok), path }),
+      );
+      setTimeout(() => setAddToast(null), 3000);
+    } catch (e: unknown) {
+      setAddToast(
+        tr("captures.export_selected_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+      );
+      setTimeout(() => setAddToast(null), 3500);
+    } finally {
+      setSelBusy(false);
+    }
+  };
+
   return (
     <div class="h-full grid grid-rows-[auto_1fr] grid-cols-1">
       <div class="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-subtle">
@@ -1140,6 +1299,48 @@ const CapturesView: Component = () => {
         >
           {paused() ? t()("captures.resume") : t()("captures.pause")}
         </button>
+        <Show when={selectionMode()}>
+          <span class="text-xs text-fg-muted whitespace-nowrap">
+            {tr("captures.selected_count", {
+              count: String(selectedVisible().length),
+            })}
+          </span>
+          <button
+            class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-40 disabled:hover:bg-transparent"
+            onClick={() => void copySelected()}
+            disabled={selectedVisible().length === 0 || selBusy()}
+            title={t()("captures.copy_selected_title")}
+          >
+            <Copy size={12} /> {t()("captures.copy_selected")}
+          </button>
+          <button
+            class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-40 disabled:hover:bg-transparent"
+            onClick={() => void exportSelected()}
+            disabled={selectedVisible().length === 0 || selBusy()}
+            title={t()("captures.export_selected_title")}
+          >
+            <Download size={12} /> {t()("captures.export_selected")}
+          </button>
+        </Show>
+        <button
+          class={`text-xs px-2 py-1 rounded inline-flex items-center gap-1 ${
+            selectionMode()
+              ? "bg-accent/15 text-accent hover:bg-accent/25"
+              : "hover:bg-bg-muted"
+          }`}
+          onClick={toggleSelectionMode}
+          title={
+            selectionMode()
+              ? t()("captures.selection_cancel_title")
+              : t()("captures.selection_enter_title")
+          }
+          aria-pressed={selectionMode()}
+        >
+          <CheckSquare size={12} />{" "}
+          {selectionMode()
+            ? t()("captures.selection_cancel")
+            : t()("captures.selection_enter")}
+        </button>
         <button
           class="text-xs px-2 py-1 rounded hover:bg-bg-muted text-danger inline-flex items-center gap-1"
           onClick={clearAll}
@@ -1160,9 +1361,25 @@ const CapturesView: Component = () => {
         >
           <div
             class="grid sticky top-0 bg-bg-subtle text-fg-muted z-10 border-b border-border select-none"
-            style={{ "grid-template-columns": gridTemplate() }}
+            style={{ "grid-template-columns": gridTemplateSel() }}
             onContextMenu={openHeaderMenu}
           >
+            <Show when={selectionMode()}>
+              <div class="px-2 py-1 flex items-center justify-center">
+                <input
+                  type="checkbox"
+                  class="accent-accent cursor-pointer"
+                  ref={(el) => {
+                    selectAllRef = el;
+                    el.indeterminate = someVisibleSelected();
+                  }}
+                  checked={allVisibleSelected()}
+                  onChange={toggleAllVisible}
+                  title={t()("captures.select_all_title")}
+                  aria-label={t()("captures.select_all")}
+                />
+              </div>
+            </Show>
             <For each={COLUMNS}>
               {(col, i) => (
                 <Show when={isColVisible(col.key)}>
@@ -1261,17 +1478,43 @@ const CapturesView: Component = () => {
                       {(c) => (
                         <div
                           class={`grid absolute left-0 right-0 items-center cursor-pointer border-b border-border/30 ${rowColor(c().status, c().error_kind)} ${
-                            selectedId() === c().id ? "bg-bg-muted" : "hover:bg-bg-subtle"
+                            selectionMode()
+                              ? selectedIds().has(c().id)
+                                ? "bg-accent/15"
+                                : "hover:bg-bg-subtle"
+                              : selectedId() === c().id
+                                ? "bg-bg-muted"
+                                : "hover:bg-bg-subtle"
                           }`}
                           style={{
                             transform: `translateY(${row.start}px)`,
                             height: "32px",
-                            "grid-template-columns": gridTemplate(),
+                            "grid-template-columns": gridTemplateSel(),
                           }}
-                          onClick={() => setSelectedId(c().id)}
-                          onDblClick={() => navigate(`/replay/${c().id}`)}
+                          onClick={() =>
+                            selectionMode()
+                              ? toggleRow(c().id)
+                              : setSelectedId(c().id)
+                          }
+                          onDblClick={() => {
+                            if (!selectionMode()) navigate(`/replay/${c().id}`);
+                          }}
                           onContextMenu={(e) => openAddMenu(e, c().id)}
                         >
+                          <Show when={selectionMode()}>
+                            <div
+                              class="px-2 flex items-center justify-center"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                class="accent-accent cursor-pointer"
+                                checked={selectedIds().has(c().id)}
+                                onChange={() => toggleRow(c().id)}
+                                aria-label={t()("captures.select_row")}
+                              />
+                            </div>
+                          </Show>
                           <div class="px-2 truncate text-fg-muted">{row.index + 1}</div>
                           <Show when={isColVisible("device")}>
                             <div

@@ -79,6 +79,7 @@ pub fn run() {
             commands::captures::get_body,
             commands::captures::clear,
             commands::captures::export_one,
+            commands::captures::captures_export_write,
             // replay
             commands::replay::send,
             // filters
