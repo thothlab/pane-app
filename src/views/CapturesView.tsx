@@ -158,18 +158,24 @@ const CapturesView: Component = () => {
   // `deviceHead` = "<vendor> <model>" (e.g. "CipherLab RS35") — shown in the
   // dropdown. `deviceModel` drops the vendor (first word) → just "RS35",
   // used in the table cell and the filter token. Single-word heads (vendor
-  // unknown) keep the whole head as the model.
-  const deviceHead = (full: string): string => full.split(" · ")[0]!.trim();
-  const deviceModel = (full: string): string => {
-    const head = deviceHead(full);
+  // unknown) keep the whole head as the model. A device paired while
+  // unreachable has an empty head (" · Android · <tail>"); both helpers fall
+  // back to the serial so the row is visible and the filter still matches
+  // (filter_dsl matches serial too), instead of rendering a blank ghost row.
+  const rawHead = (full: string): string => full.split(" · ")[0]!.trim();
+  const deviceHead = (full: string, serial: string): string =>
+    rawHead(full) || serial;
+  const deviceModel = (full: string, serial: string): string => {
+    const head = rawHead(full);
+    if (!head) return serial;
     const parts = head.split(/\s+/);
     return parts.length > 1 ? parts.slice(1).join(" ") : head;
   };
   const shortDeviceName = (id: string | null): string | null => {
     // The host sentinel has no device row — label it "This computer".
     if (id === "__host__") return t()("captures.device_this_computer");
-    const full = deviceName(id);
-    return full ? deviceModel(full) : null;
+    const d = (devices() ?? []).find((x) => x.id === id);
+    return d ? deviceModel(d.display_name, d.serial) : null;
   };
   // The filter matches device by name/serial substring (see filter_dsl), so
   // the token is the short model — not the UUID. Quote it when it has spaces.
@@ -1260,7 +1266,7 @@ const CapturesView: Component = () => {
                 <div class="border-t border-border my-1" />
                 <For each={devices() ?? []}>
                   {(d) => {
-                    const model = deviceModel(d.display_name);
+                    const model = deviceModel(d.display_name, d.serial);
                     return (
                       <button
                         type="button"
@@ -1270,7 +1276,7 @@ const CapturesView: Component = () => {
                         title={d.display_name}
                         onClick={() => onPickDevice(model)}
                       >
-                        {deviceHead(d.display_name)}
+                        {deviceHead(d.display_name, d.serial)}
                       </button>
                     );
                   }}

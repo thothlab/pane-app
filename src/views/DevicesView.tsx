@@ -216,6 +216,14 @@ const DeviceRow: Component<{
   // already signals that action is needed; the chevron next to "How to
   // install the CA certificate" expands the steps on demand.
   const [guideOpen, setGuideOpen] = createSignal(false);
+  // display_name is "<head> · Android <ver> · <tail>". A device paired while
+  // unreachable has an empty head, so the raw name reads "· Android · <tail>"
+  // — a leading-dot ghost row. Substitute the serial for the empty head.
+  const displayName = () => {
+    const parts = p.device.display_name.split(" · ");
+    if (!parts[0]!.trim()) parts[0] = p.device.serial;
+    return parts.join(" · ");
+  };
 
   return (
     <li class="rounded border border-border bg-bg-subtle">
@@ -228,7 +236,7 @@ const DeviceRow: Component<{
             <CheckCircle size={16} class="text-success shrink-0 mt-0.5" />
           </Show>
           <div class="min-w-0 flex-1">
-            <div class="text-sm font-medium truncate">{p.device.display_name}</div>
+            <div class="text-sm font-medium truncate">{displayName()}</div>
             <div class="text-xs text-fg-muted font-mono">
               {p.device.platform} · {p.device.state}
             </div>

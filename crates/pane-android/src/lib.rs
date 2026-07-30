@@ -76,12 +76,14 @@ fn format_device_name(
     android_release: &str,
     serial: &str,
 ) -> String {
-    let head = if model.is_empty() {
-        manufacturer.to_string()
-    } else if manufacturer.is_empty() {
-        model.to_string()
-    } else {
-        format!("{manufacturer} {model}")
+    let head = match (manufacturer.is_empty(), model.is_empty()) {
+        (false, false) => format!("{manufacturer} {model}"),
+        (false, true) => manufacturer.to_string(),
+        (true, false) => model.to_string(),
+        // Both getprops came back empty (device paired while unreachable /
+        // restricted shell). Without a fallback the head is "" and the name
+        // reads " · Android  · <tail>" — a leading-dot ghost row in the UI.
+        (true, true) => "Android device".to_string(),
     };
     format!("{head} · Android {android_release} · {}", serial_tail(serial))
 }
