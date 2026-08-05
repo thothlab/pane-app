@@ -29,6 +29,7 @@ use uuid::Uuid;
 mod heartbeat;
 mod leaf;
 mod pac;
+mod passthrough;
 mod patch;
 mod proxy_loop;
 mod rules;
@@ -90,6 +91,12 @@ impl ProxyEngine for MitmEngine {
         // Shutdown: the external handle exposes an mpsc (one `()` = stop). We
         // fan that single signal out to every accept loop via a broadcast — an
         // mpsc receiver can't be cloned across N loops.
+        // Hosts we won't decrypt. Shared by every accept loop so a lesson
+        // learned on one device's port applies to all of them — the client
+        // rejecting our cert is a property of the host, not of the port it
+        // happened to arrive on.
+        let no_mitm = passthrough::NoMitmSet::new();
+
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         let (stop_tx, _stop_rx0) = broadcast::channel::<()>(1);
         {
@@ -131,6 +138,7 @@ impl ProxyEngine for MitmEngine {
                 self.events_tx.clone(),
                 tls_acceptor.clone(),
                 stop_tx.subscribe(),
+                no_mitm.clone(),
             );
         }
 
@@ -197,6 +205,7 @@ fn spawn_accept_loop(
     events: broadcast::Sender<EngineEvent>,
     tls_acceptor: TlsAcceptor,
     mut stop_rx: broadcast::Receiver<()>,
+    no_mitm: passthrough::NoMitmSet,
 ) {
     tokio::spawn(async move {
         loop {
@@ -212,9 +221,11 @@ fn spawn_accept_loop(
                             let storage = storage.clone();
                             let events = events.clone();
                             let tls_acceptor = tls_acceptor.clone();
+                            let no_mitm = no_mitm.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = proxy_loop::handle(
                                     stream, peer, local_port, registry, storage, events, tls_acceptor,
+                                    no_mitm,
                                 ).await {
                                     tracing::warn!(error = %e, "connection handler error");
                                 }

@@ -36,6 +36,7 @@ pub async fn handle(
     storage: Arc<Storage>,
     events: broadcast::Sender<EngineEvent>,
     tls_acceptor: TlsAcceptor,
+    no_mitm: crate::passthrough::NoMitmSet,
 ) -> anyhow::Result<()> {
     // Resolve which device this connection belongs to from the local port it
     // landed on. Each USB device has its own Mac-side proxy port; ports with no
@@ -89,9 +90,28 @@ pub async fn handle(
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             .await?;
 
+        // Hosts we already know we can't decrypt never get a handshake
+        // attempted — the client talks to the real server through us and keeps
+        // working. See `passthrough` for what lands here and why.
+        if no_mitm.should_tunnel(&host) {
+            return tunnel(stream, host, port, cap_id, started_at, storage, events).await;
+        }
+
         let tls_stream = match tls_acceptor.accept(stream).await {
             Ok(s) => s,
             Err(e) => {
+                // The client rejected our leaf: a release build that trusts
+                // only the system store, or an app pinning its own anchors.
+                // Remember it so its retry — and everything after — is
+                // tunnelled instead of broken. This connection is already
+                // lost; its ClientHello was consumed by the failed handshake
+                // and can't be replayed.
+                if no_mitm.learn(&host) {
+                    tracing::info!(
+                        host = %host,
+                        "TLS handshake rejected by client; tunnelling this host from now on"
+                    );
+                }
                 mark_error(&storage, cap_id, "tls_handshake", &e.to_string())?;
                 emit_error(&events, cap_id, &host, "tls_handshake", &e.to_string());
                 return Ok(());
@@ -245,6 +265,55 @@ pub async fn handle(
         duration_ms as u64,
         body.len() as u64,
     );
+    Ok(())
+}
+
+/// Splice client and upstream together without looking inside.
+///
+/// The client has already been told `200 Connection Established`, so from its
+/// point of view it now owns a raw pipe to `host:port` and will start its TLS
+/// handshake — against the real server's real certificate, which is the whole
+/// point. We copy bytes both ways until either side hangs up.
+///
+/// The capture row is kept and marked `tunneled`, deliberately: knowing that
+/// an app talked to a host, when, and for how long is genuinely useful even
+/// without the payload, and a silently missing row would read as "Pane didn't
+/// see this traffic" — the exact confusion this feature exists to end.
+async fn tunnel(
+    mut client: TcpStream,
+    host: String,
+    port: u16,
+    cap_id: Uuid,
+    started_at: OffsetDateTime,
+    storage: Arc<Storage>,
+    events: broadcast::Sender<EngineEvent>,
+) -> anyhow::Result<()> {
+    let mut upstream = match TcpStream::connect((host.as_str(), port)).await {
+        Ok(s) => s,
+        Err(e) => {
+            mark_error(&storage, cap_id, "upstream", &e.to_string())?;
+            emit_error(&events, cap_id, &host, "upstream", &e.to_string());
+            return Ok(());
+        }
+    };
+
+    // Byte counts are the only thing we can honestly report about an opaque
+    // stream, so record their sum as the capture's size.
+    let copied = match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
+        Ok((from_client, from_server)) => from_client + from_server,
+        Err(e) => {
+            // A mid-stream reset is normal for long-lived tunnels (the app
+            // backgrounds, the user kills it). Record what we know and don't
+            // treat it as a proxy error.
+            tracing::debug!(error = %e, host = %host, "tunnel ended early");
+            0
+        }
+    };
+
+    let ended_at = OffsetDateTime::now_utc();
+    let duration_ms = (ended_at - started_at).whole_milliseconds().max(0) as i64;
+    mark_tunneled(&storage, cap_id, copied as i64, duration_ms, ended_at)?;
+    emit_completed(&events, cap_id, 0, duration_ms as u64, copied);
     Ok(())
 }
 
@@ -873,6 +942,34 @@ where
         duration_ms as u64,
         rule.body.len() as u64,
     );
+    Ok(())
+}
+
+/// Close out a capture that was passed through without decryption.
+///
+/// `error_kind='tunneled'` rather than NULL because the Captures list keys its
+/// status cell off `error_kind`; this is what lets the row render as
+/// "passed through" instead of a bare "—" that reads like a stalled request.
+/// It is not an error and the UI does not colour it as one.
+fn mark_tunneled(
+    storage: &Storage,
+    id: Uuid,
+    total_bytes: i64,
+    duration_ms: i64,
+    ended_at: OffsetDateTime,
+) -> anyhow::Result<()> {
+    let conn = storage.conn().lock();
+    conn.execute(
+        "UPDATE capture SET state='tunneled', error_kind='tunneled', ended_at=?1,
+                            duration_ms=?2, total_bytes=?3
+         WHERE id=?4",
+        params![
+            ended_at.unix_timestamp(),
+            duration_ms,
+            total_bytes,
+            id.to_string(),
+        ],
+    )?;
     Ok(())
 }
 
