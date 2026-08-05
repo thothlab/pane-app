@@ -93,6 +93,13 @@ jobs:
       - name: Install JS deps
         run: pnpm install --frozen-lockfile
 
+      # Same gate as ci.yml. tauri-action invokes cargo for us and does not
+      # pass --locked, so assert lockfile freshness up front — this is the
+      # check that would have caught the alloc-stdlib 0.2.3 breakage before
+      # it took out all three platform builds.
+      - name: Verify Cargo.lock is up to date
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
       - name: Build + sign Tauri bundle
         uses: tauri-apps/tauri-action@v0
         env:

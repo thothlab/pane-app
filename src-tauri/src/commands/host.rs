@@ -5,6 +5,7 @@
 use super::{to_api, CmdResult};
 use crate::host_proxy;
 use crate::state::AppState;
+use pane_ipc::kinds;
 use serde::Serialize;
 use tauri::State;
 
@@ -16,7 +17,7 @@ pub struct HostCaptureStatusDto {
 
 #[tauri::command]
 pub async fn host_capture_enable(state: State<'_, AppState>) -> CmdResult<HostCaptureStatusDto> {
-    let service = host_proxy::enable(&state).map_err(to_api("host_capture_enable"))?;
+    let service = host_proxy::enable(&state).map_err(to_api(kinds::HOST_CAPTURE_ENABLE))?;
     Ok(HostCaptureStatusDto {
         enabled: true,
         service: Some(service),
@@ -25,7 +26,7 @@ pub async fn host_capture_enable(state: State<'_, AppState>) -> CmdResult<HostCa
 
 #[tauri::command]
 pub async fn host_capture_disable(state: State<'_, AppState>) -> CmdResult<()> {
-    host_proxy::disable(&state).map_err(to_api("host_capture_disable"))
+    host_proxy::disable(&state).map_err(to_api(kinds::HOST_CAPTURE_DISABLE))
 }
 
 #[tauri::command]

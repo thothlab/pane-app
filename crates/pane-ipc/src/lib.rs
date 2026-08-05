@@ -7,12 +7,71 @@ use uuid::Uuid;
 
 // ------------------- Errors -------------------
 
-#[derive(Debug, Serialize, Clone, thiserror::Error)]
+/// `Deserialize` is not for the Tauri path — the frontend only ever receives
+/// this. It exists for out-of-process clients (the CLI) that read `ApiError`
+/// back off the control socket and map `kind` to an exit code.
+#[derive(Debug, Serialize, Deserialize, Clone, thiserror::Error)]
 #[error("{kind}: {message}")]
 pub struct ApiError {
     pub kind: String,
     pub message: String,
     pub details: Option<serde_json::Value>,
+}
+
+/// Every `ApiError::kind` value the backend produces.
+///
+/// These started life as bare string literals scattered across the command
+/// modules. They are now public contract: the CLI switches on them to pick an
+/// exit code, so a typo or a silent rename is a breaking change for callers
+/// rather than a cosmetic one. Use the consts at every `to_api()` call site.
+pub mod kinds {
+    /// SQLite failure — query, migration, or lock.
+    pub const DB: &str = "db";
+    /// Filesystem read/write failure.
+    pub const IO: &str = "io";
+    /// The requested entity does not exist.
+    pub const NOT_FOUND: &str = "not_found";
+    /// A filter DSL string failed to parse. Distinct from [`DB`] so callers can
+    /// tell "your query is malformed" from "the database is unhappy".
+    pub const FILTER_PARSE: &str = "filter_parse";
+    /// Host/port string could not be parsed into a `SocketAddr`.
+    pub const INVALID_ADDR: &str = "invalid_addr";
+    /// Proxy engine failed to bind or start.
+    pub const ENGINE_START: &str = "engine_start";
+    /// Proxy engine failed to shut down cleanly.
+    pub const ENGINE_STOP: &str = "engine_stop";
+    /// An operation needing a live proxy was called while it was stopped.
+    pub const PROXY_NOT_RUNNING: &str = "proxy_not_running";
+    /// No CA certificate is present in storage.
+    pub const NO_CA: &str = "no_ca";
+    /// CA rotation failed.
+    pub const ROTATE_FAILED: &str = "rotate_failed";
+    /// Export to curl/HAR/PEM/mobileconfig failed.
+    pub const EXPORT_FAILED: &str = "export_failed";
+    /// Writing an export to disk failed.
+    pub const WRITE: &str = "write";
+    /// base64 or text decode failed.
+    pub const DECODE: &str = "decode";
+    /// Replay request could not be sent.
+    pub const REPLAY_FAILED: &str = "replay_failed";
+    /// Required external tooling (adb, libimobiledevice) is missing.
+    pub const TOOLING_MISSING: &str = "tooling_missing";
+    /// An `adb` invocation failed.
+    pub const ADB: &str = "adb";
+    /// Pairing an iOS device failed.
+    pub const IOS_ADD_FAILED: &str = "ios_add_failed";
+    /// Pairing an Android device failed.
+    pub const ANDROID_ADD_FAILED: &str = "android_add_failed";
+    /// Unpairing a device failed.
+    pub const REMOVE_FAILED: &str = "remove_failed";
+    /// Spawning the `adb logcat` child failed.
+    pub const LOGCAT_SPAWN: &str = "logcat_spawn";
+    /// Creating a webview window failed. GUI-only.
+    pub const WINDOW_BUILD: &str = "window_build";
+    /// Enabling "Capture this Mac" failed.
+    pub const HOST_CAPTURE_ENABLE: &str = "host_capture_enable";
+    /// Disabling "Capture this Mac" failed.
+    pub const HOST_CAPTURE_DISABLE: &str = "host_capture_disable";
 }
 
 // ------------------- Sessions / Proxy -------------------

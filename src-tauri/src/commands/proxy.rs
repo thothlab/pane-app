@@ -2,6 +2,7 @@ use super::{to_api, CmdResult};
 use crate::state::AppState;
 use pane_engine::{EngineConfig, ProxyEngine};
 use pane_engine_mitm::MitmEngine;
+use pane_ipc::kinds;
 use pane_ipc::{ProxyStartArgs, ProxyStatusDto, SessionDto};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
@@ -16,14 +17,14 @@ pub async fn start(
     let port = args.port.unwrap_or(8888);
     let listen = format!("{host}:{port}")
         .parse()
-        .map_err(to_api("invalid_addr"))?;
+        .map_err(to_api(kinds::INVALID_ADDR))?;
 
     // PAC sits on the same host one port up. The Android `http_proxy_pac`
     // setting points at it (via adb reverse); when Pane goes away the
     // device falls back to DIRECT instead of stranding on a dead proxy.
     let pac_listen: std::net::SocketAddr = format!("{host}:{}", port + 1)
         .parse()
-        .map_err(to_api("invalid_addr"))?;
+        .map_err(to_api(kinds::INVALID_ADDR))?;
 
     // Heartbeat lives two ports up from the MITM port. The companion
     // APK on each paired Android device connects to this (adb-reverse-
@@ -32,7 +33,7 @@ pub async fn start(
     // user doesn't get stranded with no internet.
     let heartbeat_listen: std::net::SocketAddr = format!("{host}:{}", port + 2)
         .parse()
-        .map_err(to_api("invalid_addr"))?;
+        .map_err(to_api(kinds::INVALID_ADDR))?;
 
     let ca_material = state.ca.material();
     let engine: Arc<dyn ProxyEngine> = Arc::new(MitmEngine::new(state.storage.clone()));
@@ -45,7 +46,7 @@ pub async fn start(
             registry: state.registry.clone(),
         })
         .await
-        .map_err(to_api("engine_start"))?;
+        .map_err(to_api(kinds::ENGINE_START))?;
 
     // Forward engine events to the UI bus.
     let mut rx = engine.events();
@@ -56,7 +57,10 @@ pub async fn start(
         }
     });
 
-    let session = state.storage.session_record(listen).map_err(to_api("db"))?;
+    let session = state
+        .storage
+        .session_record(listen)
+        .map_err(to_api(kinds::DB))?;
     *state.proxy_handle.lock() = Some(handle);
     let _ = app.emit("proxy.status_changed", &session);
 
@@ -82,7 +86,7 @@ pub async fn start(
 pub async fn stop(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
     let handle = state.proxy_handle.lock().take();
     if let Some(h) = handle {
-        h.shutdown().await.map_err(to_api("engine_stop"))?;
+        h.shutdown().await.map_err(to_api(kinds::ENGINE_STOP))?;
     }
     // Clear http_proxy + adb-reverse on every paired Android device.
     // Otherwise the phone keeps pointing at 127.0.0.1:8888 which now
@@ -105,7 +109,7 @@ pub async fn stop(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
 #[tauri::command]
 pub async fn status(state: State<'_, AppState>) -> CmdResult<ProxyStatusDto> {
     let running = state.proxy_handle.lock().is_some();
-    let count = state.storage.captures_count().map_err(to_api("db"))? as u64;
+    let count = state.storage.captures_count().map_err(to_api(kinds::DB))? as u64;
     Ok(ProxyStatusDto {
         running,
         captures_count: count,

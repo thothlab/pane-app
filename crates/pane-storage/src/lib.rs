@@ -21,11 +21,9 @@ use anyhow::{anyhow, Context, Result};
 use base64::Engine as _;
 use pane_ipc::{
     CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionSetPriorityArgs,
-    CollectionUpsertArgs, ExportOneResult,
-    FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs, RuleCollectionDto, RuleConditionDto,
-    RuleDto, RuleHeaderDto, RuleParamDto, RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs,
-    RuleUpsertArgs,
-    SaveFilterArgs, SessionDto,
+    CollectionUpsertArgs, ExportOneResult, FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs,
+    RuleCollectionDto, RuleConditionDto, RuleDto, RuleHeaderDto, RuleParamDto, RulePatchOpDto,
+    RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs, SaveFilterArgs, SessionDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -165,6 +163,12 @@ impl Storage {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        // Same reasoning as `logcat_read` below, but this connection needs it
+        // more: once the CLI can write to the same database from a second
+        // process, a concurrent writer without a busy_timeout gets an instant
+        // SQLITE_BUSY instead of waiting its turn. WAL already makes concurrent
+        // *readers* safe; this covers the writer side.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
 
         migrations::runner()
             .run(&mut conn)

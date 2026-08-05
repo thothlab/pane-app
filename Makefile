@@ -35,12 +35,16 @@ tauri-build:
 	pnpm tauri:build
 
 test:
-	cargo test --workspace
+	cargo test --locked --workspace
 	pnpm test
 
+# --locked mirrors CI. If this fails with "the lock file needs to be updated",
+# run `cargo update -p <crate>` (or plain `cargo build`) and commit Cargo.lock —
+# don't drop the flag. See the alloc-stdlib pin in src-tauri/Cargo.toml for what
+# an unpinned re-resolve did to the release builds.
 lint:
 	cargo fmt --all -- --check
-	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy --locked --workspace --all-targets -- -D warnings
 	pnpm lint
 
 typecheck:

@@ -35,6 +35,7 @@ use tokio::sync::mpsc;
 
 use super::{to_api, CmdResult};
 use crate::state::AppState;
+use pane_ipc::kinds;
 use pane_ipc::{
     ClearResult, LogcatClearArgs, LogcatExportArgs, LogcatNewCountArgs, LogcatQueryArgs,
     LogcatQueryOlderArgs, LogcatRowDto,
@@ -93,7 +94,7 @@ pub async fn logcat_open(
         .resizable(true)
         .visible(true)
         .build()
-        .map_err(to_api("window_build"))?;
+        .map_err(to_api(kinds::WINDOW_BUILD))?;
 
     // Spawn the adb logcat stream. The callback persists each batch to SQLite
     // (durable, per-device) and forwards it to the webview only (scoped emit),
@@ -127,17 +128,14 @@ pub async fn logcat_open(
             // every replayed line collides with the dedup index and `inserted`
             // is 0 — so we skip the ping entirely and the window doesn't churn
             // through no-op re-queries of history it already shows from the DB.
-            let inserted = match storage_for_db.insert_logcat_batch(
-                &serial_db,
-                created_at_ms,
-                &rows,
-            ) {
-                Ok(n) => n,
-                Err(e) => {
-                    tracing::warn!(error = %e, "logcat: db insert failed");
-                    0
-                }
-            };
+            let inserted =
+                match storage_for_db.insert_logcat_batch(&serial_db, created_at_ms, &rows) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "logcat: db insert failed");
+                        0
+                    }
+                };
             // The DB is the source of truth; the webview reads it via
             // logcat_query. Emit only a lightweight "rows appended" ping (count
             // of new rows) so the window knows to re-query / bump its badge —
@@ -149,13 +147,10 @@ pub async fn logcat_open(
             }
         }
         LogcatEvent::Error(msg) => {
-            let _ = win_for_emit.emit(
-                "logcat://error",
-                serde_json::json!({ "message": msg }),
-            );
+            let _ = win_for_emit.emit("logcat://error", serde_json::json!({ "message": msg }));
         }
     })
-    .map_err(to_api("logcat_spawn"))?;
+    .map_err(to_api(kinds::LOGCAT_SPAWN))?;
 
     // Park the shutdown sender so we can fire it on window close.
     let sessions = app.state::<LogcatSessions>();
@@ -204,7 +199,7 @@ pub async fn logcat_open(
 #[tauri::command]
 pub async fn logcat_write_export(path: String, content: String) -> CmdResult<usize> {
     let bytes = content.len();
-    std::fs::write(&path, content).map_err(to_api("io"))?;
+    std::fs::write(&path, content).map_err(to_api(kinds::IO))?;
     Ok(bytes)
 }
 
@@ -224,7 +219,7 @@ pub async fn logcat_query(
             &args.exclude_pids,
             args.limit,
         )
-        .map_err(to_api("db"))
+        .map_err(to_api(kinds::DB))
 }
 
 /// Query the newest `limit` rows older than `before_id` — "load older on
@@ -244,7 +239,7 @@ pub async fn logcat_query_older(
             args.before_id,
             args.limit,
         )
-        .map_err(to_api("db"))
+        .map_err(to_api(kinds::DB))
 }
 
 /// Count matching rows newer than `after_id` — the "+N new" badge while frozen.
@@ -262,7 +257,7 @@ pub async fn logcat_new_count(
             &args.exclude_pids,
             args.after_id,
         )
-        .map_err(to_api("db"))
+        .map_err(to_api(kinds::DB))
 }
 
 /// Delete all persisted rows for one device (the Clear button).
@@ -274,17 +269,14 @@ pub async fn logcat_clear(
     let n = state
         .storage
         .clear_logcat(&args.serial)
-        .map_err(to_api("db"))?;
+        .map_err(to_api(kinds::DB))?;
     Ok(ClearResult { deleted: n as u64 })
 }
 
 /// Export the full (uncapped) filtered set for a device to a file in
 /// threadtime format. Returns the number of lines written.
 #[tauri::command]
-pub async fn logcat_export(
-    state: State<'_, AppState>,
-    args: LogcatExportArgs,
-) -> CmdResult<usize> {
+pub async fn logcat_export(state: State<'_, AppState>, args: LogcatExportArgs) -> CmdResult<usize> {
     state
         .storage
         .export_logcat(
@@ -294,7 +286,7 @@ pub async fn logcat_export(
             &args.exclude_pids,
             &args.path,
         )
-        .map_err(to_api("io"))
+        .map_err(to_api(kinds::IO))
 }
 
 /// Full PID → process-name snapshot. Polled by the Logcat window
@@ -306,7 +298,7 @@ pub async fn android_pid_names(
     serial: String,
 ) -> CmdResult<std::collections::HashMap<u32, String>> {
     let android = AndroidPlatform::new();
-    android.pid_names(&serial).await.map_err(to_api("adb"))
+    android.pid_names(&serial).await.map_err(to_api(kinds::ADB))
 }
 
 /// URL-encode a string for use inside a query parameter value. We avoid
