@@ -177,6 +177,30 @@ fn commands() -> Value {
             &["--out"],
             false
         ),
+        cmd(
+            "collections ls",
+            "Rule collections with state and rule count",
+            &[],
+            false
+        ),
+        cmd(
+            "collections enable",
+            "Enable a whole collection by name substring or id",
+            &[],
+            false
+        ),
+        cmd(
+            "collections disable",
+            "Disable a whole collection",
+            &[],
+            false
+        ),
+        cmd(
+            "collections only",
+            "Enable exactly one collection, disable the rest — the way to switch scenarios",
+            &[],
+            false
+        ),
         cmd("devices ls", "Paired devices", &[], false),
         cmd(
             "devices attached",
@@ -250,6 +274,26 @@ mod tests {
         // rests on; if they vanish from the schema the skills mislead callers.
         assert!(s["dsl"]["captures"]["keys"]["state"].is_string());
         assert!(s["dsl"]["captures"]["keys"]["rule"].is_string());
+    }
+
+    /// `pane schema` calls itself authoritative, and both skills tell agents to
+    /// trust it over their own text — so a command missing here is worse than
+    /// undocumented, it is actively misleading.
+    #[test]
+    fn scenario_switching_is_in_the_schema() {
+        let s = schema();
+        let paths: Vec<String> = s["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["path"].as_str().unwrap_or("").to_string())
+            .collect();
+        for required in ["collections ls", "collections only", "collections enable"] {
+            assert!(
+                paths.contains(&required.to_string()),
+                "missing `{required}`"
+            );
+        }
     }
 
     #[test]

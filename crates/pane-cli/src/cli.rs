@@ -56,6 +56,9 @@ pub enum Command {
     Captures(CapturesCmd),
     #[command(subcommand)]
     Rules(RulesCmd),
+    /// Rule collections — toggle a whole scenario at once.
+    #[command(subcommand)]
+    Collections(CollectionsCmd),
     #[command(subcommand)]
     Devices(DevicesCmd),
     #[command(subcommand)]
@@ -233,6 +236,22 @@ pub enum RulesCmd {
         #[arg(long, short)]
         out: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CollectionsCmd {
+    /// List collections with their enabled state and rule count.
+    Ls,
+    /// Enable a collection by name substring or id.
+    ///
+    /// A collection groups the rules for one scenario, so this switches the
+    /// whole scenario in a single call instead of toggling each rule.
+    Enable { selector: String },
+    /// Disable a collection by name substring or id.
+    Disable { selector: String },
+    /// Disable every collection except this one — the usual way to move from
+    /// one scenario to the next without leaving the previous rules live.
+    Only { selector: String },
 }
 
 #[derive(Subcommand, Debug)]

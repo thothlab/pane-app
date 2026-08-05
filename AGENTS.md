@@ -19,6 +19,7 @@ Not installed? `cargo build --release -p pane-cli && ./target/release/pane-cli i
     pane captures tail --count 1 --timeout 30s --filter '…'   # NDJSON
     pane rules mock --host api.example.com --status 500 --body '{"e":1}' --name x
     pane rules enable <sel> | disable <sel>             # by name substring or id
+    pane collections ls | only <sel>                    # switch a whole scenario at once
 
 ## Proving a response came from a mock
 

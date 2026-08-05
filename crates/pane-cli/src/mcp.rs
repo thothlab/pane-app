@@ -150,6 +150,24 @@ pub fn tools() -> Vec<Value> {
             vec![],
         ),
         tool("pane_captures_clear", "Delete every capture. Use between scenarios so assertions cannot match a previous run.", json!({}), vec![]),
+        tool(
+            "pane_collections_list",
+            "Rule collections with their enabled state and rule count. A collection groups the rules for one scenario, so listing these is usually the right first step before switching scenarios.",
+            json!({}),
+            vec![],
+        ),
+        tool(
+            "pane_collection_set_enabled",
+            "Enable or disable a whole collection by name substring or id — switches every rule in that scenario at once.",
+            json!({ "selector": { "type": "string" }, "enabled": { "type": "boolean" } }),
+            vec!["selector", "enabled"],
+        ),
+        tool(
+            "pane_collection_only",
+            "Enable exactly one collection and disable all the others. The usual way to move from one scenario to the next without leaving the previous scenario's rules live and shadowing it.",
+            json!({ "selector": { "type": "string" } }),
+            vec!["selector"],
+        ),
         tool("pane_rules_list", "All mock rules with their enabled state, matchers and response status. Use it to find the selector for pane_rule_set_enabled.", json!({}), vec![]),
         tool(
             "pane_rule_set_enabled",
@@ -283,6 +301,48 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
                 .unwrap_or(30);
             wait_for_captures(&mut s, filter, want, secs).await
         }
+        "pane_collections_list" => pretty(s.call("collections.list", Value::Null).await?),
+        "pane_collection_set_enabled" => {
+            let selector = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+            let enabled = args
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let all = s.call("collections.list", Value::Null).await?;
+            let id = pick_named(&all, selector, "collection")?;
+            s.call(
+                "collections.set_enabled",
+                json!({ "id": id, "enabled": enabled }),
+            )
+            .await?;
+            Ok(format!(
+                "{} collection {id}",
+                if enabled { "enabled" } else { "disabled" }
+            ))
+        }
+        "pane_collection_only" => {
+            let selector = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+            let all = s.call("collections.list", Value::Null).await?;
+            let keep = pick_named(&all, selector, "collection")?;
+            let empty = vec![];
+            let mut changed = 0usize;
+            for c in all.as_array().unwrap_or(&empty) {
+                let id = c["id"].as_str().unwrap_or("").to_string();
+                let want = id == keep;
+                if c["enabled"].as_bool().unwrap_or(false) == want {
+                    continue;
+                }
+                s.call(
+                    "collections.set_enabled",
+                    json!({ "id": id, "enabled": want }),
+                )
+                .await?;
+                changed += 1;
+            }
+            Ok(format!(
+                "only `{selector}` is enabled now ({changed} collection(s) changed)"
+            ))
+        }
         "pane_rules_list" => pretty(s.call("rules.list", Value::Null).await?),
         "pane_rule_set_enabled" => {
             let selector = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
@@ -291,7 +351,7 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
             let rules = s.call("rules.list", Value::Null).await?;
-            let id = pick_rule(&rules, selector)?;
+            let id = pick_named(&rules, selector, "rule")?;
             s.call("rules.set_enabled", json!({ "id": id, "enabled": enabled }))
                 .await?;
             Ok(format!(
@@ -416,7 +476,7 @@ async fn matching(s: &mut Session, filter: &Option<String>) -> Result<Vec<Value>
     Ok(v.as_array().cloned().unwrap_or_default())
 }
 
-fn pick_rule(rules: &Value, selector: &str) -> Result<String> {
+fn pick_named(rules: &Value, selector: &str, what: &str) -> Result<String> {
     let empty = vec![];
     let list = rules.as_array().unwrap_or(&empty);
     let sel = selector.to_lowercase();
@@ -438,10 +498,10 @@ fn pick_rule(rules: &Value, selector: &str) -> Result<String> {
         })
         .collect();
     match hits.len() {
-        0 => anyhow::bail!("no rule matches `{selector}`"),
+        0 => anyhow::bail!("no {what} matches `{selector}`"),
         1 => Ok(hits[0]["id"].as_str().unwrap_or("").to_string()),
         n => anyhow::bail!(
-            "`{selector}` matches {n} rules: {}. Use a longer substring or an id.",
+            "`{selector}` matches {n} {what}s: {}. Use a longer substring or an id.",
             hits.iter()
                 .filter_map(|r| r["name"].as_str())
                 .collect::<Vec<_>>()
@@ -493,7 +553,7 @@ mod tests {
             { "id": "1111", "name": "orders-500" },
             { "id": "2222", "name": "orders-404" },
         ]);
-        assert!(pick_rule(&rules, "orders").is_err());
-        assert_eq!(pick_rule(&rules, "orders-500").unwrap(), "1111");
+        assert!(pick_named(&rules, "orders", "rule").is_err());
+        assert_eq!(pick_named(&rules, "orders-500", "rule").unwrap(), "1111");
     }
 }

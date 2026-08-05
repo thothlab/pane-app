@@ -252,6 +252,7 @@ async fn dispatch(s: &mut Session, cli: Cli, format: Format, data_dir: &Path) ->
 
         Command::Captures(c) => captures(s, c, format).await,
         Command::Rules(c) => rules(s, c, format).await,
+        Command::Collections(c) => collections(s, c, format).await,
         Command::Devices(c) => devices(s, c, format).await,
         Command::Logcat(c) => logcat(s, c, format).await,
         Command::Ca(c) => ca(s, c, format).await,
@@ -825,6 +826,91 @@ fn read_body(inline: Option<String>, file: Option<std::path::PathBuf>) -> Result
     Ok(Some(json!(
         base64::engine::general_purpose::STANDARD.encode(bytes)
     )))
+}
+
+// ─────────────────────────── collections ───────────────────────────
+
+async fn collections(s: &mut Session, cmd: CollectionsCmd, format: Format) -> Result<i32> {
+    match cmd {
+        CollectionsCmd::Ls => {
+            let v = s.call("collections.list", Value::Null).await?;
+            match format {
+                Format::Json => print_json(&v),
+                Format::Human => {
+                    println!("{:<9} {:<7} {:>6}  NAME", "ID", "STATE", "RULES");
+                    for c in as_array(v) {
+                        println!(
+                            "{:<9} {:<7} {:>6}  {}",
+                            short(c["id"].as_str().unwrap_or("")),
+                            if c["enabled"].as_bool().unwrap_or(false) {
+                                "on"
+                            } else {
+                                "off"
+                            },
+                            c["rule_count"].as_u64().unwrap_or(0),
+                            c["name"].as_str().unwrap_or("")
+                        );
+                    }
+                }
+            }
+            Ok(exit::OK)
+        }
+        CollectionsCmd::Enable { selector } => set_collection(s, &selector, true).await,
+        CollectionsCmd::Disable { selector } => set_collection(s, &selector, false).await,
+        CollectionsCmd::Only { selector } => {
+            let all = as_array(s.call("collections.list", Value::Null).await?);
+            let keep = resolve(&all, &selector, "name", "collection")?;
+            let mut enabled = 0usize;
+            let mut disabled = 0usize;
+            for c in &all {
+                let id = c["id"].as_str().unwrap_or("").to_string();
+                let want = id == keep;
+                // Skip the ones already in the right state: each call is a
+                // round trip, and with a dozen collections that is the
+                // difference between one write and twelve.
+                if c["enabled"].as_bool().unwrap_or(false) == want {
+                    continue;
+                }
+                s.call(
+                    "collections.set_enabled",
+                    json!({ "id": id, "enabled": want }),
+                )
+                .await?;
+                if want {
+                    enabled += 1
+                } else {
+                    disabled += 1
+                }
+            }
+            note(format!(
+                "enabled {enabled}, disabled {disabled} — only `{}` is live",
+                all.iter()
+                    .find(|c| c["id"].as_str() == Some(keep.as_str()))
+                    .and_then(|c| c["name"].as_str())
+                    .unwrap_or(&keep)
+            ));
+            Ok(exit::OK)
+        }
+    }
+}
+
+async fn set_collection(s: &mut Session, selector: &str, enabled: bool) -> Result<i32> {
+    let all = as_array(s.call("collections.list", Value::Null).await?);
+    let id = resolve(&all, selector, "name", "collection")?;
+    s.call(
+        "collections.set_enabled",
+        json!({ "id": id, "enabled": enabled }),
+    )
+    .await?;
+    note(format!(
+        "{} {}",
+        if enabled { "enabled" } else { "disabled" },
+        all.iter()
+            .find(|c| c["id"].as_str() == Some(id.as_str()))
+            .and_then(|c| c["name"].as_str())
+            .unwrap_or(&id)
+    ));
+    Ok(exit::OK)
 }
 
 // ─────────────────────────── devices ───────────────────────────
