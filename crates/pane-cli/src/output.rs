@@ -82,24 +82,37 @@ pub fn report_error(err: &anyhow::Error, format: Format) -> i32 {
         return exit_code_for_kind(&api.kind);
     }
 
+    // anyhow's Display shows only the outermost context, so `.context("opening
+    // the Pane data directory")` would hide the cause underneath it — which is
+    // where the actionable part lives. Print the whole chain.
+    let chain: Vec<String> = err.chain().map(|c| c.to_string()).collect();
+    let message = chain.join(": ");
+
     match format {
         Format::Json => {
             let _ = writeln!(
                 std::io::stderr(),
                 "{}",
                 serde_json::json!({
-                    "error": { "kind": "error", "message": err.to_string(), "details": null }
+                    "error": {
+                        "kind": "error",
+                        "message": message,
+                        "details": { "chain": chain },
+                    }
                 })
             );
         }
         Format::Human => {
-            let _ = writeln!(std::io::stderr(), "pane: {err}");
+            let _ = writeln!(std::io::stderr(), "pane: {}", chain[0]);
+            for cause in chain.iter().skip(1) {
+                let _ = writeln!(std::io::stderr(), "  → {cause}");
+            }
         }
     }
     // "no running instance" is a distinct, recoverable state and deserves its
     // own code even when it arrives as a plain anyhow error.
-    if err.to_string().contains("needs a running Pane instance")
-        || err.to_string().contains("no running Pane instance")
+    if message.contains("needs a running Pane instance")
+        || message.contains("no running Pane instance")
     {
         exit::NOT_RUNNING
     } else {

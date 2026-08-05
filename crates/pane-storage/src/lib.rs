@@ -214,6 +214,69 @@ impl Storage {
         })
     }
 
+    /// Open a database this process does **not** own, without migrating it.
+    ///
+    /// `open` runs migrations, which is right for the process that owns the
+    /// data directory and catastrophic for one that does not: a refinery
+    /// upgrade is one-way, and the app that *does* own it aborts on startup
+    /// the moment it finds a migration version it has never heard of. A CLI
+    /// built from a newer checkout would therefore brick the installed app
+    /// just by listing captures.
+    ///
+    /// So: refuse on any schema mismatch and say which direction it is in,
+    /// rather than "helpfully" converging the schema.
+    pub fn open_unowned(data_dir: &Path) -> Result<Self> {
+        let db_path = data_dir.join("captures.db");
+        if !db_path.exists() {
+            return Err(anyhow!(
+                "no Pane database at {} — start Pane (or `pane proxy run`) once to create it",
+                db_path.display()
+            ));
+        }
+        let conn = Connection::open(&db_path)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+
+        let db_version: i32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM refinery_schema_history",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let ours = migrations::latest_version();
+
+        match db_version.cmp(&ours) {
+            std::cmp::Ordering::Equal => {}
+            std::cmp::Ordering::Greater => {
+                return Err(anyhow!(
+                    "this database is at schema v{db_version}, newer than this build understands \
+                     (v{ours}) — update the pane CLI"
+                ))
+            }
+            std::cmp::Ordering::Less => {
+                return Err(anyhow!(
+                    "this database is at schema v{db_version} and this build expects v{ours}. \
+                     Migrating it would stop the installed Pane app from launching, so it is \
+                     left alone. Update the Pane app to match, or point the CLI somewhere else \
+                     with --data-dir / PANE_DATA_DIR."
+                ))
+            }
+        }
+
+        let logcat_read = Connection::open(&db_path)?;
+        logcat_read.busy_timeout(std::time::Duration::from_secs(5))?;
+        logcat::register_regexp(&logcat_read)?;
+
+        let bodies = Arc::new(BodyStore::new(data_dir.join("bodies"))?);
+        Ok(Self {
+            conn: Mutex::new(conn),
+            logcat_read: Mutex::new(logcat_read),
+            data_dir: data_dir.to_path_buf(),
+            bodies,
+        })
+    }
+
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }

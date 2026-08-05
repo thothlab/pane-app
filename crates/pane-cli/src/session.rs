@@ -35,11 +35,12 @@ impl Session {
         match Client::connect(&data_dir).await {
             Ok(c) => Ok(Session::Attached(c)),
             Err(ConnectError::NotRunning) => {
-                let core = Core::bootstrap(CoreConfig {
+                // attach_unowned, not bootstrap: bootstrap migrates, and
+                // migrating a directory owned by an installed app stops that
+                // app from launching ever again. A guest reads and writes the
+                // schema it finds, or refuses.
+                let core = Core::attach_unowned(CoreConfig {
                     data_dir: Some(data_dir),
-                    // Not the owner: a read-only-ish guest must not contend
-                    // with a GUI that holds the lock, and must not stop a GUI
-                    // from starting later.
                     take_instance_lock: false,
                 })
                 .context("opening the Pane data directory")?;

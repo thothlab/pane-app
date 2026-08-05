@@ -120,6 +120,37 @@ impl Core {
         })
     }
 
+    /// Attach to a data directory owned by someone else, without migrating it.
+    ///
+    /// `bootstrap` runs migrations, which is correct for the process that owns
+    /// the directory and destructive for one that does not: the upgrade is
+    /// one-way, and the installed app aborts on launch when it meets a
+    /// migration version it has never seen. A CLI built from a newer checkout
+    /// would brick the app just by listing captures — so a guest refuses on
+    /// any schema mismatch instead.
+    pub fn attach_unowned(config: CoreConfig) -> Result<Self, BootstrapError> {
+        let data_dir = config.resolve_data_dir()?;
+        let storage = Arc::new(Storage::open_unowned(&data_dir)?);
+        let ca = Arc::new(CaStore::open_or_init(&data_dir, &storage)?);
+        let registry = DevicePortRegistry::new();
+        let devices = Arc::new(DeviceManager::new(storage.clone(), registry.clone()));
+
+        Ok(Self {
+            storage,
+            ca,
+            devices,
+            registry,
+            events: EventBus::new(),
+            proxy_handle: Mutex::new(None),
+            engine: Mutex::new(None),
+            logcat: LogcatSessions::default(),
+            data_dir,
+            _lock: None,
+            #[cfg(target_os = "macos")]
+            host_proxy: Mutex::new(None),
+        })
+    }
+
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
     }
