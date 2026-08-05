@@ -181,6 +181,16 @@ pub struct DeviceDto {
     pub last_error: Option<String>,
 }
 
+// ------------------- Host capture ("Capture this Mac") -------------------
+
+/// Was an ad-hoc `#[derive(Serialize)]` local to `commands/host.rs`. Promoted
+/// here so out-of-process clients can deserialize it like every other DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostCaptureStatusDto {
+    pub enabled: bool,
+    pub service: Option<String>,
+}
+
 // ------------------- Captures -------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

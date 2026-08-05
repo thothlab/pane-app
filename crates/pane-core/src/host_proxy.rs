@@ -3,6 +3,11 @@
 //! traffic flows through Pane, selectable on demand from the Captures device
 //! dropdown.
 //!
+//! Moved verbatim from `src-tauri/src/host_proxy.rs` — it never had a Tauri
+//! dependency, only a reference to the old `AppState`. Two changes: it takes
+//! `&Core`, and `trust_ca` materializes the cert under the core's data
+//! directory instead of a hardcoded `ProjectDirs` lookup.
+//!
 //! macOS-only. On other platforms every entry point is a no-op stub so the
 //! Tauri commands (registered unconditionally in `lib.rs`) still compile and
 //! return a clean "disabled" status.
@@ -19,7 +24,7 @@
 //! these are short-lived CLI invocations, so blocking is correct and avoids the
 //! "no reactor running" hazard.
 
-use crate::state::AppState;
+use crate::Core;
 
 /// Snapshot of one proxy channel (web or secure-web) prior to Pane taking it
 /// over, so `disable` can put it back exactly.
@@ -253,14 +258,11 @@ mod imp {
     /// PEM (held in memory by CaStore) to a stable file under the data dir —
     /// `security add-trusted-cert` needs a path. Shows a GUI auth prompt the
     /// first time; that's expected and acceptable.
-    fn trust_ca(cert_pem: &str, sha256_fp: &str) -> Result<()> {
+    fn trust_ca(cert_pem: &str, sha256_fp: &str, dir: &std::path::Path) -> Result<()> {
         if ca_already_trusted(sha256_fp) {
             tracing::info!("host capture: CA already trusted in login keychain");
             return Ok(());
         }
-        let dirs = directories::ProjectDirs::from("tech", "thothlab", "pane")
-            .context("no project dirs")?;
-        let dir = dirs.data_dir();
         std::fs::create_dir_all(dir)?;
         // Public cert — no 0600 needed. Stable path so re-enable reuses it.
         let path = dir.join("ca-cert.pem");
@@ -334,7 +336,7 @@ mod imp {
 
     /// Enable host capture: trust the CA, snapshot & set the system proxy, and
     /// stamp the registry so 8888 → "__host__".
-    pub fn enable(state: &AppState) -> Result<String> {
+    pub fn enable(state: &Core) -> Result<String> {
         // The proxy must be running first: it's what listens on 8888. Enabling
         // host capture while stopped would point the Mac's system proxy at a
         // dead 127.0.0.1:8888 and strand it offline — and nothing would revert
@@ -346,7 +348,7 @@ mod imp {
         let material = state.ca.material();
         let dto = state.ca.current_dto().ok();
         let fp = dto.map(|d| d.sha256_fp).unwrap_or_default();
-        trust_ca(&material.cert_pem, &fp)?;
+        trust_ca(&material.cert_pem, &fp, state.data_dir())?;
 
         let service = active_service()?;
 
@@ -375,7 +377,7 @@ mod imp {
     /// Disable host capture: restore the snapshot's prior proxy on the exact
     /// service we modified, then unstamp the registry. Safe to call when not
     /// enabled (no-op).
-    pub fn disable(state: &AppState) -> Result<()> {
+    pub fn disable(state: &Core) -> Result<()> {
         let snapshot = state.host_proxy.lock().take();
         let Some(snap) = snapshot else {
             return Ok(());
@@ -388,7 +390,7 @@ mod imp {
         Ok(())
     }
 
-    pub fn status(state: &AppState) -> (bool, Option<String>) {
+    pub fn status(state: &Core) -> (bool, Option<String>) {
         let guard = state.host_proxy.lock();
         match guard.as_ref() {
             Some(snap) => (true, Some(snap.service.clone())),
@@ -429,17 +431,17 @@ mod imp {
 // ───────────────────────────── public API (macOS) ───────────────────────────
 
 #[cfg(target_os = "macos")]
-pub fn enable(state: &AppState) -> anyhow::Result<String> {
+pub fn enable(state: &Core) -> anyhow::Result<String> {
     imp::enable(state)
 }
 
 #[cfg(target_os = "macos")]
-pub fn disable(state: &AppState) -> anyhow::Result<()> {
+pub fn disable(state: &Core) -> anyhow::Result<()> {
     imp::disable(state)
 }
 
 #[cfg(target_os = "macos")]
-pub fn status(state: &AppState) -> (bool, Option<String>) {
+pub fn status(state: &Core) -> (bool, Option<String>) {
     imp::status(state)
 }
 
@@ -451,19 +453,19 @@ pub fn self_heal_on_start() {
 // ───────────────────────────── stubs (non-macOS) ────────────────────────────
 
 #[cfg(not(target_os = "macos"))]
-pub fn enable(_state: &AppState) -> anyhow::Result<String> {
+pub fn enable(_state: &Core) -> anyhow::Result<String> {
     Err(anyhow::anyhow!(
         "capture this Mac is only supported on macOS"
     ))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn disable(_state: &AppState) -> anyhow::Result<()> {
+pub fn disable(_state: &Core) -> anyhow::Result<()> {
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn status(_state: &AppState) -> (bool, Option<String>) {
+pub fn status(_state: &Core) -> (bool, Option<String>) {
     (false, None)
 }
 

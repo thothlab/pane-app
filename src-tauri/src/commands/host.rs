@@ -1,36 +1,20 @@
-//! Tauri commands for "Capture this Mac" — trust the CA and route the Mac's
-//! own system proxy through Pane. See `crate::host_proxy` for the platform
-//! implementation (macOS) and stubs (elsewhere).
+//! "Capture this Mac" — trust the CA and route the Mac's own system proxy
+//! through Pane. Platform work lives in `pane_core::host_proxy`.
 
-use super::{to_api, CmdResult};
-use crate::host_proxy;
-use crate::state::AppState;
-use pane_ipc::kinds;
-use serde::Serialize;
-use tauri::State;
+use super::{CmdResult, CoreState};
+use pane_ipc::HostCaptureStatusDto;
 
-#[derive(Serialize)]
-pub struct HostCaptureStatusDto {
-    pub enabled: bool,
-    pub service: Option<String>,
+#[tauri::command]
+pub async fn host_capture_enable(state: CoreState<'_>) -> CmdResult<HostCaptureStatusDto> {
+    state.host_capture_enable().await
 }
 
 #[tauri::command]
-pub async fn host_capture_enable(state: State<'_, AppState>) -> CmdResult<HostCaptureStatusDto> {
-    let service = host_proxy::enable(&state).map_err(to_api(kinds::HOST_CAPTURE_ENABLE))?;
-    Ok(HostCaptureStatusDto {
-        enabled: true,
-        service: Some(service),
-    })
+pub async fn host_capture_disable(state: CoreState<'_>) -> CmdResult<()> {
+    state.host_capture_disable().await
 }
 
 #[tauri::command]
-pub async fn host_capture_disable(state: State<'_, AppState>) -> CmdResult<()> {
-    host_proxy::disable(&state).map_err(to_api(kinds::HOST_CAPTURE_DISABLE))
-}
-
-#[tauri::command]
-pub async fn host_capture_status(state: State<'_, AppState>) -> CmdResult<HostCaptureStatusDto> {
-    let (enabled, service) = host_proxy::status(&state);
-    Ok(HostCaptureStatusDto { enabled, service })
+pub async fn host_capture_status(state: CoreState<'_>) -> CmdResult<HostCaptureStatusDto> {
+    state.host_capture_status().await
 }

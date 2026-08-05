@@ -306,6 +306,16 @@ impl Storage {
 
     // ---------- Captures ----------
 
+    /// Parse-check a captures filter DSL string without running a query.
+    ///
+    /// Lets callers report a malformed filter as its own error kind instead
+    /// of folding it into a generic database error — `list_captures` returns
+    /// a single `anyhow::Error` for both, and the CLI maps error kinds onto
+    /// exit codes, so the two need telling apart.
+    pub fn validate_capture_filter(&self, filter: &str) -> Result<()> {
+        filter_dsl::compile_to_sql(filter).map(|_| ())
+    }
+
     pub fn captures_count(&self) -> Result<i64> {
         let conn = self.conn.lock();
         Ok(conn.query_row("SELECT COUNT(*) FROM capture", [], |r| r.get(0))?)

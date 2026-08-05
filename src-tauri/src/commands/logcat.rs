@@ -1,62 +1,39 @@
-//! Logcat window — opens a non-modal `WebviewWindow` per Android device
-//! and pipes `adb logcat` into it.
+//! Logcat window — opens a non-modal `WebviewWindow` per Android device.
 //!
-//! One window per `serial` (label = `logcat-{serial}`). A second click
-//! on the same device just refocuses the existing window — never
-//! double-spawns the subprocess.
+//! This is the one command that genuinely cannot move into `pane-core`:
+//! creating a webview is Tauri's job. The `adb logcat` stream it used to own
+//! now lives in `Core::logcat_start`, keyed by serial, so the CLI can attach
+//! to the same session.
+//!
+//! One window per `serial` (label = `logcat-{serial}`). A second click on the
+//! same device refocuses the existing window — never double-spawns the
+//! subprocess.
 //!
 //! Lifecycle:
-//!   - `logcat_open` builds the WebviewWindow and spawns
-//!     `pane_android::logcat::spawn`, which owns the `adb` child with
-//!     `kill_on_drop(true)`.
-//!   - `WindowEvent::Destroyed` on the webview fires the shutdown
-//!     channel; the task then `child.kill().await`s and exits.
-//!   - The shutdown sender is parked in `AppState::logcat_shutdowns`
-//!     (Mutex<HashMap<label, Sender>>) so a "Logcat" double-click
-//!     can find and re-use the existing session.
+//!   - `logcat_open` builds the window, then asks the core to start (or
+//!     reuse) the stream.
+//!   - `WindowEvent::Destroyed` tells the core to stop it, which fires the
+//!     shutdown channel; the task then kills the `adb` child.
 //!
-//! Frontend contract:
-//!   - Window URL: `index.html?logcat=1&serial=...&app_label=...`.
-//!     (Query string, not path — easier with vite's index.html mount;
-//!     a tiny dispatcher in `src/main.tsx` reads `location.search` and
-//!     mounts `LogcatView` instead of the main `App`.)
-//!   - Each parsed batch is persisted to SQLite (`logcat_entry`), then a
-//!     lightweight `logcat://appended` ping (payload = batch count) is emitted
-//!     on that webview window. The window reads rows back via `logcat_query`;
-//!     the firehose never crosses IPC.
+//! Frontend contract (unchanged):
+//!   - Window URL `index.html?logcat=1&serial=…`; `src/main.tsx` reads
+//!     `location.search` and mounts `LogcatView` instead of the main app.
+//!   - Each persisted batch produces a lightweight `logcat://appended` ping
+//!     on that window (payload = new-row count); the window re-queries via
+//!     `logcat_query`. The firehose never crosses IPC. `lib.rs` translates
+//!     the core's `logcat.appended` bus events into those per-window emits.
 
-use std::collections::HashMap;
-
-use pane_android::logcat::{spawn as spawn_logcat, LogcatConfig, LogcatEvent};
-use pane_android::AndroidPlatform;
-use parking_lot::Mutex;
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
-use tokio::sync::mpsc;
-
-use super::{to_api, CmdResult};
-use crate::state::AppState;
-use pane_ipc::kinds;
+use super::{CmdResult, CoreState};
 use pane_ipc::{
-    ClearResult, LogcatClearArgs, LogcatExportArgs, LogcatNewCountArgs, LogcatQueryArgs,
+    kinds, ClearResult, LogcatClearArgs, LogcatExportArgs, LogcatNewCountArgs, LogcatQueryArgs,
     LogcatQueryOlderArgs, LogcatRowDto,
 };
-use pane_storage::LogcatInsert;
-use time::OffsetDateTime;
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
-/// Tracks an open logcat session so a re-open call can detect and
-/// focus instead of re-spawning. Lives on `AppState` (initialised in
-/// `state.rs`).
-pub struct LogcatSessions(pub Mutex<HashMap<String, mpsc::Sender<()>>>);
-
-impl LogcatSessions {
-    pub fn new() -> Self {
-        Self(Mutex::new(HashMap::new()))
-    }
-}
-
-fn label_for(serial: &str) -> String {
-    // serial is opaque (`adb devices` output); for an actual filesystem-
-    // unsafe character we'd sanitize, but real serials are `[A-Z0-9.:]`.
+/// Window label for a device's logcat window. `lib.rs` uses the same mapping
+/// to route `logcat.appended` events back to the right window.
+pub fn label_for(serial: &str) -> String {
+    // serial is opaque (`adb devices` output); real serials are `[A-Z0-9.:]`.
     format!("logcat-{serial}")
 }
 
@@ -74,8 +51,7 @@ pub async fn logcat_open(
         return Ok(serde_json::json!({ "label": label, "reused": true }));
     }
 
-    // The frontend reads ?logcat=1&serial=... in main.tsx and mounts
-    // LogcatView instead of the normal App. Keeping it as a query
+    // The frontend reads ?logcat=1&serial=... in main.tsx. Keeping it a query
     // string (not a path) sidesteps a separate vite build entry.
     let serial_q = url_encode(&serial);
     let url = WebviewUrl::App(
@@ -94,217 +70,83 @@ pub async fn logcat_open(
         .resizable(true)
         .visible(true)
         .build()
-        .map_err(to_api(kinds::WINDOW_BUILD))?;
+        .map_err(pane_core::to_api(kinds::WINDOW_BUILD))?;
 
-    // Spawn the adb logcat stream. The callback persists each batch to SQLite
-    // (durable, per-device) and forwards it to the webview only (scoped emit),
-    // so the main window never sees the firehose.
-    let win_for_emit = window.clone();
-    let storage_for_db = app.state::<AppState>().storage.clone();
-    let serial_db = serial.clone();
-    let cfg = LogcatConfig {
-        serial: serial.clone(),
-        ..Default::default()
-    };
-    let shutdown_tx = spawn_logcat(cfg, move |ev| match ev {
-        LogcatEvent::Batch(entries) => {
-            // Persist first — the DB is the source of truth (Phase 3 makes the
-            // UI read from it). One created_at stamp shared across the batch.
-            let created_at_ms =
-                (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64;
-            let rows: Vec<LogcatInsert> = entries
-                .iter()
-                .map(|e| LogcatInsert {
-                    device_ts: e.timestamp.clone(),
-                    pid: e.pid,
-                    tid: e.tid,
-                    level: e.level as i64,
-                    tag: e.tag.clone(),
-                    message: e.message.clone(),
-                })
-                .collect();
-            // INSERT OR IGNORE returns how many rows were actually new. When
-            // adb re-dumps the device ring buffer on window reopen / reconnect,
-            // every replayed line collides with the dedup index and `inserted`
-            // is 0 — so we skip the ping entirely and the window doesn't churn
-            // through no-op re-queries of history it already shows from the DB.
-            let inserted =
-                match storage_for_db.insert_logcat_batch(&serial_db, created_at_ms, &rows) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "logcat: db insert failed");
-                        0
-                    }
-                };
-            // The DB is the source of truth; the webview reads it via
-            // logcat_query. Emit only a lightweight "rows appended" ping (count
-            // of new rows) so the window knows to re-query / bump its badge —
-            // no firehose over IPC. Webview-scoped (Tauri 2 instance emit).
-            if inserted > 0 {
-                if let Err(e) = win_for_emit.emit("logcat://appended", inserted) {
-                    tracing::warn!(error = %e, "logcat: emit failed (window gone?)");
-                }
-            }
-        }
-        LogcatEvent::Error(msg) => {
-            let _ = win_for_emit.emit("logcat://error", serde_json::json!({ "message": msg }));
-        }
-    })
-    .map_err(to_api(kinds::LOGCAT_SPAWN))?;
+    let core = app.state::<std::sync::Arc<pane_core::Core>>();
+    let outcome = core.logcat_start(&serial)?;
 
-    // Park the shutdown sender so we can fire it on window close.
-    let sessions = app.state::<LogcatSessions>();
-    sessions.0.lock().insert(label.clone(), shutdown_tx.clone());
-
-    // Stop the subprocess + drop the session entry when the user closes
-    // the window. WindowEvent::Destroyed is the right signal — fires
-    // after the window is gone, regardless of close path (Cmd-Q on the
-    // single window, parent app exit, OS forced quit).
-    let app_handle_for_cleanup = app.clone();
-    let label_for_cleanup = label.clone();
+    // Stop the subprocess when the user closes the window.
+    // `WindowEvent::Destroyed` is the right signal — it fires after the
+    // window is gone, regardless of close path (Cmd-Q on the single window,
+    // parent app exit, OS forced quit).
+    let app_for_cleanup = app.clone();
+    let serial_for_cleanup = serial.clone();
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Destroyed) {
-            // Take the sender out of the map; drop the guard before the
-            // try_send so the temporary MutexGuard's lifetime ends
-            // before the borrow of `sessions` does (NLL nuance —
-            // otherwise the State<'_>::Drop fires while we still hold
-            // the inner reference).
-            let tx_opt = {
-                let sessions = app_handle_for_cleanup.state::<LogcatSessions>();
-                let removed = sessions.0.lock().remove(&label_for_cleanup);
-                removed
-            };
-            if let Some(tx) = tx_opt {
-                // try_send so we don't block the event handler; the
-                // task wakes up on next select tick anyway.
-                let _ = tx.try_send(());
-            }
+            let core = app_for_cleanup.state::<std::sync::Arc<pane_core::Core>>();
+            core.logcat_stop(&serial_for_cleanup);
         }
     });
 
-    Ok(serde_json::json!({ "label": label, "reused": false }))
+    Ok(serde_json::json!({ "label": label, "reused": outcome.reused }))
 }
 
-/// Write `content` as-is to `path`. Used by the Logcat window's
-/// Export button — the frontend already serialised the visible
-/// entries to threadtime-formatted text, we just need to drop it
-/// to disk. Path comes from a save-dialog the user just confirmed,
-/// so it's trusted; we don't gate on capability scope (the same
-/// way `api.ca.save_to_file` works).
+/// Write `content` as-is to `path`, for the Logcat window's Export button.
 ///
-/// Why a backend command instead of `@tauri-apps/plugin-fs`:
-/// plugin-fs requires `fs:allow-write-text-file` + scope rules
-/// per capability, which gets ugly fast for "write anywhere the
-/// user picked." A thin Rust command sidesteps the whole thing.
+/// Why a backend command instead of `@tauri-apps/plugin-fs`: plugin-fs
+/// requires `fs:allow-write-text-file` plus scope rules per capability, which
+/// gets ugly fast for "write anywhere the user picked".
 #[tauri::command]
 pub async fn logcat_write_export(path: String, content: String) -> CmdResult<usize> {
-    let bytes = content.len();
-    std::fs::write(&path, content).map_err(to_api(kinds::IO))?;
-    Ok(bytes)
+    pane_core::write_text_file(&path, &content)
 }
 
-/// Query persisted logcat rows for a device. `filter` is the raw DSL string;
-/// `include_pids`/`exclude_pids` are the frontend-resolved `app:` PIDs.
 #[tauri::command]
 pub async fn logcat_query(
-    state: State<'_, AppState>,
+    state: CoreState<'_>,
     args: LogcatQueryArgs,
 ) -> CmdResult<Vec<LogcatRowDto>> {
-    state
-        .storage
-        .query_logcat(
-            &args.serial,
-            args.filter.as_deref(),
-            &args.include_pids,
-            &args.exclude_pids,
-            args.limit,
-        )
-        .map_err(to_api(kinds::DB))
+    state.logcat_query(args).await
 }
 
-/// Query the newest `limit` rows older than `before_id` — "load older on
-/// scroll-up". Same filter/PID contract as `logcat_query`.
+/// "Load older on scroll-up". Same filter/PID contract as `logcat_query`.
 #[tauri::command]
 pub async fn logcat_query_older(
-    state: State<'_, AppState>,
+    state: CoreState<'_>,
     args: LogcatQueryOlderArgs,
 ) -> CmdResult<Vec<LogcatRowDto>> {
-    state
-        .storage
-        .query_logcat_before(
-            &args.serial,
-            args.filter.as_deref(),
-            &args.include_pids,
-            &args.exclude_pids,
-            args.before_id,
-            args.limit,
-        )
-        .map_err(to_api(kinds::DB))
+    state.logcat_query_older(args).await
 }
 
 /// Count matching rows newer than `after_id` — the "+N new" badge while frozen.
 #[tauri::command]
-pub async fn logcat_new_count(
-    state: State<'_, AppState>,
-    args: LogcatNewCountArgs,
-) -> CmdResult<i64> {
-    state
-        .storage
-        .count_logcat_new(
-            &args.serial,
-            args.filter.as_deref(),
-            &args.include_pids,
-            &args.exclude_pids,
-            args.after_id,
-        )
-        .map_err(to_api(kinds::DB))
+pub async fn logcat_new_count(state: CoreState<'_>, args: LogcatNewCountArgs) -> CmdResult<i64> {
+    state.logcat_new_count(args).await
 }
 
-/// Delete all persisted rows for one device (the Clear button).
 #[tauri::command]
-pub async fn logcat_clear(
-    state: State<'_, AppState>,
-    args: LogcatClearArgs,
-) -> CmdResult<ClearResult> {
-    let n = state
-        .storage
-        .clear_logcat(&args.serial)
-        .map_err(to_api(kinds::DB))?;
-    Ok(ClearResult { deleted: n as u64 })
+pub async fn logcat_clear(state: CoreState<'_>, args: LogcatClearArgs) -> CmdResult<ClearResult> {
+    state.logcat_clear(&args.serial).await
 }
 
-/// Export the full (uncapped) filtered set for a device to a file in
-/// threadtime format. Returns the number of lines written.
+/// Export the full (uncapped) filtered set to a file in threadtime format.
 #[tauri::command]
-pub async fn logcat_export(state: State<'_, AppState>, args: LogcatExportArgs) -> CmdResult<usize> {
-    state
-        .storage
-        .export_logcat(
-            &args.serial,
-            args.filter.as_deref(),
-            &args.include_pids,
-            &args.exclude_pids,
-            &args.path,
-        )
-        .map_err(to_api(kinds::IO))
+pub async fn logcat_export(state: CoreState<'_>, args: LogcatExportArgs) -> CmdResult<usize> {
+    state.logcat_export(args).await
 }
 
-/// Full PID → process-name snapshot. Polled by the Logcat window
-/// every 10s to label rows with the package the entry came from
-/// — the table's new App column reads from this map keyed on
-/// entry.pid. Returns a JSON object with PID strings as keys.
+/// Full PID → process-name snapshot, polled every 10s to label rows with the
+/// package the entry came from.
 #[tauri::command]
 pub async fn android_pid_names(
+    state: CoreState<'_>,
     serial: String,
 ) -> CmdResult<std::collections::HashMap<u32, String>> {
-    let android = AndroidPlatform::new();
-    android.pid_names(&serial).await.map_err(to_api(kinds::ADB))
+    state.android_pid_names(&serial).await
 }
 
-/// URL-encode a string for use inside a query parameter value. We avoid
-/// pulling `urlencoding` for one-call use — the character set we see in
-/// real adb serials (`[A-Z0-9.:]`) doesn't actually need escaping, but
-/// being defensive against future weirdness is cheap.
+/// URL-encode for a query-parameter value. Real adb serials (`[A-Z0-9.:]`)
+/// don't need escaping, but being defensive about future weirdness is cheap.
 fn url_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {

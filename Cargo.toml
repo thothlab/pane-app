@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "src-tauri",
     "crates/pane-ipc",
+    "crates/pane-core",
     "crates/pane-ca",
     "crates/pane-engine",
     "crates/pane-engine-mitm",
@@ -65,6 +66,12 @@ refinery = { version = "0.8", features = ["rusqlite"] }
 keyring = "2"
 directories = "5"
 
+# Advisory file locking for the single-instance guard. The kernel releases a
+# flock/LockFileEx on process death — including SIGKILL — which is exactly the
+# correctness that host_proxy::self_heal_on_start had to hand-roll around.
+# fs2 pulls in only libc/winapi, both already in the tree.
+fs2 = "0.4"
+
 # Misc
 sha2 = "0.10"
 hex = "0.4"
@@ -75,6 +82,7 @@ broadcast = "0.1"
 
 # Internal crates
 pane-ipc = { path = "crates/pane-ipc" }
+pane-core = { path = "crates/pane-core" }
 pane-ca = { path = "crates/pane-ca" }
 pane-engine = { path = "crates/pane-engine" }
 pane-engine-mitm = { path = "crates/pane-engine-mitm" }

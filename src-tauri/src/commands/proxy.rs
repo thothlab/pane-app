@@ -1,122 +1,23 @@
-use super::{to_api, CmdResult};
-use crate::state::AppState;
-use pane_engine::{EngineConfig, ProxyEngine};
-use pane_engine_mitm::MitmEngine;
-use pane_ipc::kinds;
+use super::{CmdResult, CoreState};
 use pane_ipc::{ProxyStartArgs, ProxyStatusDto, SessionDto};
-use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+
+// No AppHandle here any more: engine events are pumped onto the core event
+// bus by `Core::proxy_start`, and `lib.rs` runs a single forwarder that
+// relays the bus to the webview. That also means a second subscriber (the
+// CLI's `tail`) can attach at any time — which the old per-start forwarder
+// made impossible.
 
 #[tauri::command]
-pub async fn start(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    args: ProxyStartArgs,
-) -> CmdResult<SessionDto> {
-    let host = args.host.unwrap_or_else(|| "127.0.0.1".into());
-    let port = args.port.unwrap_or(8888);
-    let listen = format!("{host}:{port}")
-        .parse()
-        .map_err(to_api(kinds::INVALID_ADDR))?;
-
-    // PAC sits on the same host one port up. The Android `http_proxy_pac`
-    // setting points at it (via adb reverse); when Pane goes away the
-    // device falls back to DIRECT instead of stranding on a dead proxy.
-    let pac_listen: std::net::SocketAddr = format!("{host}:{}", port + 1)
-        .parse()
-        .map_err(to_api(kinds::INVALID_ADDR))?;
-
-    // Heartbeat lives two ports up from the MITM port. The companion
-    // APK on each paired Android device connects to this (adb-reverse-
-    // forwarded) and pings every 2s. When it loses the connection
-    // (USB unplug, Pane quit) it clears the device's http_proxy so the
-    // user doesn't get stranded with no internet.
-    let heartbeat_listen: std::net::SocketAddr = format!("{host}:{}", port + 2)
-        .parse()
-        .map_err(to_api(kinds::INVALID_ADDR))?;
-
-    let ca_material = state.ca.material();
-    let engine: Arc<dyn ProxyEngine> = Arc::new(MitmEngine::new(state.storage.clone()));
-    let handle = engine
-        .start(EngineConfig {
-            listen,
-            ca: ca_material,
-            pac_listen: Some(pac_listen),
-            heartbeat_listen: Some(heartbeat_listen),
-            registry: state.registry.clone(),
-        })
-        .await
-        .map_err(to_api(kinds::ENGINE_START))?;
-
-    // Forward engine events to the UI bus.
-    let mut rx = engine.events();
-    let app_clone = app.clone();
-    tokio::spawn(async move {
-        while let Ok(ev) = rx.recv().await {
-            let _ = app_clone.emit(ev.topic(), ev.payload());
-        }
-    });
-
-    let session = state
-        .storage
-        .session_record(listen)
-        .map_err(to_api(kinds::DB))?;
-    *state.proxy_handle.lock() = Some(handle);
-    let _ = app.emit("proxy.status_changed", &session);
-
-    // Re-apply PAC + adb reverse on every paired Android. Without this,
-    // a Stop → Start cycle (or any time Pane was closed while devices
-    // were paired) leaves the phone with cleared proxy settings and no
-    // reverse — traffic never reaches Pane until the user clicks
-    // Re-sync on each device row by hand. This makes the proxy "just
-    // work" again after restart.
-    let ca_for_reapply = state.ca.material();
-    let devices = state.devices.clone();
-    tokio::spawn(async move {
-        let reapplied = devices.reapply_all_android_proxies(ca_for_reapply).await;
-        if !reapplied.is_empty() {
-            tracing::info!(devices = ?reapplied, "auto-reapplied proxy on paired Android");
-        }
-    });
-
-    Ok(session)
+pub async fn start(state: CoreState<'_>, args: ProxyStartArgs) -> CmdResult<SessionDto> {
+    state.proxy_start(args).await
 }
 
 #[tauri::command]
-pub async fn stop(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
-    let handle = state.proxy_handle.lock().take();
-    if let Some(h) = handle {
-        h.shutdown().await.map_err(to_api(kinds::ENGINE_STOP))?;
-    }
-    // Clear http_proxy + adb-reverse on every paired Android device.
-    // Otherwise the phone keeps pointing at 127.0.0.1:8888 which now
-    // refuses connections — manifesting on the device as "no internet"
-    // until the user notices and removes the device manually.
-    let cleared = state.devices.clear_all_android_proxies().await;
-    // Revert the Mac's own system proxy too, if "Capture this Mac" was on.
-    // No-op when host capture was never enabled. Same rationale as devices:
-    // a stopped proxy left pointing at dead 127.0.0.1:8888 strands the Mac
-    // without internet.
-    if let Err(e) = crate::host_proxy::disable(&state) {
-        tracing::warn!(error = %e, "failed to revert host proxy on stop");
-    }
-    Ok(serde_json::json!({
-        "stopped_at": time::OffsetDateTime::now_utc().to_string(),
-        "cleared_devices": cleared,
-    }))
+pub async fn stop(state: CoreState<'_>) -> CmdResult<serde_json::Value> {
+    state.proxy_stop().await
 }
 
 #[tauri::command]
-pub async fn status(state: State<'_, AppState>) -> CmdResult<ProxyStatusDto> {
-    let running = state.proxy_handle.lock().is_some();
-    let count = state.storage.captures_count().map_err(to_api(kinds::DB))? as u64;
-    Ok(ProxyStatusDto {
-        running,
-        captures_count: count,
-        listen: state
-            .proxy_handle
-            .lock()
-            .as_ref()
-            .map(|h| h.listen.to_string()),
-    })
+pub async fn status(state: CoreState<'_>) -> CmdResult<ProxyStatusDto> {
+    state.proxy_status().await
 }

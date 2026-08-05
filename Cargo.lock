@@ -1460,6 +1460,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3288,14 +3298,8 @@ dependencies = [
  "base64 0.22.1",
  "directories",
  "pane-android",
- "pane-ca",
- "pane-devices",
- "pane-engine",
- "pane-engine-mitm",
+ "pane-core",
  "pane-ipc",
- "pane-pinning",
- "pane-setup-server",
- "pane-storage",
  "parking_lot",
  "serde",
  "serde_json",
@@ -3358,6 +3362,32 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "time",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pane-core"
+version = "0.2.8"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "directories",
+ "fs2",
+ "pane-android",
+ "pane-ca",
+ "pane-devices",
+ "pane-engine",
+ "pane-engine-mitm",
+ "pane-ipc",
+ "pane-storage",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
  "tracing",
  "uuid",
 ]
