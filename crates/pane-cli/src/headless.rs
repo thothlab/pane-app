@@ -69,7 +69,7 @@ pub async fn run_foreground(data_dir: &Path, host: &str, port: u16, no_proxy: bo
         "data_dir": data_dir,
     }));
 
-    tokio::signal::ctrl_c().await.ok();
+    wait_for_shutdown().await;
     note("shutting down");
 
     // Same teardown order as the GUI's RunEvent::Exit: stop the engine, clear
@@ -80,4 +80,33 @@ pub async fn run_foreground(data_dir: &Path, host: &str, port: u16, no_proxy: bo
     }
     server.cleanup();
     Ok(exit::OK)
+}
+
+/// Block until the process is asked to stop.
+///
+/// SIGTERM matters as much as Ctrl-C here: `kill`, systemd and CI job
+/// cancellation all send it, and without handling it the teardown below never
+/// runs — leaving paired phones pointing at a dead proxy and a stale socket
+/// for the next start to clean up.
+async fn wait_for_shutdown() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot listen for SIGTERM; Ctrl-C only");
+                let _ = tokio::signal::ctrl_c().await;
+                return;
+            }
+        };
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }

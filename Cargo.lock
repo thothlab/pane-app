@@ -3406,6 +3406,7 @@ dependencies = [
  "base64 0.22.1",
  "directories",
  "pane-android",
+ "pane-control",
  "pane-core",
  "pane-ipc",
  "parking_lot",

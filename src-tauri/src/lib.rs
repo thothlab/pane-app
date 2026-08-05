@@ -166,6 +166,40 @@ pub fn run() {
                 }
             });
 
+            // Local control endpoint, so the `pane` CLI and the MCP server can
+            // drive this instance instead of contending with it for the
+            // database and port 8888. On by default: requiring a trip to
+            // Settings first would make the feature invisible in exactly the
+            // case it exists for — "Pane is already open, run `pane captures
+            // tail`". PANE_CONTROL=off opts out.
+            //
+            // The ServeHandle aborts the accept loop when dropped, so it is
+            // held for the process lifetime rather than returned.
+            if std::env::var("PANE_CONTROL").as_deref() != Ok("off") {
+                let control_core = core.clone();
+                tauri::async_runtime::spawn(async move {
+                    match pane_control::ControlServer::bind(
+                        control_core,
+                        pane_control::InstanceKind::Gui,
+                    )
+                    .await
+                    {
+                        Ok(kept) => {
+                            // Both values must outlive setup(): ServeHandle
+                            // aborts the accept loop on drop. Parking them in
+                            // this task keeps them alive for the process
+                            // lifetime while still dropping them cleanly if
+                            // the task is ever cancelled.
+                            let _kept = kept;
+                            std::future::pending::<()>().await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "control endpoint unavailable");
+                        }
+                    }
+                });
+            }
+
             // Device watchdog: reconciles paired Android devices with their
             // actual connection state every 5s. Fixes the "unplugged USB →
             // device stuck with dead proxy → no internet" footgun.
@@ -198,6 +232,9 @@ pub fn run() {
                 if let Err(e) = pane_core::host_proxy::disable(&core) {
                     tracing::warn!(error = %e, "failed to revert host proxy on exit");
                 }
+                // Drop the control socket and its metadata so the next start
+                // does not have to treat them as crash residue.
+                pane_control::discovery::cleanup(core.data_dir());
             }
         });
 }

@@ -39,6 +39,7 @@ base64.workspace = true
 # The GUI is a thin shell over pane-core: every operation lives there, so the
 # domain crates are no longer direct dependencies of this one.
 pane-core.workspace = true
+pane-control.workspace = true
 pane-ipc.workspace = true
 pane-android.workspace = true
 
