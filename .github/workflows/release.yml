@@ -100,6 +100,23 @@ jobs:
       - name: Verify Cargo.lock is up to date
         run: cargo metadata --locked --format-version 1 > /dev/null
 
+      # Built per-platform and attached to the release. Not bundled into the
+      # .app: tauri.conf.json `externalBin` validates the file exists at build
+      # time, which would break `make tauri-dev` for anyone who has not
+      # cross-built the CLI first. Users get it via `make cli-install` or the
+      # release asset below.
+      - name: Build the pane CLI
+        run: cargo build --release --locked -p pane-cli --target ${{ matrix.platform.rust }}
+
+      - name: Attach the pane CLI to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cp target/${{ matrix.platform.rust }}/release/pane-cli \
+             pane-cli-${{ matrix.platform.target }}
+          gh release upload "$TAG" pane-cli-${{ matrix.platform.target }} --clobber
+
       - name: Build + sign Tauri bundle
         uses: tauri-apps/tauri-action@v0
         env:

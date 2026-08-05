@@ -1,4 +1,4 @@
-.PHONY: help install dev build test lint typecheck format clean tauri-dev tauri-build docs-dev docs-build web-run
+.PHONY: help install dev build test lint typecheck format clean tauri-dev tauri-build docs-dev docs-build web-run cli cli-install
 
 help:
 	@echo "Pane — common dev commands:"
@@ -65,3 +65,18 @@ web-run: docs-build
 clean:
 	cargo clean
 	rm -rf node_modules dist apps/docs/dist apps/docs/node_modules
+
+# ---- CLI ------------------------------------------------------------------
+# The cargo bin is `pane-cli` (src-tauri's package already owns the `pane` bin
+# name); `install` symlinks it onto PATH as `pane`.
+cli:
+	cargo build --release -p pane-cli
+
+cli-install: cli
+	./target/release/pane-cli install
+
+# Bundling the CLI into the .app via tauri.conf.json `externalBin` is
+# deliberately NOT wired up yet: Tauri validates that
+# src-tauri/binaries/pane-cli-<target-triple> exists at build time, so adding it
+# breaks `make tauri-dev` for anyone who has not cross-built the CLI first.
+# Release ships it as a standalone asset instead (see .github/workflows/release.yml).
