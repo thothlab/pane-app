@@ -178,8 +178,16 @@ pub async fn handle(
         }
     }
 
+    // The forward leg must go out *direct*. reqwest's builder picks up
+    // HTTP_PROXY/HTTPS_PROXY/ALL_PROXY from the environment by default, which
+    // on any machine behind a corporate proxy silently chains our upstream
+    // call through that proxy: captured request bodies leak to a third party,
+    // loopback/device-local hosts stop resolving, and — if those vars happen
+    // to point back at Pane's own listener — the request loops into this very
+    // handler. We are the proxy; there is nothing upstream of us to honour.
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let url = format!("http://{host}:{port}{path}");
@@ -346,8 +354,12 @@ async fn handle_tls_inner(
     }
 
     let url = format!("https://{host}:{port}{path}");
+    // `no_proxy()` for the same reason as on the plain-HTTP path above — an
+    // ambient HTTPS_PROXY would turn our forward leg into a CONNECT against
+    // someone else's proxy instead of a direct TLS dial to `host`.
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let mut builder = client.request(method.parse()?, &url);

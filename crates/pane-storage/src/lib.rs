@@ -144,6 +144,31 @@ impl CaRecord {
     }
 }
 
+/// Parse-check a captures filter DSL string without needing a `Storage`.
+///
+/// The CLI validates `--filter` locally before opening a session, so a typo
+/// fails immediately rather than after a round trip — and, for `tail`, before
+/// the caller has already launched the app under test.
+pub fn validate_filter(filter: &str) -> Result<()> {
+    filter_dsl::compile_to_sql(filter).map(|_| ())
+}
+
+/// Format a unix timestamp as RFC 3339.
+///
+/// `OffsetDateTime::to_string()` yields `2026-08-05 12:31:04.812 +00:00:00`,
+/// which is not RFC 3339 and is rejected by `jq`'s `fromdate`, `date -d`, and
+/// every other tool a caller reaches for. Anything that ships a timestamp
+/// across the wire goes through here instead.
+fn rfc3339(unix_seconds: i64) -> String {
+    OffsetDateTime::from_unix_timestamp(unix_seconds)
+        .ok()
+        .and_then(|t| {
+            t.format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
+        .unwrap_or_else(|| unix_seconds.to_string())
+}
+
 pub struct Storage {
     conn: Mutex<Connection>,
     /// Dedicated connection reserved for logcat SELECTs. WAL lets it read
@@ -285,7 +310,7 @@ impl Storage {
         )?;
         Ok(SessionDto {
             id,
-            started_at: now.to_string(),
+            started_at: rfc3339(now.unix_timestamp()),
             listen: listen.to_string(),
             status: "running".into(),
             ca_id: Uuid::parse_str(&ca_id)?,
@@ -306,6 +331,33 @@ impl Storage {
 
     // ---------- Captures ----------
 
+    /// Does capture `id` match `filter`?
+    ///
+    /// `compile_to_sql` produces a SQL WHERE fragment, so a filter cannot be
+    /// evaluated in memory against an event payload. Re-asking the database
+    /// about one row is how `captures tail --filter` reuses the exact filter
+    /// semantics of the Captures view for free, at the cost of one indexed
+    /// lookup per completed request.
+    pub fn capture_matches(&self, id: Uuid, filter: &str) -> Result<bool> {
+        if filter.trim().is_empty() {
+            return Ok(true);
+        }
+        let (where_sql, params_vec) = filter_dsl::compile_to_sql(filter)?;
+        let conn = self.conn.lock();
+        let sql = format!("SELECT 1 FROM capture WHERE id = ? AND ({where_sql}) LIMIT 1");
+        let mut stmt = conn.prepare(&sql)?;
+        let id_str = id.to_string();
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            std::iter::once(&id_str as &dyn rusqlite::ToSql)
+                .chain(params_vec.iter().map(|b| b.as_ref()))
+                .collect();
+        let found = stmt
+            .query_row(param_refs.as_slice(), |_| Ok(()))
+            .optional()?
+            .is_some();
+        Ok(found)
+    }
+
     /// Parse-check a captures filter DSL string without running a query.
     ///
     /// Lets callers report a malformed filter as its own error kind instead
@@ -313,7 +365,7 @@ impl Storage {
     /// a single `anyhow::Error` for both, and the CLI maps error kinds onto
     /// exit codes, so the two need telling apart.
     pub fn validate_capture_filter(&self, filter: &str) -> Result<()> {
-        filter_dsl::compile_to_sql(filter).map(|_| ())
+        validate_filter(filter)
     }
 
     pub fn captures_count(&self) -> Result<i64> {
@@ -409,10 +461,8 @@ impl Storage {
         Ok(CaptureDto {
             id: Uuid::parse_str(&id).unwrap(),
             session_id: Uuid::parse_str(&session_id).unwrap(),
-            started_at: OffsetDateTime::from_unix_timestamp(started_at)
-                .unwrap()
-                .to_string(),
-            ended_at: ended_at.map(|t| OffsetDateTime::from_unix_timestamp(t).unwrap().to_string()),
+            started_at: rfc3339(started_at),
+            ended_at: ended_at.map(rfc3339),
             client_addr: r.get(4)?,
             server_host: r.get(5)?,
             server_port: r.get::<_, i64>(6)? as u16,
@@ -1149,5 +1199,30 @@ mod filter_dedup_tests {
         let a = s.save_filter(args("RC1", "host:rc1", "captures")).unwrap();
         let b = s.save_filter(args("  rc1 ", "host:x", "captures")).unwrap();
         assert_eq!(a.id, b.id, "trim + lowercase name should match");
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+
+    /// `jq`'s `fromdate` and `date -d` both reject the default
+    /// `OffsetDateTime::to_string()` shape, so anything an agent parses has to
+    /// be RFC 3339.
+    #[test]
+    fn wire_timestamps_are_rfc3339() {
+        let s = rfc3339(1_754_395_864);
+        assert!(s.ends_with('Z'), "expected a Z-suffixed instant, got {s}");
+        assert!(s.contains('T'), "expected a T separator, got {s}");
+        assert!(!s.contains(' '), "RFC 3339 has no spaces, got {s}");
+        assert!(
+            time::OffsetDateTime::parse(&s, &time::format_description::well_known::Rfc3339).is_ok(),
+            "{s} does not round-trip as RFC 3339"
+        );
+    }
+
+    #[test]
+    fn an_unrepresentable_timestamp_degrades_instead_of_panicking() {
+        assert_eq!(rfc3339(i64::MAX), i64::MAX.to_string());
     }
 }

@@ -19,8 +19,14 @@ pub async fn send(storage: &Storage, args: ReplaySendArgs) -> Result<ReplayRecor
     let req = &args.request;
     let started_at = OffsetDateTime::now_utc();
 
+    // `no_proxy()` for the same reason as the engine's forward leg: reqwest's
+    // builder honours HTTP_PROXY/HTTPS_PROXY/ALL_PROXY from the environment by
+    // default, so on any machine behind a corporate proxy a replayed request —
+    // headers, credentials and all — would be relayed to that third party
+    // instead of going to the host the user actually named.
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .no_proxy()
         .build()?;
 
     let method = req

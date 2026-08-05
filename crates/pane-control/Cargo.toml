@@ -1,0 +1,26 @@
+[package]
+name = "pane-control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local control endpoint — lets an external process drive a running Pane instance"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+pane-core.workspace = true
+pane-ipc.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# Only for getuid(), which keys the fallback socket path per user.
+libc = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true

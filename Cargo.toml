@@ -4,6 +4,8 @@ members = [
     "src-tauri",
     "crates/pane-ipc",
     "crates/pane-core",
+    "crates/pane-control",
+    "crates/pane-cli",
     "crates/pane-ca",
     "crates/pane-engine",
     "crates/pane-engine-mitm",
@@ -83,6 +85,7 @@ broadcast = "0.1"
 # Internal crates
 pane-ipc = { path = "crates/pane-ipc" }
 pane-core = { path = "crates/pane-core" }
+pane-control = { path = "crates/pane-control" }
 pane-ca = { path = "crates/pane-ca" }
 pane-engine = { path = "crates/pane-engine" }
 pane-engine-mitm = { path = "crates/pane-engine-mitm" }
