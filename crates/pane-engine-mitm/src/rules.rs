@@ -135,10 +135,7 @@ fn eval_condition(cond: &RuleCondition, body: &serde_json::Value) -> bool {
 /// `body.` is optional (mirrors how patch paths are written). Each segment is
 /// an optional object key followed by zero+ `[index]` suffixes
 /// (`items[0].sum`). Missing keys / out-of-range indices → `None`.
-fn lookup_body_path<'a>(
-    body: &'a serde_json::Value,
-    path: &str,
-) -> Option<&'a serde_json::Value> {
+fn lookup_body_path<'a>(body: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
     let path = path.strip_prefix("body.").unwrap_or(path);
     let mut cur = body;
     for raw_seg in path.split('.') {

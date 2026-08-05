@@ -127,15 +127,24 @@ mod tests {
         let p1 = r.assign("A", Some("dev-a".into()));
         let p2 = r.assign("A", Some("dev-a".into()));
         assert_eq!(p1, p2);
-        assert_eq!(p1, 8891, "first device gets the first pool port (8888 reserved)");
+        assert_eq!(
+            p1, 8891,
+            "first device gets the first pool port (8888 reserved)"
+        );
     }
 
     #[test]
     fn devices_never_get_the_reserved_8888() {
         let r = DevicePortRegistry::new();
-        assert!(!PROXY_PORT_POOL.contains(&8888), "8888 must stay out of the pool");
+        assert!(
+            !PROXY_PORT_POOL.contains(&8888),
+            "8888 must stay out of the pool"
+        );
         let a = r.assign("A", None);
-        assert_ne!(a, 8888, "device must not be attributed to the Mac-local port");
+        assert_ne!(
+            a, 8888,
+            "device must not be attributed to the Mac-local port"
+        );
     }
 
     #[test]

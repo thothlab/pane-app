@@ -202,7 +202,10 @@ impl Storage {
     /// Delete all logcat rows for one device (the Clear button).
     pub fn clear_logcat(&self, serial: &str) -> Result<usize> {
         let conn = self.conn.lock();
-        let n = conn.execute("DELETE FROM logcat_entry WHERE serial = ?1", params![serial])?;
+        let n = conn.execute(
+            "DELETE FROM logcat_entry WHERE serial = ?1",
+            params![serial],
+        )?;
         Ok(n)
     }
 
@@ -214,8 +217,10 @@ impl Storage {
         let cutoff = now_ms - retention_ms;
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
-        let mut deleted =
-            tx.execute("DELETE FROM logcat_entry WHERE created_at < ?1", params![cutoff])?;
+        let mut deleted = tx.execute(
+            "DELETE FROM logcat_entry WHERE created_at < ?1",
+            params![cutoff],
+        )?;
         let serials: Vec<String> = {
             let mut stmt = tx.prepare("SELECT DISTINCT serial FROM logcat_entry")?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
@@ -400,14 +405,17 @@ mod tests {
         assert!(re[0].message.ends_with("close"));
 
         // app: resolved PIDs come in as include list.
-        let by_pid = s
-            .query_logcat("SERIAL_A", None, &[200], &[], 100)
-            .unwrap();
+        let by_pid = s.query_logcat("SERIAL_A", None, &[200], &[], 100).unwrap();
         assert_eq!(by_pid.len(), 1);
         assert_eq!(by_pid[0].pid, 200);
 
         // Device isolation.
-        assert_eq!(s.query_logcat("SERIAL_B", None, &[], &[], 100).unwrap().len(), 1);
+        assert_eq!(
+            s.query_logcat("SERIAL_B", None, &[], &[], 100)
+                .unwrap()
+                .len(),
+            1
+        );
 
         // Badge count: everything newer than id 0.
         assert_eq!(
@@ -420,7 +428,12 @@ mod tests {
         assert_eq!(s.prune_logcat(i64::MAX, i64::MAX).unwrap(), 0);
         let deleted = s.prune_logcat(0, i64::MAX).unwrap();
         assert_eq!(deleted, 4);
-        assert_eq!(s.query_logcat("SERIAL_A", None, &[], &[], 100).unwrap().len(), 0);
+        assert_eq!(
+            s.query_logcat("SERIAL_A", None, &[], &[], 100)
+                .unwrap()
+                .len(),
+            0
+        );
     }
 
     #[test]
@@ -482,7 +495,9 @@ mod tests {
         // Duplicates collapsed to the earliest ingested (MIN id = 1); the
         // distinct line survives.
         let ids: Vec<i64> = {
-            let mut stmt = conn.prepare("SELECT id FROM logcat_entry ORDER BY id").unwrap();
+            let mut stmt = conn
+                .prepare("SELECT id FROM logcat_entry ORDER BY id")
+                .unwrap();
             stmt.query_map([], |r| r.get(0))
                 .unwrap()
                 .collect::<std::result::Result<_, _>>()
@@ -526,9 +541,7 @@ mod tests {
         assert_eq!(filtered[4].id, 49);
 
         // Reaching the start returns a short page (fewer than requested).
-        let head = s
-            .query_logcat_before("DEV", None, &[], &[], 5, 20)
-            .unwrap();
+        let head = s.query_logcat_before("DEV", None, &[], &[], 5, 20).unwrap();
         assert_eq!(head.len(), 4); // ids 1..=4
         assert_eq!(head[0].id, 1);
     }
@@ -538,7 +551,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let s = Storage::open(dir.path()).unwrap();
         let batch: Vec<LogcatInsert> = (0..10).map(|i| ins("T", &format!("m{i}"), 1, 2)).collect();
-        s.insert_logcat_batch("DEV", 10_000_000_000_000, &batch).unwrap();
+        s.insert_logcat_batch("DEV", 10_000_000_000_000, &batch)
+            .unwrap();
         // Keep only the newest 3 (retention window huge so only the cap bites).
         s.prune_logcat(i64::MAX, 3).unwrap();
         let got = s.query_logcat("DEV", None, &[], &[], 100).unwrap();

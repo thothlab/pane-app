@@ -155,9 +155,7 @@ pub fn run() {
                 const RETENTION_MS: i64 = 24 * 60 * 60 * 1000;
                 const PER_DEVICE_CAP: i64 = 2_000_000;
                 loop {
-                    if let Err(e) =
-                        retention_state.prune_logcat(RETENTION_MS, PER_DEVICE_CAP)
-                    {
+                    if let Err(e) = retention_state.prune_logcat(RETENTION_MS, PER_DEVICE_CAP) {
                         tracing::warn!(error = %e, "logcat: prune failed");
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(300)).await;

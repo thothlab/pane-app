@@ -66,7 +66,14 @@ pub async fn handle(
 
         emit_started(&events, cap_id, &host, &method, "/");
         insert_capture_opening(
-            &storage, cap_id, session_id, peer, &host, port, "https", &method,
+            &storage,
+            cap_id,
+            session_id,
+            peer,
+            &host,
+            port,
+            "https",
+            &method,
             device_id.as_deref(),
         )?;
 
@@ -105,7 +112,14 @@ pub async fn handle(
     let (host, port, path) = parse_http_target(&target);
     emit_started(&events, cap_id, &host, &method, &path);
     insert_capture_opening(
-        &storage, cap_id, session_id, peer, &host, port, "http", &method,
+        &storage,
+        cap_id,
+        session_id,
+        peer,
+        &host,
+        port,
+        "http",
+        &method,
         device_id.as_deref(),
     )?;
     update_url_path(&storage, cap_id, &path)?;
