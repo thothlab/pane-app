@@ -335,6 +335,27 @@ async fn device_watchdog(app: tauri::AppHandle) {
         let ca = state.ca.material();
 
         for serial in paired {
+            if !proxy_running {
+                // Proxy is stopped, so the tunnel is irrelevant by definition —
+                // the only question is whether the phone is stranded pointing
+                // at a dead port. One adb call instead of two, in what is a
+                // very common idle state.
+                match state.devices.android_still_points_at_us(&serial).await {
+                    Ok(false) => {} // already clean, leave it alone
+                    Ok(true) => match state.devices.clear_one_android_proxy(&serial).await {
+                        Ok(()) => tracing::info!(
+                            serial,
+                            "watchdog: cleared stale proxy (proxy not running)"
+                        ),
+                        Err(e) => tracing::warn!(error = %e, serial, "watchdog: clear failed"),
+                    },
+                    Err(e) => {
+                        tracing::debug!(error = %e, serial, "watchdog: probe skipped")
+                    }
+                }
+                continue;
+            }
+
             let probe = match state.devices.probe_android_proxy(&serial).await {
                 Ok(p) => p,
                 Err(e) => {
@@ -346,52 +367,39 @@ async fn device_watchdog(app: tauri::AppHandle) {
                 }
             };
 
-            if proxy_running {
-                if probe.is_healthy() {
-                    strikes.remove(&serial);
-                    continue;
-                }
-                let n = strikes.entry(serial.clone()).or_insert(0);
-                *n += 1;
-                if *n < UNHEALTHY_STRIKES {
-                    tracing::debug!(
-                        serial,
-                        strikes = *n,
-                        proxy_set = probe.proxy_set,
-                        reverse_up = probe.reverse_up,
-                        "watchdog: device unhealthy, waiting for confirmation"
-                    );
-                    continue;
-                }
+            if probe.is_healthy() {
                 strikes.remove(&serial);
-                match state
-                    .devices
-                    .reapply_one_android_proxy(&serial, ca.clone())
-                    .await
-                {
-                    Ok(()) => tracing::info!(
-                        serial,
-                        proxy_set = probe.proxy_set,
-                        reverse_up = probe.reverse_up,
-                        "watchdog: repaired unhealthy device"
-                    ),
-                    Err(e) => tracing::warn!(
-                        error = %e, serial,
-                        "watchdog: repair failed; will retry next tick"
-                    ),
-                }
-            } else if probe.proxy_set {
-                // Proxy is stopped but the phone still routes through us —
-                // that's the "no internet on the device" footgun. Only act
-                // when the setting is actually there, so a clean device is
-                // left alone instead of being needlessly torn down on every
-                // launch.
-                match state.devices.clear_one_android_proxy(&serial).await {
-                    Ok(()) => {
-                        tracing::info!(serial, "watchdog: cleared stale proxy (proxy not running)")
-                    }
-                    Err(e) => tracing::warn!(error = %e, serial, "watchdog: clear failed"),
-                }
+                continue;
+            }
+
+            let n = strikes.entry(serial.clone()).or_insert(0);
+            *n += 1;
+            if *n < UNHEALTHY_STRIKES {
+                tracing::debug!(
+                    serial,
+                    strikes = *n,
+                    proxy_set = probe.proxy_set,
+                    reverse_up = probe.reverse_up,
+                    "watchdog: device unhealthy, waiting for confirmation"
+                );
+                continue;
+            }
+            strikes.remove(&serial);
+            match state
+                .devices
+                .reapply_one_android_proxy(&serial, ca.clone())
+                .await
+            {
+                Ok(()) => tracing::info!(
+                    serial,
+                    proxy_set = probe.proxy_set,
+                    reverse_up = probe.reverse_up,
+                    "watchdog: repaired unhealthy device"
+                ),
+                Err(e) => tracing::warn!(
+                    error = %e, serial,
+                    "watchdog: repair failed; will retry next tick"
+                ),
             }
         }
     }

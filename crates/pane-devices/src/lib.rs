@@ -95,6 +95,13 @@ impl DeviceManager {
         self.android.probe_proxy_state(serial, mac_port).await
     }
 
+    /// Cheap check for the proxy-stopped case: is this device still stranded
+    /// pointing at us? Same `Err` == "skip, don't act" contract as
+    /// `probe_android_proxy`.
+    pub async fn android_still_points_at_us(&self, serial: &str) -> Result<bool> {
+        self.android.is_proxy_pointed_at_us(serial).await
+    }
+
     pub fn android_tooling_status(&self) -> AndroidToolingStatusDto {
         self.android.tooling_status()
     }

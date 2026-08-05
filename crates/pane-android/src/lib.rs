@@ -222,28 +222,38 @@ impl AndroidPlatform {
             .try_lock()
             .map_err(|_| anyhow!("device {serial} is mid-setup; skipping probe"))?;
 
-        // Host-side query, doesn't touch the device at all. Lines read
-        // `<serial> tcp:8888 tcp:8891`; we need our device-side spot mapped to
-        // the pool port this device was assigned. Matching the port too
-        // catches the case where a stale reverse from a previous session
-        // points at a port nothing is listening on any more.
+        // Lines read `<serial> tcp:8888 tcp:8891`; we need our device-side spot
+        // mapped to the pool port this device was assigned. Matching the port
+        // too catches a stale reverse left by a previous session pointing at a
+        // port nothing listens on any more.
         let reverses = run("adb", &["-s", serial, "reverse", "--list"]).await?;
         let want = format!("tcp:{mac_port}");
         let reverse_up = reverses
             .lines()
             .any(|l| l.contains("tcp:8888") && l.contains(&want));
 
-        let proxy = run(
-            "adb",
-            &["-s", serial, "shell", "settings", "get", "global", "http_proxy"],
-        )
-        .await?;
-        let proxy_set = proxy.trim() == DEVICE_HTTP_PROXY;
+        let proxy_set = read_http_proxy(serial).await?;
 
         Ok(DeviceProxyState {
             proxy_set,
             reverse_up,
         })
+    }
+
+    /// Cheap half of `probe_proxy_state`: does the device still route through
+    /// us at all?
+    ///
+    /// Used when the proxy is stopped, where the reverse tunnel is irrelevant
+    /// by definition and the only question is whether the phone is stranded
+    /// pointing at a dead port. Halves the adb traffic in what is a very common
+    /// idle state — Pane open, capture not running — and that polling is itself
+    /// a contributor to the transient adb failures this module works around.
+    pub async fn is_proxy_pointed_at_us(&self, serial: &str) -> Result<bool> {
+        let lock = self.serial_lock(serial);
+        let _guard = lock
+            .try_lock()
+            .map_err(|_| anyhow!("device {serial} is mid-setup; skipping probe"))?;
+        read_http_proxy(serial).await
     }
 
     /// Publish the bundled-APK path. Called once during Tauri setup,
@@ -647,6 +657,21 @@ impl AndroidPlatform {
         let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8890"]).await;
         Ok(())
     }
+}
+
+/// Whether the device's global `http_proxy` currently points at Pane.
+///
+/// A device we never configured answers `null`; one we cleared answers `:0`.
+/// Both are "not ours", which is what the caller needs to distinguish.
+async fn read_http_proxy(serial: &str) -> Result<bool> {
+    let out = run(
+        "adb",
+        &[
+            "-s", serial, "shell", "settings", "get", "global", "http_proxy",
+        ],
+    )
+    .await?;
+    Ok(out.trim() == DEVICE_HTTP_PROXY)
 }
 
 /// Make sure the companion APK is installed, granted
