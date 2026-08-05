@@ -178,6 +178,20 @@ That is correct, not a bug. Only traffic captured after the upgrade carries the
 name. When auditing an old run, assert on `state:` alone; for a fresh run,
 assert on `rule:`.
 
+**The CLI and the Pane app must be the same build.** The CLI refuses to touch a
+data directory whose schema does not match:
+
+```
+pane: opening the Pane data directory
+  → this database is at schema v11 and this build expects v12. Migrating it
+    would stop the installed Pane app from launching, so it is left alone.
+```
+
+That refusal is deliberate, not a bug: migrating is one-way, and an app that
+meets an unknown migration version aborts on launch. Either update the app to
+match the CLI, or point the CLI at a scratch directory with `--data-dir` /
+`PANE_DATA_DIR`. Never work around it by deleting the database.
+
 **A Pane desktop build older than the control endpoint cannot be attached to.**
 `pane doctor` then reports `none running` even with the app open, and `tail`,
 `proxy stop` and `devices add` fail with exit 3. Reads and rule edits still work
