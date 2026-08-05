@@ -342,7 +342,8 @@ impl Storage {
         let sql = format!(
             "SELECT id, session_id, started_at, ended_at, client_addr, server_host, server_port,
                     scheme, http_version, method, url_path, status, req_body_id, res_body_id,
-                    total_bytes, duration_ms, state, error_kind, device_id
+                    total_bytes, duration_ms, state, error_kind, device_id,
+                    matched_rule_id, matched_rule_name
              FROM (
                SELECT * FROM capture
                WHERE {where_sql}
@@ -366,7 +367,8 @@ impl Storage {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, started_at, ended_at, client_addr, server_host, server_port,
                     scheme, http_version, method, url_path, status, req_body_id, res_body_id,
-                    total_bytes, duration_ms, state, error_kind, device_id
+                    total_bytes, duration_ms, state, error_kind, device_id,
+                    matched_rule_id, matched_rule_name
              FROM capture WHERE id=?1",
         )?;
         let mut cap = stmt.query_row(params![id.to_string()], Self::map_capture_row)?;
@@ -426,6 +428,8 @@ impl Storage {
             state: r.get(16)?,
             error_kind: r.get(17)?,
             device_id: r.get(18)?,
+            matched_rule_id: r.get(19)?,
+            matched_rule_name: r.get(20)?,
             req_headers: None,
             res_headers: None,
         })

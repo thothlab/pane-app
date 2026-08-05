@@ -291,6 +291,19 @@ pub struct CaptureDto {
     /// Persisted device-row id of the device this capture came from, or `None`
     /// for old captures, iOS, and connections on unattributed proxy ports.
     pub device_id: Option<String>,
+    /// The rule that served this response, when `state` is `stubbed` or
+    /// `patched`. `None` for live responses and for captures recorded before
+    /// this was tracked.
+    ///
+    /// `state` alone only says a mock answered; with a large rule library
+    /// that is much weaker than knowing *which* one, because a run that
+    /// matched the wrong rule still looks successful.
+    #[serde(default)]
+    pub matched_rule_id: Option<String>,
+    /// Name of `matched_rule_id`, denormalized so a capture still identifies
+    /// the rule that served it after that rule is renamed or deleted.
+    #[serde(default)]
+    pub matched_rule_name: Option<String>,
     pub req_headers: Option<Vec<HeaderDto>>,
     pub res_headers: Option<Vec<HeaderDto>>,
 }

@@ -5,7 +5,8 @@
 //!   term  := '!'? atom
 //!   atom  := key ':' value | bareword
 //!   value := single | single ',' single (',' single)*
-//!   key   := host | method | status | mime | path | size | duration | error | device
+//!   key   := host | method | status | mime | path | size | duration | error
+//!          | device | state | rule
 //!
 //! Bareword without `:` is treated as substring search across host AND path
 //! (joined by OR) — this is what users expect when they type a word into
@@ -44,6 +45,13 @@ pub fn compile_to_sql(input: &str) -> Result<(String, Vec<Box<dyn ToSql>>)> {
             "duration" => range_or_eq("duration_ms", value, negate, &mut params)?,
             "error" => eq_clause("error_kind", value, negate, &mut params),
             "device" => device_clause(value, negate, &mut params),
+            // `state:stubbed` is how an automated run proves a response came
+            // from a mock rather than the live backend — without it, a run
+            // whose rule silently failed to match still looks green.
+            "state" => eq_clause_lowercase("state", value, negate, &mut params),
+            // `rule:` narrows "it was mocked" to "it was mocked by *this*
+            // rule", matching the denormalized name or the exact id.
+            "rule" => rule_clause(value, negate, &mut params),
             "__bare" => bareword_clause(value, negate, &mut params),
             other => return Err(anyhow!("unknown filter key: {other}")),
         };
@@ -175,6 +183,55 @@ fn eq_clause_uppercase(
                 format!("{col} <> ?")
             } else {
                 format!("{col} = ?")
+            }
+        })
+        .collect();
+    join_alternatives(parts, neg)
+}
+
+/// Like `eq_clause` but lowercases each value — for `state`, whose column
+/// values are canonically lowercase (`completed`, `stubbed`, `patched`,
+/// `error`), so `state:Stubbed` behaves like `state:stubbed`.
+fn eq_clause_lowercase(
+    col: &str,
+    value: &str,
+    neg: bool,
+    params: &mut Vec<Box<dyn ToSql>>,
+) -> String {
+    let parts: Vec<String> = split_values(value)
+        .into_iter()
+        .map(|v| {
+            params.push(Box::new(v.to_lowercase()));
+            if neg {
+                format!("{col} <> ?")
+            } else {
+                format!("{col} = ?")
+            }
+        })
+        .collect();
+    join_alternatives(parts, neg)
+}
+
+/// `rule:foo` matches either the denormalized rule name (substring, `*` glob)
+/// or an exact rule id, so a caller can use whichever it has to hand without a
+/// second lookup.
+///
+/// The negated form has to spell out the NULL case: `matched_rule_name NOT
+/// LIKE ?` is NULL — not true — for every live (non-mocked) capture, so
+/// without the explicit IS NULL branch `!rule:foo` would silently drop every
+/// real response from the result.
+fn rule_clause(value: &str, neg: bool, params: &mut Vec<Box<dyn ToSql>>) -> String {
+    let parts: Vec<String> = split_values(value)
+        .into_iter()
+        .map(|v| {
+            params.push(Box::new(format!("%{}%", v.replace('*', "%"))));
+            params.push(Box::new(v.to_string()));
+            if neg {
+                "(matched_rule_name IS NULL OR (matched_rule_name NOT LIKE ? \
+                  AND COALESCE(matched_rule_id, '') <> ?))"
+                    .to_string()
+            } else {
+                "(matched_rule_name LIKE ? OR matched_rule_id = ?)".to_string()
             }
         })
         .collect();
@@ -473,5 +530,54 @@ mod tests {
         let (sql_upper, _) = compile_to_sql("HOST:api.example.com").unwrap();
         assert_eq!(sql_lower, sql_pascal);
         assert_eq!(sql_lower, sql_upper);
+    }
+
+    #[test]
+    fn state_key_compiles_and_lowercases() {
+        let (sql, params) = compile_to_sql("state:stubbed").unwrap();
+        assert_eq!(sql, "state = ?");
+        assert_eq!(params.len(), 1);
+        // Case-folded, so `state:Stubbed` finds the same rows.
+        let (upper_sql, _) = compile_to_sql("state:STUBBED").unwrap();
+        assert_eq!(upper_sql, sql);
+    }
+
+    #[test]
+    fn state_key_supports_alternatives_and_negation() {
+        // "was this response mocked at all" — either stub or patch.
+        let (sql, params) = compile_to_sql("state:stubbed,patched").unwrap();
+        assert!(sql.contains(" OR "), "comma list should OR: {sql}");
+        assert_eq!(params.len(), 2);
+
+        // "only live responses"
+        let (neg, _) = compile_to_sql("!state:stubbed").unwrap();
+        assert!(neg.contains("<>"), "negation should use <>: {neg}");
+    }
+
+    #[test]
+    fn rule_key_matches_name_or_id() {
+        let (sql, params) = compile_to_sql("rule:orders-500").unwrap();
+        assert!(sql.contains("matched_rule_name LIKE ?"));
+        assert!(sql.contains("matched_rule_id = ?"));
+        // One bound value per side: the LIKE pattern and the exact id.
+        assert_eq!(params.len(), 2);
+    }
+
+    /// `matched_rule_name NOT LIKE ?` evaluates to NULL — not true — for every
+    /// live capture, so a naive negation would silently discard exactly the
+    /// rows a user asking "what did NOT come from this rule" wants most.
+    #[test]
+    fn negated_rule_key_still_matches_unmocked_captures() {
+        let (sql, _) = compile_to_sql("!rule:orders-500").unwrap();
+        assert!(
+            sql.contains("matched_rule_name IS NULL"),
+            "negated rule: must keep NULL (live) captures: {sql}"
+        );
+    }
+
+    #[test]
+    fn unknown_key_is_still_rejected() {
+        // Guards against a typo silently degrading to a bareword search.
+        assert!(compile_to_sql("stat:stubbed").is_err());
     }
 }

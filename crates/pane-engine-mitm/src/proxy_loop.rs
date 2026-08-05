@@ -233,7 +233,7 @@ pub async fn handle(
 
     let ended_at = OffsetDateTime::now_utc();
     let duration_ms = (ended_at - started_at).whole_milliseconds().max(0) as i64;
-    if patch_rule.is_some() {
+    if let Some(rule) = patch_rule.as_ref() {
         mark_patched(
             &storage,
             cap_id,
@@ -241,6 +241,7 @@ pub async fn handle(
             body.len() as i64,
             duration_ms,
             ended_at,
+            rule,
         )?;
     } else {
         mark_completed(
@@ -399,7 +400,7 @@ async fn handle_tls_inner(
 
     let ended_at = OffsetDateTime::now_utc();
     let duration_ms = (ended_at - started_at).whole_milliseconds().max(0) as i64;
-    if patch_rule.is_some() {
+    if let Some(rule) = patch_rule.as_ref() {
         mark_patched(
             &storage,
             cap_id,
@@ -407,6 +408,7 @@ async fn handle_tls_inner(
             body.len() as i64,
             duration_ms,
             ended_at,
+            rule,
         )?;
     } else {
         mark_completed(
@@ -796,6 +798,10 @@ async fn apply_patches_if_any(
     }
 }
 
+/// `rule` names the rule that produced this response. Recorded alongside the
+/// state so a caller can assert *which* mock served the request, not merely
+/// that some mock did — with a large rule library those are very different
+/// claims, and the weaker one hides a mis-matched rule.
 fn mark_patched(
     storage: &Storage,
     id: Uuid,
@@ -803,23 +809,27 @@ fn mark_patched(
     total_bytes: i64,
     duration_ms: i64,
     ended_at: OffsetDateTime,
+    rule: &pane_storage::ActiveRule,
 ) -> anyhow::Result<()> {
     let conn = storage.conn().lock();
     conn.execute(
         "UPDATE capture SET state='patched', status=?1, ended_at=?2, duration_ms=?3,
-                            total_bytes=?4
-         WHERE id=?5",
+                            total_bytes=?4, matched_rule_id=?5, matched_rule_name=?6
+         WHERE id=?7",
         params![
             status as i64,
             ended_at.unix_timestamp(),
             duration_ms,
             total_bytes,
+            rule.id.to_string(),
+            rule.name,
             id.to_string(),
         ],
     )?;
     Ok(())
 }
 
+/// See [`mark_patched`] for why the rule identity is recorded.
 fn mark_stubbed(
     storage: &Storage,
     id: Uuid,
@@ -827,17 +837,20 @@ fn mark_stubbed(
     total_bytes: i64,
     duration_ms: i64,
     ended_at: OffsetDateTime,
+    rule: &pane_storage::ActiveRule,
 ) -> anyhow::Result<()> {
     let conn = storage.conn().lock();
     conn.execute(
         "UPDATE capture SET state='stubbed', status=?1, ended_at=?2, duration_ms=?3,
-                            total_bytes=?4
-         WHERE id=?5",
+                            total_bytes=?4, matched_rule_id=?5, matched_rule_name=?6
+         WHERE id=?7",
         params![
             status as i64,
             ended_at.unix_timestamp(),
             duration_ms,
             total_bytes,
+            rule.id.to_string(),
+            rule.name,
             id.to_string(),
         ],
     )?;
@@ -879,6 +892,7 @@ where
         rule.body.len() as i64,
         duration_ms,
         ended_at,
+        rule,
     )?;
     emit_completed(
         events,

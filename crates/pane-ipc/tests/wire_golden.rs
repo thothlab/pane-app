@@ -152,6 +152,8 @@ fn capture_dto_shape() {
         state: "completed".into(),
         error_kind: Some("upstream".into()),
         device_id: Some(uuid().to_string()),
+        matched_rule_id: Some(uuid().to_string()),
+        matched_rule_name: Some("orders-500".into()),
         req_headers: Some(headers()),
         res_headers: Some(headers()),
     };
@@ -167,9 +169,29 @@ fn capture_dto_shape() {
             "req_body_id": "string", "res_body_id": "string",
             "total_bytes": "number", "duration_ms": "number",
             "state": "string", "error_kind": "string", "device_id": "string",
+            "matched_rule_id": "string", "matched_rule_name": "string",
             "req_headers": header_shape, "res_headers": header_shape,
         })
     );
+}
+
+/// The matched-rule fields must survive a client that predates them, because
+/// `pane-rules` files and older CLI builds will omit them. `#[serde(default)]`
+/// is what makes that work; this pins it.
+#[test]
+fn capture_dto_deserializes_without_matched_rule_fields() {
+    let older_payload = json!({
+        "id": Uuid::nil(), "session_id": Uuid::nil(),
+        "started_at": "2026-08-05T12:31:04.812Z", "ended_at": null,
+        "client_addr": "127.0.0.1:1", "server_host": "h", "server_port": 443,
+        "scheme": "https", "http_version": "HTTP/1.1", "method": "GET",
+        "url_path": "/", "status": 200, "req_body_id": null, "res_body_id": null,
+        "total_bytes": 0, "duration_ms": 1, "state": "completed",
+        "error_kind": null, "device_id": null
+    });
+    let c: CaptureDto = serde_json::from_value(older_payload).unwrap();
+    assert!(c.matched_rule_id.is_none());
+    assert!(c.matched_rule_name.is_none());
 }
 
 #[test]

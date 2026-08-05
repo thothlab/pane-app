@@ -89,9 +89,18 @@ export interface CaptureDto {
   res_body_id: string | null;
   total_bytes: number;
   duration_ms: number | null;
+  /** "completed" | "stubbed" | "patched" | "error". */
   state: string;
   error_kind: string | null;
   device_id: string | null;
+  /**
+   * The rule that served this response, set when `state` is "stubbed" or
+   * "patched". Null for live responses and for captures recorded before this
+   * was tracked.
+   */
+  matched_rule_id?: string | null;
+  /** Name of `matched_rule_id`, denormalized so it survives rule deletion. */
+  matched_rule_name?: string | null;
   req_headers?: HeaderDto[];
   res_headers?: HeaderDto[];
 }
