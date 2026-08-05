@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use pane_android::AndroidPlatform;
+use pane_android::{AndroidPlatform, DeviceProxyState};
 use pane_ca::CaMaterial;
 use pane_engine::DevicePortRegistry;
 use pane_ios::IosPlatform;
@@ -62,11 +62,37 @@ impl DeviceManager {
         self.registry.assign(serial, device_id)
     }
 
+    /// Devices physically attached right now.
+    ///
+    /// Android failures **propagate**. They used to be swallowed by
+    /// `unwrap_or_default()`, which turned "adb hiccuped" into "no devices are
+    /// attached" — indistinguishable to every caller. The watchdog then
+    /// committed that empty set to its `last_seen`, decided on the next tick
+    /// that the device had just been plugged in, and kicked off a spurious
+    /// full re-pair (or stripped the proxy off a perfectly healthy phone).
+    /// The UI, for its part, showed an empty attached-list instead of an error.
+    ///
+    /// iOS stays best-effort: libimobiledevice being absent is the common case
+    /// on an Android-only setup and must not fail the whole enumeration.
     pub async fn discover_attached(&self) -> Result<Vec<DiscoveredDeviceDto>> {
         let mut out = Vec::new();
         out.extend(self.ios.discover().await.unwrap_or_default());
-        out.extend(self.android.discover().await.unwrap_or_default());
+        out.extend(self.android.discover().await?);
         Ok(out)
+    }
+
+    /// Read back whether a paired Android device is still actually wired up to
+    /// us. `Err` means "couldn't tell" (adb unreachable, or the serial is
+    /// mid-setup and its lock is held) — callers must treat that as "skip",
+    /// never as "unhealthy", or a busy device would be reapplied on top of the
+    /// setup that's already running.
+    pub async fn probe_android_proxy(&self, serial: &str) -> Result<DeviceProxyState> {
+        // Idempotent per serial, so this yields the same port the device is
+        // (or is about to be) wired to. On a fresh process the registry is
+        // empty and this assigns one — the probe then correctly reports the
+        // reverse as down, and the watchdog repairs it.
+        let mac_port = self.assign_port(serial);
+        self.android.probe_proxy_state(serial, mac_port).await
     }
 
     pub fn android_tooling_status(&self) -> AndroidToolingStatusDto {
@@ -162,8 +188,20 @@ impl DeviceManager {
         ca: CaMaterial,
     ) -> anyhow::Result<()> {
         let mac_port = self.assign_port(serial);
-        self.android.add_usb(serial, &ca, mac_port).await?;
-        Ok(())
+        match self.android.add_usb(serial, &ca, mac_port).await {
+            Ok(device) => {
+                // Persist the outcome, so a device that had previously failed
+                // clears its error banner once it comes good again.
+                self.record_ready(&device)?;
+                Ok(())
+            }
+            Err(e) => {
+                // Surface it on the device row. Without this the reapply paths
+                // fail entirely in the logs and the UI keeps showing "ready".
+                let _ = self.transition("android", serial, "error", Some(&e.to_string()));
+                Err(e)
+            }
+        }
     }
 
     /// Single-device cleanup. Used by the watchdog when a paired phone
@@ -184,9 +222,14 @@ impl DeviceManager {
             .collect();
         let mut ok = Vec::with_capacity(serials.len());
         for serial in serials {
-            let mac_port = self.assign_port(&serial);
-            if self.android.add_usb(&serial, &ca, mac_port).await.is_ok() {
-                ok.push(serial);
+            // Errors are per-device and recorded on the device row by
+            // reapply_one; a phone that's simply unplugged shouldn't stop us
+            // from configuring the ones that are present.
+            match self.reapply_one_android_proxy(&serial, ca.clone()).await {
+                Ok(()) => ok.push(serial),
+                Err(e) => {
+                    tracing::warn!(error = %e, serial, "reapply failed for device")
+                }
             }
         }
         ok

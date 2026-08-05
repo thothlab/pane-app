@@ -245,31 +245,52 @@ fn install_app_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// How many consecutive unhealthy probes before we repair a device.
+///
+/// One miss is not enough: a probe can legitimately catch a device mid-reboot
+/// or between an `adb reverse` teardown and its rebuild, and repairing on that
+/// would mean a full re-pair (including an APK install) on every hiccup. Two
+/// misses is ~10 s of genuinely broken tunnel, which is well below what a user
+/// notices as "it stopped working" and well above transient noise.
+const UNHEALTHY_STRIKES: u8 = 2;
+
 /// Background watchdog that reconciles paired Android devices with their
 /// actual connection state. Runs every 5 seconds.
 ///
-/// Why: when the user yanks the USB cable without first stopping the
-/// proxy in Pane, the phone's `http_proxy` setting keeps pointing at
-/// 127.0.0.1:8888 — but adb reverse is gone, so connections to that
-/// port refuse, and the device loses internet. The user can't easily
-/// undo this from the phone itself (Samsung settings hide global
-/// proxy clear). Watchdog fixes both directions:
+/// Why: the phone's `http_proxy` and the `adb reverse` tunnel can fall out of
+/// sync with reality in both directions, and neither side notices on its own.
+/// Yank the USB cable without stopping the proxy and the phone keeps pointing
+/// at 127.0.0.1:8888 with nothing behind it — no internet, and the user can't
+/// easily undo it from the phone (Samsung hides the global proxy setting).
+/// Conversely, the tunnel can die while the setting stays, which looks like
+/// "Pane just stopped capturing" with no error anywhere.
 ///
-///   - Phone reconnects + Pane proxy is running → re-apply http_proxy
-///     and adb reverse. MITM resumes without the user clicking Re-sync.
-///   - Phone reconnects + Pane proxy is NOT running → strip the proxy
-///     settings off the device, restoring its internet.
+/// So this reconciles **state**, not events:
 ///
-/// We only act on devices that are **paired** (have a `device` row),
-/// so plugging in a random unrelated phone doesn't touch its settings.
-/// Tracking last-seen serials skips the redundant work when nothing
-/// changed.
+///   - Proxy running + device unhealthy for `UNHEALTHY_STRIKES` ticks
+///     → re-apply. Covers a dead reverse, a cleared setting, and a phone that
+///     was replugged.
+///   - Proxy stopped + device still points at us → clear it, restoring the
+///     device's internet.
+///   - Proxy stopped + device already clean → do nothing.
+///
+/// The previous version acted only on the *transition* into `attached`, which
+/// had two fatal consequences. On boot `last_seen` is empty, so every attached
+/// device counted as newly-connected while the proxy was still stopped — the
+/// watchdog stripped the proxy off every paired phone roughly five seconds
+/// after each launch. And once a serial was in `last_seen` it was never
+/// examined again, so the one fire-and-forget reapply from `proxy.start` was
+/// the *only* chance to restore the tunnel. If it failed, nothing retried and
+/// the user saw a green UI with no traffic until they replugged the cable.
+///
+/// We only touch devices that are **paired** (have a `device` row), so
+/// plugging in an unrelated phone never has its settings changed.
 async fn device_watchdog(app: tauri::AppHandle) {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::time::Duration;
     use tauri::Manager;
 
-    let mut last_seen: HashSet<String> = HashSet::new();
+    let mut strikes: HashMap<String, u8> = HashMap::new();
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     // First tick fires immediately; skip it so we don't race app boot.
     interval.tick().await;
@@ -278,53 +299,99 @@ async fn device_watchdog(app: tauri::AppHandle) {
         interval.tick().await;
         let state: tauri::State<AppState> = app.state();
 
-        // Snapshot what's plugged in right now.
+        // Snapshot what's plugged in right now. An error here means adb
+        // couldn't answer, NOT that the devices went away — skip the tick
+        // without touching any accumulated state.
         let attached: HashSet<String> = match state.devices.discover_attached().await {
             Ok(list) => list
                 .into_iter()
                 .filter(|d| d.platform == "android")
                 .map(|d| d.serial)
                 .collect(),
-            Err(_) => continue, // adb not on PATH or daemon hiccup — skip tick
+            Err(e) => {
+                tracing::debug!(error = %e, "watchdog: device enumeration failed; skipping tick");
+                continue;
+            }
         };
-        if attached == last_seen {
-            continue;
-        }
 
-        // Newly-connected serials = attached \ last_seen.
-        let newly_connected: Vec<String> = attached.difference(&last_seen).cloned().collect();
-        last_seen = attached;
+        // Forget strikes for anything no longer plugged in, so a device that
+        // comes back doesn't inherit a stale count and get repaired instantly.
+        strikes.retain(|serial, _| attached.contains(serial));
 
-        if newly_connected.is_empty() {
-            continue;
-        }
-
-        // Cross-reference with paired devices.
-        let paired_serials: HashSet<String> = state
+        let paired: Vec<String> = state
             .devices
             .list()
             .unwrap_or_default()
             .into_iter()
             .filter(|d| d.platform == "android" && d.connection == "usb")
             .map(|d| d.serial)
+            .filter(|s| attached.contains(s))
             .collect();
+        if paired.is_empty() {
+            continue;
+        }
 
         let proxy_running = state.proxy_handle.lock().is_some();
         let ca = state.ca.material();
 
-        for serial in newly_connected {
-            if !paired_serials.contains(&serial) {
-                continue; // not one of ours, leave alone
-            }
+        for serial in paired {
+            let probe = match state.devices.probe_android_proxy(&serial).await {
+                Ok(p) => p,
+                Err(e) => {
+                    // "Couldn't tell" — device is mid-setup or adb blipped.
+                    // Explicitly not a strike: repairing on top of a running
+                    // setup is how devices got half-configured before.
+                    tracing::debug!(error = %e, serial, "watchdog: probe skipped");
+                    continue;
+                }
+            };
+
             if proxy_running {
-                let _ = state
+                if probe.is_healthy() {
+                    strikes.remove(&serial);
+                    continue;
+                }
+                let n = strikes.entry(serial.clone()).or_insert(0);
+                *n += 1;
+                if *n < UNHEALTHY_STRIKES {
+                    tracing::debug!(
+                        serial,
+                        strikes = *n,
+                        proxy_set = probe.proxy_set,
+                        reverse_up = probe.reverse_up,
+                        "watchdog: device unhealthy, waiting for confirmation"
+                    );
+                    continue;
+                }
+                strikes.remove(&serial);
+                match state
                     .devices
                     .reapply_one_android_proxy(&serial, ca.clone())
-                    .await;
-                tracing::info!(serial, "watchdog: re-applied proxy on reconnect");
-            } else {
-                let _ = state.devices.clear_one_android_proxy(&serial).await;
-                tracing::info!(serial, "watchdog: cleared stale proxy on reconnect");
+                    .await
+                {
+                    Ok(()) => tracing::info!(
+                        serial,
+                        proxy_set = probe.proxy_set,
+                        reverse_up = probe.reverse_up,
+                        "watchdog: repaired unhealthy device"
+                    ),
+                    Err(e) => tracing::warn!(
+                        error = %e, serial,
+                        "watchdog: repair failed; will retry next tick"
+                    ),
+                }
+            } else if probe.proxy_set {
+                // Proxy is stopped but the phone still routes through us —
+                // that's the "no internet on the device" footgun. Only act
+                // when the setting is actually there, so a clean device is
+                // left alone instead of being needlessly torn down on every
+                // launch.
+                match state.devices.clear_one_android_proxy(&serial).await {
+                    Ok(()) => {
+                        tracing::info!(serial, "watchdog: cleared stale proxy (proxy not running)")
+                    }
+                    Err(e) => tracing::warn!(error = %e, serial, "watchdog: clear failed"),
+                }
             }
         }
     }
