@@ -53,4 +53,10 @@ tools/pane-helper-android/build/
 tools/pane-helper-android/app/build/
 tools/pane-helper-android/local.properties
 tools/pane-helper-android/.idea/
-.claude/
+# Local Claude Code state stays out of the repo, but the skills under it are
+# shared tooling: versioning them means every clone and every worktree gets the
+# same guidance, instead of it living only on one machine.
+# Note the trailing /* — git never descends into an excluded *directory*, so a
+# plain `.claude/` would make the negations below unreachable.
+.claude/*
+!.claude/skills/
