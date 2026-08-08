@@ -1341,7 +1341,7 @@ mod filter_dedup_tests {
 #[cfg(test)]
 mod rule_enablement_tests {
     use super::*;
-    use pane_ipc::{CollectionSetEnabledArgs, CollectionUpsertArgs, RuleUpsertArgs};
+    use pane_ipc::{CollectionUpsertArgs, RuleUpsertArgs};
     use tempfile::tempdir;
 
     fn collection(s: &Storage, name: &str, enabled: bool) -> Uuid {

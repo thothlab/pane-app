@@ -92,6 +92,41 @@ impl Drop for ServeHandle {
 #[cfg(unix)]
 fn bind_endpoint(path: &Path) -> Result<tokio::net::UnixListener> {
     use std::os::unix::fs::PermissionsExt;
+
+    // A unix socket is a file, and `bind` refuses to overwrite one. Nothing
+    // removes it when a process dies without running its cleanup — a crash, a
+    // SIGKILL, Force Quit — so the *next* launch could never publish an
+    // endpoint. The app itself came up fine, which is what made this so
+    // confusing: the window was there, and only `pane` and the MCP server were
+    // broken, reporting "no running instance" (exit 3) until someone knew to
+    // delete the file by hand.
+    //
+    // Removing it is safe here specifically because `InstanceLock` has already
+    // been acquired by the time we bind: that lock is released by the kernel on
+    // process death, so holding it proves no other instance owns this data
+    // directory, and therefore any socket still sitting here is a leftover. We
+    // probe it anyway before unlinking — if something does answer, the lock's
+    // guarantee has been violated and deleting the live socket would be the
+    // worse outcome.
+    if path.exists() {
+        match std::os::unix::net::UnixStream::connect(path) {
+            Ok(_) => anyhow::bail!(
+                "another process is already serving the control socket at {} — \
+                 refusing to replace it",
+                path.display()
+            ),
+            Err(_) => {
+                tracing::info!(
+                    path = %path.display(),
+                    "removing a stale control socket left by a previous run"
+                );
+                std::fs::remove_file(path).with_context(|| {
+                    format!("removing stale control socket at {}", path.display())
+                })?;
+            }
+        }
+    }
+
     let listener = tokio::net::UnixListener::bind(path)
         .with_context(|| format!("binding control socket at {}", path.display()))?;
     // Same-user only. On a Unix socket this is kernel-enforced, which is why

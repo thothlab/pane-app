@@ -195,7 +195,15 @@ pub fn run() {
                             std::future::pending::<()>().await;
                         }
                         Err(e) => {
-                            tracing::warn!(error = %e, "control endpoint unavailable");
+                            // Not a warning: with no endpoint the `pane` CLI and
+                            // the MCP server are dead to this instance, and both
+                            // report it as "no running instance" — which reads
+                            // as *the app* being down, while its window sits
+                            // there working. Loud enough to find in the log.
+                            tracing::error!(
+                                error = %e,
+                                "control endpoint unavailable — `pane` CLI and MCP cannot attach"
+                            );
                         }
                     }
                 });
