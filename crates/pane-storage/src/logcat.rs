@@ -10,7 +10,7 @@ use std::io::Write;
 use anyhow::Result;
 use pane_ipc::LogcatRowDto;
 use rusqlite::functions::FunctionFlags;
-use rusqlite::{params, Connection, ToSql, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, ToSql, TransactionBehavior};
 use time::OffsetDateTime;
 
 use crate::Storage;
@@ -264,44 +264,49 @@ impl Storage {
         };
 
         for s in serials {
-            // How many rows this device is over its cap. Counted once: rows
-            // ingested while we delete are newer than everything we are about
-            // to drop, so they can't change which rows are the oldest N.
+            // Find the id of the (cap+1)-th newest row for this device;
+            // everything at or below it is beyond the cap. NULL means the
+            // device is under its cap and there is nothing to do.
             //
-            // `id` is a *global* rowid, not per-device, so the newest `cap`
-            // rows for one serial are not "id > max_id - cap" — with two
-            // devices streaming, their ids interleave and that would trim the
-            // quieter one to far less than its cap. Counting per serial keeps
-            // the cap meaning what it says. `logcat_serial_id` makes both the
-            // count and the oldest-first read index-only.
-            let mut excess: i64 = {
-                let conn = self.logcat_write.lock();
-                let n: i64 = conn.query_row(
-                    "SELECT COUNT(*) FROM logcat_entry WHERE serial = ?1",
-                    params![s],
+            // The walk is bounded by `cap`, not by table size, and it reads
+            // `logcat_serial_id` backwards — ~12 ms at a 500k cap on a
+            // gigabyte-sized table. It also has to be per serial: `id` is a
+            // *global* rowid, so with two devices streaming their ids
+            // interleave, and any id-arithmetic shortcut ("keep id > max - cap")
+            // would charge one device for the other's rows and trim the
+            // quieter one well below its cap.
+            //
+            // Deliberately on the read connection: it holds no write lock, so
+            // ingest keeps flowing while we work out what to drop.
+            let floor: Option<i64> = {
+                let conn = self.logcat_read.lock();
+                conn.query_row(
+                    "SELECT id FROM logcat_entry WHERE serial = ?1
+                     ORDER BY id DESC LIMIT 1 OFFSET ?2",
+                    params![s, per_device_cap],
                     |r| r.get(0),
-                )?;
-                n - per_device_cap
+                )
+                .optional()?
             };
-            while excess > 0 {
-                let take = excess.min(Self::PRUNE_CHUNK as i64);
+            let Some(floor) = floor else { continue };
+
+            // Now a plain indexed range delete, in chunks.
+            loop {
                 let n = {
                     let conn = self.logcat_write.lock();
-                    // ORDER BY id ASC LIMIT n walks the front of the
-                    // (serial, id) index directly — no OFFSET scan.
                     conn.execute(
                         "DELETE FROM logcat_entry WHERE id IN (
                              SELECT id FROM logcat_entry
-                             WHERE serial = ?1 ORDER BY id ASC LIMIT ?2
+                             WHERE serial = ?1 AND id <= ?2
+                             ORDER BY id ASC LIMIT ?3
                          )",
-                        params![s, take],
+                        params![s, floor, Self::PRUNE_CHUNK as i64],
                     )?
                 };
                 deleted += n;
-                if n == 0 {
+                if n < Self::PRUNE_CHUNK {
                     break;
                 }
-                excess -= n as i64;
             }
         }
 
