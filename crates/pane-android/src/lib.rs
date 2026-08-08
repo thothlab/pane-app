@@ -9,7 +9,10 @@
 //! Either way we set the device-side HTTP proxy and `adb reverse` so `localhost:8888`
 //! on the device reaches the desktop proxy without touching Wi-Fi config.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use pane_ca::CaMaterial;
@@ -38,6 +41,12 @@ fn serial_tail(serial: &str) -> String {
         serial.chars().skip(n - 6).collect()
     }
 }
+
+/// The device-side proxy target. Never varies: the phone always talks to its
+/// own `127.0.0.1:8888`, and `adb reverse` forwards that to whichever Mac-side
+/// pool port this device was assigned. Used both when writing the setting and
+/// when reading it back to check the device is still wired up.
+const DEVICE_HTTP_PROXY: &str = "127.0.0.1:8888";
 
 /// Manufacturer / marketing-model / Android-release for a device, in one
 /// `adb shell` round-trip (three `getprop`s chained with `;` so the
@@ -99,6 +108,26 @@ fn format_device_name(
 const HELPER_PACKAGE: &str = "tech.thothlab.pane.helper";
 const HELPER_LAUNCHER: &str = "tech.thothlab.pane.helper/.LauncherActivity";
 
+/// What the device currently believes about Pane's proxy. Read back from the
+/// device rather than assumed, because every failure mode we've hit in the
+/// field is "we told the phone something and it didn't stick".
+#[derive(Debug, Clone, Copy)]
+pub struct DeviceProxyState {
+    /// The `http_proxy` global setting points at our `127.0.0.1:8888`.
+    pub proxy_set: bool,
+    /// `adb reverse` still maps the device-side `tcp:8888` to this machine.
+    pub reverse_up: bool,
+}
+
+impl DeviceProxyState {
+    /// Both halves present — traffic from the device can actually reach us.
+    /// Either half missing means a silent blackhole, which is exactly the
+    /// state the watchdog exists to notice.
+    pub fn is_healthy(&self) -> bool {
+        self.proxy_set && self.reverse_up
+    }
+}
+
 pub struct AndroidPlatform {
     /// Path to the bundled `pane-helper.apk`, set once at Tauri setup
     /// time. `OnceLock` so the rest of the program can read it without
@@ -108,6 +137,33 @@ pub struct AndroidPlatform {
     /// just doesn't get installed — proxy still works, but the
     /// unplug-no-internet protection won't kick in.
     helper_apk: std::sync::OnceLock<PathBuf>,
+    /// One mutex per serial, guarding the whole `add_usb` / `remove`
+    /// sequence.
+    ///
+    /// Three callers race for the same device: the fire-and-forget reapply
+    /// spawned by `proxy.start`, the watchdog's own reapply, and the user
+    /// clicking Re-sync. Un-serialised, two `add_usb` runs interleave their
+    /// `pm install -r` / `pm grant` / `settings put` calls on one device —
+    /// which is how a device ends up with the helper half-installed and
+    /// `http_proxy` written by the loser of the race. Worse, a reapply
+    /// interleaved with a `remove` can leave the proxy set with the reverse
+    /// torn down: the phone then has no internet at all.
+    ///
+    /// The map is guarded by a std mutex (no await inside), the per-serial
+    /// guard is a tokio mutex because it's held across the whole adb
+    /// sequence. Entries are never evicted — one empty mutex per serial the
+    /// user has ever plugged in is not worth reclaiming.
+    serial_locks: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// `getprop` results per serial. Device properties can't change while the
+    /// device stays connected, but `discover()` runs on every watchdog tick
+    /// (5 s) and used to pay a full `adb shell` round-trip per device for
+    /// them. That polling is itself a contributor to the transient adb
+    /// failures this module keeps tripping over, so cache instead.
+    ///
+    /// Only non-empty probes are cached: a device probed while unauthorized
+    /// answers with blanks, and caching those would pin a device to
+    /// "Android device · Android  · 300A30" until Pane restarts.
+    props_cache: std::sync::Mutex<HashMap<String, (String, String, String)>>,
 }
 
 impl Default for AndroidPlatform {
@@ -120,7 +176,87 @@ impl AndroidPlatform {
     pub fn new() -> Self {
         Self {
             helper_apk: std::sync::OnceLock::new(),
+            serial_locks: std::sync::Mutex::new(HashMap::new()),
+            props_cache: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The per-serial guard. Cloned out of the map so the map lock is released
+    /// before anyone awaits on the guard itself.
+    fn serial_lock(&self, serial: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut map = self
+            .serial_locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        map.entry(serial.to_string()).or_default().clone()
+    }
+
+    /// Cached `probe_device_props`. See `props_cache`.
+    async fn device_props(&self, serial: &str) -> (String, String, String) {
+        if let Some(hit) = self
+            .props_cache
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(serial)
+        {
+            return hit.clone();
+        }
+        let probed = probe_device_props(serial).await;
+        let (manufacturer, model, release) = &probed;
+        if !manufacturer.is_empty() || !model.is_empty() || !release.is_empty() {
+            self.props_cache
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(serial.to_string(), probed.clone());
+        }
+        probed
+    }
+
+    /// Read back whether this device is still actually wired up to us.
+    ///
+    /// Returns `Err` when the serial is mid-`add_usb`/`remove` (its lock is
+    /// held) — the answer would be a half-applied state, and the caller should
+    /// simply skip this round rather than count it as a failure. Also `Err`
+    /// when adb itself can't be reached, for the same reason: "we couldn't
+    /// tell" must not be confused with "the device is broken".
+    pub async fn probe_proxy_state(&self, serial: &str, mac_port: u16) -> Result<DeviceProxyState> {
+        let lock = self.serial_lock(serial);
+        let _guard = lock
+            .try_lock()
+            .map_err(|_| anyhow!("device {serial} is mid-setup; skipping probe"))?;
+
+        // Lines read `<serial> tcp:8888 tcp:8891`; we need our device-side spot
+        // mapped to the pool port this device was assigned. Matching the port
+        // too catches a stale reverse left by a previous session pointing at a
+        // port nothing listens on any more.
+        let reverses = run("adb", &["-s", serial, "reverse", "--list"]).await?;
+        let want = format!("tcp:{mac_port}");
+        let reverse_up = reverses
+            .lines()
+            .any(|l| l.contains("tcp:8888") && l.contains(&want));
+
+        let proxy_set = read_http_proxy(serial).await?;
+
+        Ok(DeviceProxyState {
+            proxy_set,
+            reverse_up,
+        })
+    }
+
+    /// Cheap half of `probe_proxy_state`: does the device still route through
+    /// us at all?
+    ///
+    /// Used when the proxy is stopped, where the reverse tunnel is irrelevant
+    /// by definition and the only question is whether the phone is stranded
+    /// pointing at a dead port. Halves the adb traffic in what is a very common
+    /// idle state — Pane open, capture not running — and that polling is itself
+    /// a contributor to the transient adb failures this module works around.
+    pub async fn is_proxy_pointed_at_us(&self, serial: &str) -> Result<bool> {
+        let lock = self.serial_lock(serial);
+        let _guard = lock
+            .try_lock()
+            .map_err(|_| anyhow!("device {serial} is mid-setup; skipping probe"))?;
+        read_http_proxy(serial).await
     }
 
     /// Publish the bundled-APK path. Called once during Tauri setup,
@@ -150,7 +286,7 @@ impl AndroidPlatform {
             // `adb devices -l` model (`V2036 · 300A30`). Falls back to
             // the -l model when getprop comes back empty (offline /
             // unauthorized shells).
-            let (manufacturer, mut model, android_release) = probe_device_props(serial).await;
+            let (manufacturer, mut model, android_release) = self.device_props(serial).await;
             if model.is_empty() {
                 // `adb devices -l` reports model with underscores in
                 // place of spaces (`Pixel_7_Pro`); flip them back.
@@ -174,6 +310,12 @@ impl AndroidPlatform {
     /// forwarding port differs per device, so the proxy can attribute each
     /// connection back to its device. First device gets 8888 (backward-compat).
     pub async fn add_usb(&self, serial: &str, ca: &CaMaterial, mac_port: u16) -> Result<DeviceDto> {
+        // Serialise against any other add_usb/remove on this same serial. See
+        // `serial_locks` for why this matters — concurrent runs corrupt each
+        // other's work and used to leave devices silently unproxied.
+        let lock = self.serial_lock(serial);
+        let _guard = lock.lock().await;
+
         // Probe root + version.
         let rooted = run("adb", &["-s", serial, "shell", "which", "su"])
             .await
@@ -182,7 +324,7 @@ impl AndroidPlatform {
         // Manufacturer + marketing model (`Pixel 7`, `SM-S931B`) +
         // Android release, in one round-trip. Same source the attached
         // list uses, so a device reads identically in both lists.
-        let (manufacturer, model, android_release) = probe_device_props(serial).await;
+        let (manufacturer, model, android_release) = self.device_props(serial).await;
 
         let mut last_error: Option<String> = None;
         // Drives the device-row UI: which CA-install state we're in.
@@ -254,16 +396,30 @@ impl AndroidPlatform {
         // Device-side stays tcp:8888 (the phone's http_proxy never changes);
         // the Mac-side target is this device's assigned pool port so the proxy
         // can tell devices apart by the local port a connection lands on.
+        //
+        // Load-bearing vs best-effort: the data reverse and `http_proxy` below
+        // are the two steps without which the device provably cannot reach the
+        // proxy, so they propagate as `Err`. Everything else (CA push, PAC,
+        // heartbeat, helper APK) degrades gracefully and only annotates
+        // `last_error`.
+        //
+        // This distinction is the whole point. Until now every adb failure in
+        // this function was swallowed into a `warn!` and the function still
+        // returned `Ok(state: "ready")` — so a device on which literally no
+        // command succeeded was reported as paired, the reapply paths logged
+        // "auto-reapplied", and the UI row stayed green while no traffic could
+        // possibly flow. Silent failure was the single biggest reason this bug
+        // took so long to pin down.
         let mac_port_spec = format!("tcp:{mac_port}");
-        if let Err(e) = run(
+        run(
             "adb",
             &["-s", serial, "reverse", "tcp:8888", &mac_port_spec],
         )
         .await
-        {
+        .map_err(|e| {
             tracing::error!(error = %e, serial, mac_port, "adb reverse 8888 failed — device cannot reach proxy");
-            last_error = Some(format!("adb reverse failed: {e}"));
-        }
+            anyhow!("couldn't open the data tunnel to the device (adb reverse tcp:8888 -> tcp:{mac_port}): {e}")
+        })?;
         if let Err(e) = run("adb", &["-s", serial, "reverse", "tcp:8889", "tcp:8889"]).await {
             tracing::warn!(error = %e, serial, "adb reverse 8889 (PAC) failed");
         }
@@ -280,8 +436,10 @@ impl AndroidPlatform {
             tracing::warn!(error = %e, serial, "companion helper APK setup failed");
         }
 
-        // Direct http_proxy — primary, what OkHttp reads.
-        if let Err(e) = run(
+        // Direct http_proxy — primary, what OkHttp reads. Load-bearing: without
+        // it nothing on the device routes through Pane at all, so a failure
+        // here is a failure of the whole operation.
+        run(
             "adb",
             &[
                 "-s",
@@ -291,13 +449,14 @@ impl AndroidPlatform {
                 "put",
                 "global",
                 "http_proxy",
-                "127.0.0.1:8888",
+                DEVICE_HTTP_PROXY,
             ],
         )
         .await
-        {
-            tracing::warn!(error = %e, serial, "setting http_proxy failed");
-        }
+        .map_err(|e| {
+            tracing::error!(error = %e, serial, "setting http_proxy failed — device will not route through Pane");
+            anyhow!("couldn't set http_proxy on the device: {e}")
+        })?;
         // PAC URL — bonus for Chrome/WebView, which fall back to DIRECT
         // on unplug. Most native apps ignore it; harmless if set.
         let _ = run(
@@ -422,6 +581,12 @@ impl AndroidPlatform {
     }
 
     pub async fn remove(&self, serial: &str) -> Result<()> {
+        // Same serialisation as add_usb: a remove interleaved with a reapply
+        // can leave http_proxy set while the reverse is torn down, which is
+        // the worst of both worlds — the device has no internet at all.
+        let lock = self.serial_lock(serial);
+        let _guard = lock.lock().await;
+
         // Clear proxy first so the device gets internet back before we
         // tear down the heartbeat reverse. Order matters: if we tear
         // down 8890 first, the helper APK sees its connection break
@@ -494,6 +659,27 @@ impl AndroidPlatform {
         let _ = run("adb", &["-s", serial, "reverse", "--remove", "tcp:8890"]).await;
         Ok(())
     }
+}
+
+/// Whether the device's global `http_proxy` currently points at Pane.
+///
+/// A device we never configured answers `null`; one we cleared answers `:0`.
+/// Both are "not ours", which is what the caller needs to distinguish.
+async fn read_http_proxy(serial: &str) -> Result<bool> {
+    let out = run(
+        "adb",
+        &[
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "get",
+            "global",
+            "http_proxy",
+        ],
+    )
+    .await?;
+    Ok(out.trim() == DEVICE_HTTP_PROXY)
 }
 
 /// Make sure the companion APK is installed, granted
@@ -624,7 +810,7 @@ async fn ensure_helper_running(serial: &str, apk_path: Option<&PathBuf>) -> Resu
 /// re-paired-on-machine-A flow to break.
 async fn install_helper_apk(serial: &str, apk: &std::path::Path) -> Result<()> {
     let install = || async {
-        run(
+        run_for(
             "adb",
             &[
                 "-s",
@@ -635,6 +821,7 @@ async fn install_helper_apk(serial: &str, apk: &std::path::Path) -> Result<()> {
                 "0",
                 apk.to_str().unwrap(),
             ],
+            ADB_INSTALL_TIMEOUT,
         )
         .await
     };
@@ -798,7 +985,16 @@ async fn install_system_ca(serial: &str, pem: &str) -> Result<()> {
     let target = format!("/system/etc/security/cacerts/{hash}.0");
 
     run("adb", &["-s", serial, "root"]).await?;
-    run("adb", &["-s", serial, "wait-for-device"]).await?;
+    // adbd restarts as root here, so the device drops off the bus and comes
+    // back. Its own budget: the default 15 s is a plausible round-trip on a
+    // slow device, and timing out mid-restart would abort a system-CA install
+    // that was about to succeed.
+    run_for(
+        "adb",
+        &["-s", serial, "wait-for-device"],
+        ADB_INSTALL_TIMEOUT,
+    )
+    .await?;
     run("adb", &["-s", serial, "remount"]).await?;
     run(
         "adb",
@@ -843,7 +1039,27 @@ fn pem_to_der(pem: &str) -> Result<Vec<u8>> {
     Ok(base64::engine::general_purpose::STANDARD.decode(payload)?)
 }
 
+/// Wall-clock budget for an ordinary adb invocation. Everything except an APK
+/// install finishes well under a second over USB, so this is pure headroom.
+///
+/// The bound matters because these calls are made in sequence: pairing and
+/// reapply walk a device through a dozen commands, and `reapply_all` walks
+/// every paired device in turn. One wedged adb call — a device sitting on the
+/// "Allow USB debugging?" dialog, an adb server mid-restart — used to stall
+/// that entire chain indefinitely, so every *other* device silently went
+/// unconfigured too.
+const ADB_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// `adb install` pushes a multi-MB APK over USB and then waits on the package
+/// manager. Minutes would be wrong, but 15 s is genuinely too tight on a cold
+/// or busy device.
+const ADB_INSTALL_TIMEOUT: Duration = Duration::from_secs(90);
+
 async fn run(bin: &str, args: &[&str]) -> Result<String> {
+    run_for(bin, args, ADB_TIMEOUT).await
+}
+
+async fn run_for(bin: &str, args: &[&str], budget: Duration) -> Result<String> {
     let resolved = if bin == "adb" {
         resolve_adb()
             .ok_or_else(|| anyhow!(ADB_NOT_FOUND_MSG))?
@@ -852,11 +1068,22 @@ async fn run(bin: &str, args: &[&str]) -> Result<String> {
     } else {
         bin.to_string()
     };
-    let output = Command::new(&resolved)
+    // kill_on_drop so a timeout actually reaps the child. Without it the
+    // future is dropped but the wedged adb process keeps holding whatever it
+    // was holding, and the next call inherits the same jam.
+    let child = Command::new(&resolved)
         .args(args)
-        .output()
-        .await
-        .map_err(|e| anyhow!("{resolved}: {e}"))?;
+        .kill_on_drop(true)
+        .output();
+    let output = match tokio::time::timeout(budget, child).await {
+        Ok(res) => res.map_err(|e| anyhow!("{resolved}: {e}"))?,
+        Err(_) => {
+            return Err(anyhow!(
+                "{bin} {args:?} timed out after {}s",
+                budget.as_secs()
+            ))
+        }
+    };
     if !output.status.success() {
         return Err(anyhow!(
             "{bin} {args:?} failed: {}",

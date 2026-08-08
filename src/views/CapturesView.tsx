@@ -2,7 +2,7 @@ import { type Component, createSignal, createMemo, createEffect, createResource,
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import { save } from "@tauri-apps/plugin-dialog";
-import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown, X, CheckSquare, Download } from "lucide-solid";
+import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ShieldOff, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown, X, CheckSquare, Download } from "lucide-solid";
 import { api } from "@/ipc/client";
 import { listenToCaptures } from "@/ipc/events";
 import type {
@@ -1542,6 +1542,8 @@ const CapturesView: Component = () => {
                                 <Lock size={12} />
                               ) : c().error_kind === "tls_handshake" ? (
                                 <ShieldAlert size={12} />
+                              ) : c().error_kind === "tunneled" ? (
+                                <ShieldOff size={12} />
                               ) : (
                                 c().status ?? "—"
                               )}
@@ -1667,6 +1669,9 @@ const CapturesView: Component = () => {
 };
 
 function statusColor(status: number | null, errorKind: string | null) {
+  // Passed through without decryption — a deliberate outcome, not a failure.
+  // Muted so these rows read as background context next to real traffic.
+  if (errorKind === "tunneled") return "text-fg-muted";
   if (errorKind === "pinning") return "text-warn";
   if (errorKind === "tls_handshake") return "text-warn";
   if (errorKind) return "text-danger";
@@ -1681,6 +1686,9 @@ function statusColor(status: number | null, errorKind: string | null) {
 // Everything else stays default so the list reads as quiet baseline
 // noise and red rows truly stand out.
 function rowColor(status: number | null, errorKind: string | null): string {
+  // Tunnelled rows are expected traffic, not failures — leave them untinted so
+  // the red rows keep meaning "something broke".
+  if (errorKind === "tunneled") return "";
   if (errorKind) return "text-danger";
   if (status !== null && status >= 500) return "text-danger";
   return "";
@@ -1691,6 +1699,8 @@ function errorHint(errorKind: string | null): string | undefined {
   // locale; this is called inline as a row's `title=` attribute, which
   // recomputes when SolidJS reconciles, so locale switches do propagate.
   switch (errorKind) {
+    case "tunneled":
+      return tr("captures.tunneled_hint");
     case "tls_handshake":
       return tr("captures.error_tls_handshake");
     case "pinning":

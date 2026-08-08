@@ -109,6 +109,17 @@ fn pick_port() -> std::net::SocketAddr {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn end_to_end_https_mitm() {
+    // rustls 0.23 panics in ServerConfig/ClientConfig::builder() without a
+    // process-wide CryptoProvider. `MitmEngine::new` installs one, but the
+    // mock upstream below is spawned *before* the engine is constructed and
+    // builds its own ServerConfig — so whether the test passed came down to
+    // which task the scheduler ran first. Under a loaded machine (several test
+    // binaries at once, which is cargo's default) the upstream usually won and
+    // the run failed with "expected 200 in response". Install it up front so
+    // the ordering stops mattering. Idempotent: `install_default` errors if a
+    // provider is already set, and ignoring that is correct.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     // Storage with migrations applied.
     let tmp = tempdir().unwrap();
     let storage = Arc::new(Storage::open(tmp.path()).unwrap());

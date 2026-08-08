@@ -157,8 +157,10 @@ const en = {
     host_capture_failed: "Couldn't capture this Mac: {{message}}",
     column_resize_title: "Drag to resize · double-click to reset",
     empty_state: "No captures yet. Start the proxy and pair a device.",
+    tunneled_hint:
+      "Passed through without decryption — this host rejects Pane's certificate (release build or certificate pinning), so the connection is tunnelled to keep the app online. Timing and size are recorded; contents are not.",
     error_tls_handshake:
-      "TLS handshake failed — device doesn't trust Pane CA. Install root CA in system store (root/Magisk) or configure network_security_config.",
+      "TLS handshake failed — device doesn't trust Pane CA. Install root CA in system store (root/Magisk) or configure network_security_config. Retries to this host are tunnelled so the app keeps working.",
     error_pinning:
       "Certificate pinning detected — app rejects Pane's leaf cert. Bypass requires Frida or similar.",
     error_upstream: "Upstream server connection failed.",
