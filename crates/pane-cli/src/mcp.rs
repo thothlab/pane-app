@@ -12,7 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -174,6 +174,22 @@ pub fn tools() -> Vec<Value> {
             "Enable or disable a rule by name substring or id. Lets one compact rule set cover many scenarios instead of encoding the variant into every request body.",
             json!({ "selector": { "type": "string" }, "enabled": { "type": "boolean" } }),
             vec!["selector", "enabled"],
+        ),
+        tool(
+            "pane_rules_set_enabled_bulk",
+            "Enable or disable many rules at once: the whole library (scope 'all'), one collection (scope 'collection' + collection selector), or the rules in no collection (scope 'ungrouped'). Use this to reset to a known state before a run — 'disable everything, then enable the one collection I want' — instead of toggling rules one at a time.",
+            json!({
+                "enabled": { "type": "boolean" },
+                "scope": { "type": "string", "enum": ["all", "collection", "ungrouped"] },
+                "collection": { "type": "string", "description": "Collection name substring or id. Required when scope is 'collection'." }
+            }),
+            vec!["enabled", "scope"],
+        ),
+        tool(
+            "pane_collection_delete",
+            "Delete a collection. Its rules survive and move to Ungrouped; they are not deleted.",
+            json!({ "selector": { "type": "string" } }),
+            vec!["selector"],
         ),
         tool(
             "pane_rule_mock",
@@ -357,6 +373,53 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
             Ok(format!(
                 "{} rule {id}",
                 if enabled { "enabled" } else { "disabled" }
+            ))
+        }
+        "pane_rules_set_enabled_bulk" => {
+            let enabled = args
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let scope = match args.get("scope").and_then(|v| v.as_str()).unwrap_or("") {
+                "all" => json!({ "kind": "all" }),
+                "ungrouped" => json!({ "kind": "ungrouped" }),
+                "collection" => {
+                    let sel = args
+                        .get("collection")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if sel.is_empty() {
+                        return Err(anyhow!("scope 'collection' needs a `collection` selector"));
+                    }
+                    let all = s.call("collections.list", Value::Null).await?;
+                    json!({ "kind": "collection", "id": pick_named(&all, sel, "collection")? })
+                }
+                other => {
+                    return Err(anyhow!(
+                        "unknown scope `{other}` — use all, collection or ungrouped"
+                    ))
+                }
+            };
+            let v = s
+                .call(
+                    "rules.set_enabled_bulk",
+                    json!({ "enabled": enabled, "scope": scope }),
+                )
+                .await?;
+            let matched = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
+            let changed = v.get("changed").and_then(|x| x.as_u64()).unwrap_or(0);
+            Ok(format!(
+                "{} {changed} of {matched} rules",
+                if enabled { "enabled" } else { "disabled" }
+            ))
+        }
+        "pane_collection_delete" => {
+            let selector = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+            let all = s.call("collections.list", Value::Null).await?;
+            let id = pick_named(&all, selector, "collection")?;
+            s.call("collections.delete", json!(id)).await?;
+            Ok(format!(
+                "deleted collection {id}; its rules moved to Ungrouped"
             ))
         }
         "pane_rule_mock" => {

@@ -30,6 +30,16 @@ pub async fn rule_set_enabled(state: CoreState<'_>, args: RuleSetEnabledArgs) ->
     state.rule_set_enabled(args).await
 }
 
+/// Flip a whole scope of rules in one call. The collection header checkbox
+/// used to fan out one call per rule because this did not exist.
+#[tauri::command]
+pub async fn rules_set_enabled_bulk(
+    state: CoreState<'_>,
+    args: pane_ipc::RulesSetEnabledBulkArgs,
+) -> CmdResult<pane_ipc::RulesSetEnabledBulkResult> {
+    state.rules_set_enabled_bulk(args).await
+}
+
 #[tauri::command]
 pub async fn rule_set_priority(state: CoreState<'_>, args: RuleSetPriorityArgs) -> CmdResult<()> {
     state.rule_set_priority(args).await

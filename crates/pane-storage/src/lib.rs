@@ -22,8 +22,9 @@ use base64::Engine as _;
 use pane_ipc::{
     CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionSetPriorityArgs,
     CollectionUpsertArgs, ExportOneResult, FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs,
-    RuleCollectionDto, RuleConditionDto, RuleDto, RuleHeaderDto, RuleParamDto, RulePatchOpDto,
-    RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs, SaveFilterArgs, SessionDto,
+    RuleBulkScope, RuleCollectionDto, RuleConditionDto, RuleDto, RuleHeaderDto, RuleParamDto,
+    RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs,
+    RulesSetEnabledBulkArgs, RulesSetEnabledBulkResult, SaveFilterArgs, SessionDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -846,17 +847,27 @@ impl Storage {
         Ok(dto)
     }
 
+    /// Delete a collection, moving its rules to Ungrouped rather than taking
+    /// them with it.
+    ///
+    /// The two statements run in one transaction. Separately, a crash between
+    /// them left the rules detached with the collection row still standing —
+    /// a group that looks intact in the list but reports zero rules, and whose
+    /// members have quietly scattered into Ungrouped.
     pub fn delete_collection(&self, id: Uuid) -> Result<()> {
-        let conn = self.conn.lock();
-        // Detach rules first (so they end up in Ungrouped instead of cascading delete).
-        conn.execute(
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        // Detach rules first (so they end up in Ungrouped instead of tripping
+        // the foreign key, which has no ON DELETE clause).
+        tx.execute(
             "UPDATE rule SET collection_id = NULL WHERE collection_id=?1",
             params![id.to_string()],
         )?;
-        conn.execute(
+        tx.execute(
             "DELETE FROM rule_collection WHERE id=?1",
             params![id.to_string()],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1047,6 +1058,53 @@ impl Storage {
             params![args.enabled as i64, now, args.id.to_string()],
         )?;
         Ok(())
+    }
+
+    /// Flip `enabled` on a whole scope of rules in one statement.
+    ///
+    /// The GUI used to fan out one IPC call per rule because there was no
+    /// batch endpoint; from the CLI the same job meant one process launch per
+    /// rule, and each of those re-listed the entire library to resolve its
+    /// selector. On a 622-rule library that is 622 round trips to answer
+    /// "turn everything off" — slow enough that people stopped doing it, which
+    /// is how a run ends up with rules live that nobody meant to leave on.
+    pub fn set_rules_enabled_bulk(
+        &self,
+        args: RulesSetEnabledBulkArgs,
+    ) -> Result<RulesSetEnabledBulkResult> {
+        let conn = self.conn.lock();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+
+        // Built as a fragment rather than interpolating user input: the only
+        // thing that varies is the shape of the predicate, and the collection
+        // id still travels as a bound parameter.
+        let (predicate, coll): (&str, Option<String>) = match &args.scope {
+            RuleBulkScope::All => ("1=1", None),
+            RuleBulkScope::Ungrouped => ("collection_id IS NULL", None),
+            RuleBulkScope::Collection { id } => ("collection_id = ?3", Some(id.to_string())),
+        };
+
+        let matched: u64 = {
+            let sql = format!("SELECT COUNT(*) FROM rule WHERE {predicate}");
+            match &coll {
+                Some(c) => conn.query_row(&sql.replace("?3", "?1"), params![c], |r| r.get(0))?,
+                None => conn.query_row(&sql, [], |r| r.get(0))?,
+            }
+        };
+
+        // `AND enabled<>?1` keeps `changed` honest and skips rewriting rows
+        // that already hold the target value.
+        let sql =
+            format!("UPDATE rule SET enabled=?1, updated_at=?2 WHERE {predicate} AND enabled<>?1");
+        let changed = match &coll {
+            Some(c) => conn.execute(&sql, params![args.enabled as i64, now, c])?,
+            None => conn.execute(&sql, params![args.enabled as i64, now])?,
+        };
+
+        Ok(RulesSetEnabledBulkResult {
+            matched,
+            changed: changed as u64,
+        })
     }
 
     pub fn set_rule_priority(&self, args: RuleSetPriorityArgs) -> Result<()> {
@@ -1393,6 +1451,78 @@ mod collection_cascade_tests {
             vec!["rule-b"],
             "switching collections must switch which rules serve traffic"
         );
+    }
+
+    #[test]
+    fn bulk_disable_all_clears_the_whole_library() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let c = collection(&s, "scenario", true);
+        rule(&s, "a", Some(c));
+        rule(&s, "b", Some(c));
+        rule(&s, "c", None);
+
+        let r = s
+            .set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
+                enabled: false,
+                scope: RuleBulkScope::All,
+            })
+            .unwrap();
+        assert_eq!((r.matched, r.changed), (3, 3));
+        assert!(active_names(&s).is_empty());
+
+        // Re-running is a no-op, and says so rather than reporting work.
+        let again = s
+            .set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
+                enabled: false,
+                scope: RuleBulkScope::All,
+            })
+            .unwrap();
+        assert_eq!((again.matched, again.changed), (3, 0));
+    }
+
+    #[test]
+    fn bulk_scope_collection_leaves_the_rest_alone() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let a = collection(&s, "scenario-a", true);
+        let b = collection(&s, "scenario-b", true);
+        rule(&s, "in-a", Some(a));
+        rule(&s, "in-b", Some(b));
+        rule(&s, "ungrouped", None);
+
+        let r = s
+            .set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
+                enabled: false,
+                scope: RuleBulkScope::Collection { id: a },
+            })
+            .unwrap();
+        assert_eq!((r.matched, r.changed), (1, 1));
+
+        let mut live = active_names(&s);
+        live.sort();
+        assert_eq!(live, vec!["in-b", "ungrouped"]);
+    }
+
+    #[test]
+    fn bulk_scope_ungrouped_touches_only_orphans() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let c = collection(&s, "scenario", true);
+        rule(&s, "grouped", Some(c));
+        rule(&s, "orphan", None);
+
+        let r = s
+            .set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
+                enabled: false,
+                scope: RuleBulkScope::Ungrouped,
+            })
+            .unwrap();
+        assert_eq!((r.matched, r.changed), (1, 1));
+        assert_eq!(active_names(&s), vec!["grouped"]);
     }
 
     /// The collection flag masks, it does not enable: re-enabling a collection

@@ -19,7 +19,10 @@ Not installed? `cargo build --release -p pane-cli && ./target/release/pane-cli i
     pane captures tail --count 1 --timeout 30s --filter '…'   # NDJSON
     pane rules mock --host api.example.com --status 500 --body '{"e":1}' --name x
     pane rules enable <sel> | disable <sel>             # by name substring or id
+    pane rules disable --all                            # reset to a known state
+    pane rules enable --collection <sel>                # one scenario's rules
     pane collections ls | only <sel>                    # switch a whole scenario at once
+    pane collections rm <sel> --yes                     # rules survive, move to Ungrouped
 
 ## Proving a response came from a mock
 
@@ -32,6 +35,13 @@ both sides:
 
 ## Rules
 
+- A rule fires only when **both** it and its collection are enabled. A rule with
+  no collection needs only its own flag. So `collections disable <sel>` silences
+  a whole scenario without disturbing which rules inside it are ticked —
+  re-enabling restores exactly the selection you had.
+- The reliable way into a known state is `pane rules disable --all` followed by
+  `pane rules enable --collection <sel>`, rather than trusting whatever the last
+  run left behind.
 - Bodies truncate to 8 KiB. For large payloads use `--out FILE`, not `--max-bytes 0`.
 - Every `<id>`/`<sel>` takes a unique prefix, or a rule/device name substring.
   Ambiguity is an error listing candidates — it never picks for you.

@@ -676,8 +676,18 @@ async fn rules(s: &mut Session, cmd: RulesCmd, format: Format) -> Result<i32> {
             print_json(&v);
             Ok(exit::OK)
         }
-        RulesCmd::Enable { selector } => set_rule_enabled(s, &selector, true).await,
-        RulesCmd::Disable { selector } => set_rule_enabled(s, &selector, false).await,
+        RulesCmd::Enable {
+            selector,
+            all,
+            collection,
+            ungrouped,
+        } => set_rules_enabled(s, selector, all, collection, ungrouped, true).await,
+        RulesCmd::Disable {
+            selector,
+            all,
+            collection,
+            ungrouped,
+        } => set_rules_enabled(s, selector, all, collection, ungrouped, false).await,
         RulesCmd::Rm { selector, r#yes } => {
             require_yes(r#yes, "deleting a rule")?;
             let id = resolve_rule(s, &selector).await?;
@@ -800,14 +810,50 @@ async fn rules(s: &mut Session, cmd: RulesCmd, format: Format) -> Result<i32> {
     }
 }
 
-async fn set_rule_enabled(s: &mut Session, selector: &str, enabled: bool) -> Result<i32> {
-    let id = resolve_rule(s, selector).await?;
-    s.call("rules.set_enabled", json!({ "id": id, "enabled": enabled }))
+/// One rule by selector, or a whole scope via `--all` / `--collection` /
+/// `--ungrouped`. Exactly one of the four must be given; clap enforces that
+/// they don't combine, this catches the case where none were.
+async fn set_rules_enabled(
+    s: &mut Session,
+    selector: Option<String>,
+    all: bool,
+    collection: Option<String>,
+    ungrouped: bool,
+    enabled: bool,
+) -> Result<i32> {
+    let verb = if enabled { "enabled" } else { "disabled" };
+
+    let scope = if all {
+        json!({ "kind": "all" })
+    } else if ungrouped {
+        json!({ "kind": "ungrouped" })
+    } else if let Some(sel) = collection {
+        json!({ "kind": "collection", "id": resolve_collection(s, &sel).await? })
+    } else if let Some(sel) = selector {
+        // Single-rule path keeps the narrower op: it reports "not found" for a
+        // bad selector, where a bulk call would cheerfully match zero rules.
+        let id = resolve_rule(s, &sel).await?;
+        s.call("rules.set_enabled", json!({ "id": id, "enabled": enabled }))
+            .await?;
+        note(format!("{verb} {}", short(&id)));
+        return Ok(exit::OK);
+    } else {
+        return Err(anyhow!(
+            "give a rule selector, or one of --all / --collection <sel> / --ungrouped"
+        ));
+    };
+
+    let v = s
+        .call(
+            "rules.set_enabled_bulk",
+            json!({ "enabled": enabled, "scope": scope }),
+        )
         .await?;
+    let matched = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
+    let changed = v.get("changed").and_then(|x| x.as_u64()).unwrap_or(0);
     note(format!(
-        "{} {}",
-        if enabled { "enabled" } else { "disabled" },
-        short(&id)
+        "{verb} {changed} of {matched} rule{}",
+        if matched == 1 { "" } else { "s" }
     ));
     Ok(exit::OK)
 }
@@ -891,7 +937,58 @@ async fn collections(s: &mut Session, cmd: CollectionsCmd, format: Format) -> Re
             ));
             Ok(exit::OK)
         }
+        CollectionsCmd::Rm {
+            selector,
+            with_rules,
+            r#yes,
+        } => {
+            require_yes(
+                r#yes,
+                if with_rules {
+                    "deleting a collection and its rules"
+                } else {
+                    "deleting a collection"
+                },
+            )?;
+            let id = resolve_collection(s, &selector).await?;
+
+            // Order matters: drop the rules first, because `collections.delete`
+            // detaches whatever is still attached. Doing it the other way round
+            // would orphan them to Ungrouped and then delete nothing.
+            let removed = if with_rules {
+                let r = s
+                    .call(
+                        "rules.set_enabled_bulk",
+                        json!({ "enabled": false, "scope": { "kind": "collection", "id": id } }),
+                    )
+                    .await?;
+                let n = r.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
+                for rule in as_array(s.call("rules.list", Value::Null).await?)
+                    .iter()
+                    .filter(|r| r["collection_id"].as_str() == Some(id.as_str()))
+                {
+                    s.call("rules.delete", json!(rule["id"].as_str().unwrap_or("")))
+                        .await?;
+                }
+                n
+            } else {
+                0
+            };
+
+            s.call("collections.delete", json!(id)).await?;
+            note(if with_rules {
+                format!("deleted {} and {removed} rule(s)", short(&id))
+            } else {
+                format!("deleted {} — its rules moved to Ungrouped", short(&id))
+            });
+            Ok(exit::OK)
+        }
     }
+}
+
+async fn resolve_collection(s: &mut Session, selector: &str) -> Result<String> {
+    let all = as_array(s.call("collections.list", Value::Null).await?);
+    resolve(&all, selector, "name", "collection")
 }
 
 async fn set_collection(s: &mut Session, selector: &str, enabled: bool) -> Result<i32> {

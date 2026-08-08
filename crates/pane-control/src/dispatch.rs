@@ -30,6 +30,7 @@ pub const OPS: &[&str] = &[
     "rules.upsert",
     "rules.delete",
     "rules.set_enabled",
+    "rules.set_enabled_bulk",
     "rules.set_priority",
     "collections.list",
     "collections.upsert",
@@ -128,6 +129,7 @@ pub async fn dispatch(core: &Arc<Core>, op: &str, params: Value) -> Result<Value
         "rules.upsert" => ok(core.rule_upsert(parse(params)?).await?),
         "rules.delete" => ok(core.rule_delete(parse_id(&params, "id")?).await?),
         "rules.set_enabled" => ok(core.rule_set_enabled(parse(params)?).await?),
+        "rules.set_enabled_bulk" => ok(core.rules_set_enabled_bulk(parse(params)?).await?),
         "rules.set_priority" => ok(core.rule_set_priority(parse(params)?).await?),
 
         // ---- collections ----

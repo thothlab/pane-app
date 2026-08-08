@@ -532,6 +532,38 @@ pub struct RuleSetPriorityArgs {
     pub priority: i64,
 }
 
+/// Which rules a bulk enable/disable covers.
+///
+/// Externally tagged so the wire form reads `{"kind":"collection","id":"…"}` —
+/// a bare optional id could not tell "every rule" from "the ungrouped ones",
+/// and getting that wrong silently flips the whole library.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuleBulkScope {
+    /// Every rule in the library.
+    All,
+    /// Every rule in one collection.
+    Collection { id: Uuid },
+    /// Every rule that belongs to no collection.
+    Ungrouped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesSetEnabledBulkArgs {
+    pub enabled: bool,
+    pub scope: RuleBulkScope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesSetEnabledBulkResult {
+    /// Rules the scope covered.
+    pub matched: u64,
+    /// Of those, how many actually changed state. Reported separately so a
+    /// caller can tell "nothing to do" from "scope matched nothing" — the
+    /// second is usually a typo'd selector, the first is success.
+    pub changed: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleCollectionDto {
     pub id: Uuid,

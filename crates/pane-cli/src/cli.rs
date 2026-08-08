@@ -176,10 +176,38 @@ pub enum RulesCmd {
     Ls,
     /// One rule.
     Get { selector: String },
-    /// Enable a rule by name substring or id.
-    Enable { selector: String },
-    /// Disable a rule by name substring or id.
-    Disable { selector: String },
+    /// Enable rules: one by name substring or id, or a whole scope.
+    ///
+    /// `--all` and `--collection` exist because the one-at-a-time form does
+    /// not scale: a full sweep of a real library is one process launch per
+    /// rule, and each re-lists everything to resolve its selector.
+    Enable {
+        /// Name substring or id. Omit when using --all / --collection.
+        selector: Option<String>,
+        /// Every rule in the library.
+        #[arg(long, conflicts_with_all = ["selector", "collection"])]
+        all: bool,
+        /// Every rule in this collection (name substring or id).
+        #[arg(long, conflicts_with = "selector")]
+        collection: Option<String>,
+        /// Every rule that belongs to no collection.
+        #[arg(long, conflicts_with_all = ["selector", "collection", "all"])]
+        ungrouped: bool,
+    },
+    /// Disable rules: one by name substring or id, or a whole scope.
+    Disable {
+        /// Name substring or id. Omit when using --all / --collection.
+        selector: Option<String>,
+        /// Every rule in the library.
+        #[arg(long, conflicts_with_all = ["selector", "collection"])]
+        all: bool,
+        /// Every rule in this collection (name substring or id).
+        #[arg(long, conflicts_with = "selector")]
+        collection: Option<String>,
+        /// Every rule that belongs to no collection.
+        #[arg(long, conflicts_with_all = ["selector", "collection", "all"])]
+        ungrouped: bool,
+    },
     /// Delete a rule.
     Rm {
         selector: String,
@@ -252,6 +280,19 @@ pub enum CollectionsCmd {
     /// Disable every collection except this one — the usual way to move from
     /// one scenario to the next without leaving the previous rules live.
     Only { selector: String },
+    /// Delete a collection.
+    ///
+    /// Its rules survive by default and move to Ungrouped, which is what the
+    /// GUI has always done. `--with-rules` deletes them too — say it out loud,
+    /// because there is no undo.
+    Rm {
+        selector: String,
+        /// Delete the collection's rules as well, instead of orphaning them.
+        #[arg(long)]
+        with_rules: bool,
+        #[arg(long)]
+        r#yes: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

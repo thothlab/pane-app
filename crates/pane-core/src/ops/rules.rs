@@ -3,6 +3,7 @@ use uuid::Uuid;
 use pane_ipc::{
     kinds, CollectionSetEnabledArgs, CollectionSetPriorityArgs, CollectionUpsertArgs,
     RuleCollectionDto, RuleDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs,
+    RulesSetEnabledBulkArgs, RulesSetEnabledBulkResult,
 };
 
 use crate::error::{to_api, CoreResult};
@@ -33,6 +34,16 @@ impl Core {
     pub async fn rule_set_enabled(&self, args: RuleSetEnabledArgs) -> CoreResult<()> {
         self.storage
             .set_rule_enabled(args)
+            .map_err(to_api(kinds::DB))
+    }
+
+    /// Enable or disable a whole scope of rules at once.
+    pub async fn rules_set_enabled_bulk(
+        &self,
+        args: RulesSetEnabledBulkArgs,
+    ) -> CoreResult<RulesSetEnabledBulkResult> {
+        self.storage
+            .set_rules_enabled_bulk(args)
             .map_err(to_api(kinds::DB))
     }
 

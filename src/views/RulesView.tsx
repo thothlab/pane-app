@@ -267,16 +267,20 @@ const RulesView: Component = () => {
     );
   };
 
-  // Bulk-toggle every rule in `list` to `targetEnabled`. Issues only the
-  // changes that actually differ from the current state, in parallel,
-  // then refreshes once. The backend has no batch endpoint for this, so
-  // we just fan out IPC calls — even for collections of 50 rules the
-  // round-trips finish within a frame on the same machine.
-  const toggleCollection = async (list: RuleDto[], targetEnabled: boolean) => {
-    const toFlip = list.filter((r) => r.enabled !== targetEnabled);
-    if (toFlip.length === 0) return;
-    await Promise.all(
-      toFlip.map((r) => api.rules.setEnabled(r.id, targetEnabled)),
+  // Bulk-toggle every rule in a collection. One call, one transaction — this
+  // used to fan out an IPC call per rule because the backend had no batch
+  // endpoint; it does now, and the same op backs `pane rules enable --all`.
+  const toggleCollection = async (
+    collectionId: string | null,
+    list: RuleDto[],
+    targetEnabled: boolean,
+  ) => {
+    if (list.every((r) => r.enabled === targetEnabled)) return;
+    await api.rules.setEnabledBulk(
+      targetEnabled,
+      collectionId === null
+        ? { kind: "ungrouped" }
+        : { kind: "collection", id: collectionId },
     );
     await refresh();
   };
@@ -702,7 +706,7 @@ const RulesView: Component = () => {
               onReorderRule={reorderRule}
               onReorderCollection={reorderCollection}
               onToggleRule={toggleRule}
-              onToggleCollection={(en) => toggleCollection(rulesByCollection().get(c.id) ?? [], en)}
+              onToggleCollection={(en) => toggleCollection(c.id, rulesByCollection().get(c.id) ?? [], en)}
               onToggleCollectionEnabled={() => toggleCollectionEnabled(c)}
               onDeleteRule={removeRule}
               editing={editing()}
@@ -741,7 +745,7 @@ const RulesView: Component = () => {
           onReorderRule={reorderRule}
           onReorderCollection={reorderCollection}
           onToggleRule={toggleRule}
-          onToggleCollection={(en) => toggleCollection(rulesByCollection().get(UNGROUPED_KEY) ?? [], en)}
+          onToggleCollection={(en) => toggleCollection(null, rulesByCollection().get(UNGROUPED_KEY) ?? [], en)}
           // Ungrouped is not a row in `rule_collection`, so it has no flag to
           // flip; the button that would call this is hidden for it.
           onToggleCollectionEnabled={() => {}}
