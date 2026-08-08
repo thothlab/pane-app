@@ -158,7 +158,7 @@ Captures filter DSL — the same string the GUI search bar takes:
 | `mime:` | response Content-Type substring |
 | `error:` | error kind |
 | `device:` | device name or serial; `__host__` = this Mac |
-| `state:` | `completed` \| `stubbed` \| `patched` \| `error` |
+| `state:` | `completed` \| `stubbed` \| `patched` \| `tunneled` \| `error` |
 | `rule:` | rule that served a mocked response |
 
 Bare word = host OR path · `!term` negates · `a,b` = OR within a key ·

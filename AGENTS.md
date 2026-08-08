@@ -53,7 +53,8 @@ both sides:
     host: path: method: status: mime: size: duration: error: device: state: rule:
     bare word = substring over host OR path   ·   !term negates
     a,b = OR within one key   ·   N..M = range   ·   "quoted" keeps spaces
-    state: completed | stubbed | patched | error
+    state: completed | stubbed | patched | tunneled | error
+    tunneled = client refused our CA, spliced through undecrypted — no body
     rule:  the rule that served a mocked response — name substring or exact id
 
 ## Logcat filter DSL

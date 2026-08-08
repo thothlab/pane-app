@@ -39,7 +39,7 @@ pub fn schema() -> Value {
                     "mime": "response Content-Type substring",
                     "error": "error kind, exact",
                     "device": "device name or serial; __host__ for this Mac",
-                    "state": "completed | stubbed | patched | error",
+                    "state": "completed | stubbed | patched | tunneled | error",
                     "rule": "rule that served a mocked response: name substring or exact id"
                 },
                 "operators": {

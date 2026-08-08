@@ -170,8 +170,10 @@ listing candidates — it never picks for you. Destructive commands need `--yes`
 
 Filter keys: `host: path: method: status: mime: size: duration: error: device:
 state: rule:` · bare word = host OR path · `!` negates · `a,b` = OR · `N..M` =
-range. `state` is `completed|stubbed|patched|error`; `rule` matches the rule that
-served a mocked response.
+range. `state` is `completed|stubbed|patched|tunneled|error`; `rule` matches the
+rule that served a mocked response. `tunneled` means the client refused our CA
+and the connection was spliced through undecrypted — a scenario that expected
+`stubbed` but got `tunneled` has a CA-trust problem, not a rule-matching one.
 
 Exit codes: 0 ok · 2 usage · 3 no running instance · 4 no device · 5 not found ·
 6 bad filter · 7 timeout / assertion failed · 8 conflict.

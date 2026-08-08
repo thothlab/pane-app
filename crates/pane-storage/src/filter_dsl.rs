@@ -191,7 +191,13 @@ fn eq_clause_uppercase(
 
 /// Like `eq_clause` but lowercases each value — for `state`, whose column
 /// values are canonically lowercase (`completed`, `stubbed`, `patched`,
-/// `error`), so `state:Stubbed` behaves like `state:stubbed`.
+/// `tunneled`, `error`), so `state:Stubbed` behaves like `state:stubbed`.
+///
+/// `tunneled` arrived with SSL passthrough: the client refused our leaf, so we
+/// spliced the connection through without decrypting it. The row exists — host,
+/// timing and byte count are real — but there is no body to read. Worth
+/// asserting on explicitly, because a scenario that expected `stubbed` and got
+/// `tunneled` means the device never trusted the CA, not that the rule missed.
 fn eq_clause_lowercase(
     col: &str,
     value: &str,
@@ -540,6 +546,20 @@ mod tests {
         // Case-folded, so `state:Stubbed` finds the same rows.
         let (upper_sql, _) = compile_to_sql("state:STUBBED").unwrap();
         assert_eq!(upper_sql, sql);
+    }
+
+    #[test]
+    fn state_key_accepts_tunneled() {
+        // SSL passthrough writes `state='tunneled'`. Asserting on it is how a
+        // scenario tells "the rule didn't match" from "the device never
+        // trusted our CA, so we couldn't have matched anything".
+        let (sql, params) = compile_to_sql("state:tunneled").unwrap();
+        assert_eq!(sql, "state = ?");
+        assert_eq!(params.len(), 1);
+
+        // And the common "anything we actually decrypted" filter.
+        let (neg, _) = compile_to_sql("!state:tunneled").unwrap();
+        assert!(neg.contains("<>"), "negation should use <>: {neg}");
     }
 
     #[test]
