@@ -348,9 +348,13 @@ fn init_logging() {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
     // MYCHARLES_LOG is the historical name; PANE_LOG matches the product.
     // Both work, PANE_LOG wins.
+    // `pane_engine_mitm=debug` used to be on by default. That module logs per
+    // request on the proxy's hot path, which on a busy device meant a
+    // permanent write load for output nobody was reading. It stays one
+    // `PANE_LOG=pane_engine_mitm=debug` away when you actually want it.
     let filter = EnvFilter::try_from_env("PANE_LOG")
         .or_else(|_| EnvFilter::try_from_env("MYCHARLES_LOG"))
-        .unwrap_or_else(|_| EnvFilter::new("info,pane=debug,pane_engine_mitm=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,pane=debug"));
     let stdout_layer = fmt::layer().with_target(true);
 
     // GUI launches of Pane.app have no terminal — stdout logs vanish. Mirror
@@ -393,7 +397,16 @@ fn resolve_helper_apk(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
 fn log_file_appender() -> Option<tracing_appender::non_blocking::NonBlocking> {
     let dir = pane_core::default_data_dir().ok()?;
     std::fs::create_dir_all(&dir).ok()?;
-    let file_appender = tracing_appender::rolling::never(dir, "pane.log");
+    // Rotate daily and keep three days. This was `rolling::never`, i.e. one
+    // file that only ever grew — a long-running install had it at 3.9 GB,
+    // which is both a disk-space problem and useless for a bug report.
+    let file_appender = tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("pane")
+        .filename_suffix("log")
+        .max_log_files(3)
+        .build(dir)
+        .ok()?;
     let (nb, guard) = tracing_appender::non_blocking(file_appender);
     Box::leak(Box::new(guard));
     Some(nb)

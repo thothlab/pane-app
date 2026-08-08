@@ -24,6 +24,9 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
   const [tab, setTab] = createSignal<Tab>("overview");
   const [full, setFull] = createSignal<CaptureDto | null>(null);
   const [body, setBody] = createSignal<CaptureBodyDto | null>(null);
+  const [curlState, setCurlState] = createSignal<"idle" | "busy" | "failed">(
+    "idle",
+  );
 
   const DEFAULT_BODY_LIMIT = 4 * 1024 * 1024; // 4 MB
 
@@ -101,14 +104,27 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
             >
               {t()("detail.replay")}
             </button>
+            {/* Two backend round trips. Unhandled, a failure here was an
+                unhandled rejection and the button just did nothing. */}
             <button
-              class="text-xs px-2 py-1 rounded hover:bg-bg-muted"
+              class="text-xs px-2 py-1 rounded hover:bg-bg-muted disabled:opacity-50"
+              disabled={curlState() === "busy"}
               onClick={async () => {
-                const r = await api.captures.exportOne(full()!.id, "curl");
-                await writeClipboard(r.text);
+                if (curlState() === "busy") return;
+                setCurlState("busy");
+                try {
+                  const r = await api.captures.exportOne(full()!.id, "curl");
+                  await writeClipboard(r.text);
+                  setCurlState("idle");
+                } catch {
+                  setCurlState("failed");
+                  setTimeout(() => setCurlState("idle"), 2000);
+                }
               }}
             >
-              {t()("detail.curl")}
+              {curlState() === "failed"
+                ? t()("detail.curl_failed")
+                : t()("detail.curl")}
             </button>
           </div>
         </div>

@@ -130,7 +130,11 @@ impl Core {
     }
 
     pub async fn proxy_status(&self) -> CoreResult<ProxyStatusDto> {
-        let count = self.storage.captures_count().map_err(to_api(kinds::DB))? as u64;
+        // Polled by the GUI every 2 s, so it must never sit on a worker.
+        let count = self
+            .db(|s| s.captures_count())
+            .await
+            .map_err(to_api(kinds::DB))? as u64;
         Ok(ProxyStatusDto {
             running: self.proxy_running(),
             captures_count: count,

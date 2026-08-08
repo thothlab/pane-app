@@ -170,13 +170,37 @@ fn rfc3339(unix_seconds: i64) -> String {
         .unwrap_or_else(|| unix_seconds.to_string())
 }
 
+/// Open the logcat write connection. Same pragmas as the main writer — WAL is
+/// a database-level property, but `synchronous` and `busy_timeout` are
+/// per-connection and have to be set again here.
+fn open_logcat_write(db_path: &Path) -> Result<Connection> {
+    let conn = Connection::open(db_path)?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    Ok(conn)
+}
+
 pub struct Storage {
     conn: Mutex<Connection>,
     /// Dedicated connection reserved for logcat SELECTs. WAL lets it read
     /// concurrently with the main write connection, so the firehose ingest
-    /// (on `conn`) doesn't serialize against the UI's filtered queries. The
-    /// REGEXP scalar function is registered only here.
+    /// doesn't serialize against the UI's filtered queries. The REGEXP scalar
+    /// function is registered only here.
     logcat_read: Mutex<Connection>,
+    /// Dedicated connection for logcat INSERTs and retention deletes.
+    ///
+    /// These are the highest-volume writes in the process by two orders of
+    /// magnitude — a chatty emulator sustains ~80 rows/s, and retention then
+    /// deletes them in bulk. While they shared `conn` with everything else,
+    /// that single process-wide `Mutex` — not SQLite — was what stalled the
+    /// UI: `captures_get`, `get_body` and the list poll all queued behind a
+    /// batch insert or a prune. WAL already lets readers run against a
+    /// separate connection while a writer commits, so splitting the mutex is
+    /// enough to decouple them. Writer-vs-writer (proxy captures vs logcat)
+    /// still serializes, but inside SQLite via `busy_timeout`, which waits its
+    /// turn per statement instead of holding the whole process hostage.
+    logcat_write: Mutex<Connection>,
     data_dir: PathBuf,
     pub bodies: Arc<BodyStore>,
 }
@@ -206,10 +230,13 @@ impl Storage {
         logcat_read.busy_timeout(std::time::Duration::from_secs(5))?;
         logcat::register_regexp(&logcat_read)?;
 
+        let logcat_write = open_logcat_write(&db_path)?;
+
         let bodies = Arc::new(BodyStore::new(data_dir.join("bodies"))?);
         Ok(Self {
             conn: Mutex::new(conn),
             logcat_read: Mutex::new(logcat_read),
+            logcat_write: Mutex::new(logcat_write),
             data_dir: data_dir.to_path_buf(),
             bodies,
         })
@@ -269,10 +296,13 @@ impl Storage {
         logcat_read.busy_timeout(std::time::Duration::from_secs(5))?;
         logcat::register_regexp(&logcat_read)?;
 
+        let logcat_write = open_logcat_write(&db_path)?;
+
         let bodies = Arc::new(BodyStore::new(data_dir.join("bodies"))?);
         Ok(Self {
             conn: Mutex::new(conn),
             logcat_read: Mutex::new(logcat_read),
+            logcat_write: Mutex::new(logcat_write),
             data_dir: data_dir.to_path_buf(),
             bodies,
         })

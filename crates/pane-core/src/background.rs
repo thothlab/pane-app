@@ -17,9 +17,20 @@ use std::time::Duration;
 use crate::Core;
 
 /// Prune logcat rows older than this.
-const LOGCAT_RETENTION_MS: i64 = 24 * 60 * 60 * 1000;
+const LOGCAT_RETENTION_MS: i64 = 6 * 60 * 60 * 1000;
 /// Per-device row cap applied alongside the age cutoff.
-const LOGCAT_PER_DEVICE_CAP: i64 = 2_000_000;
+///
+/// These were 24 h / 2,000,000, which is a lot of rope for a debugging tool: a
+/// chatty emulator sustains ~80 lines/s, so one device alone would sit at the
+/// cap with ~200 MB of message text, and the whole database ran to a gigabyte.
+/// Every row also carries an entry in `logcat_dedup`, a unique index over the
+/// full message, so the cost is paid twice — on every insert and on every
+/// delete.
+///
+/// 500,000 rows is ~50 MB per device and still ~1.7 h of continuous logging
+/// from the noisiest emulator; quiet devices hit the 6 h window first. Long
+/// sessions that genuinely need more can raise both numbers here.
+const LOGCAT_PER_DEVICE_CAP: i64 = 500_000;
 
 /// How many consecutive unhealthy probes before we repair a device.
 ///
@@ -177,13 +188,20 @@ pub async fn device_watchdog(core: Arc<Core>) {
 }
 
 /// Prune persisted logcat rows on a 5-minute cadence.
+///
+/// The prune itself is blocking SQLite, so it goes to the blocking pool rather
+/// than parking a runtime worker for its whole duration.
 pub async fn logcat_retention(core: Arc<Core>) {
     loop {
-        if let Err(e) = core
-            .storage
-            .prune_logcat(LOGCAT_RETENTION_MS, LOGCAT_PER_DEVICE_CAP)
-        {
-            tracing::warn!(error = %e, "logcat: prune failed");
+        let storage = core.storage.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            storage.prune_logcat(LOGCAT_RETENTION_MS, LOGCAT_PER_DEVICE_CAP)
+        })
+        .await;
+        match res {
+            Ok(Err(e)) => tracing::warn!(error = %e, "logcat: prune failed"),
+            Err(e) => tracing::warn!(error = %e, "logcat: prune task panicked"),
+            Ok(Ok(_)) => {}
         }
         tokio::time::sleep(Duration::from_secs(300)).await;
     }

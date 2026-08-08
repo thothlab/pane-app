@@ -7,15 +7,22 @@ use crate::Core;
 
 impl Core {
     pub async fn filter_save(&self, args: SaveFilterArgs) -> CoreResult<FilterDto> {
-        self.storage.save_filter(args).map_err(to_api(kinds::DB))
+        self.db(move |s| s.save_filter(args))
+            .await
+            .map_err(to_api(kinds::DB))
     }
 
     /// `kind` is `"captures"` or `"logcat"`; `None` returns both.
     pub async fn filters_list(&self, kind: Option<&str>) -> CoreResult<Vec<FilterDto>> {
-        self.storage.list_filters(kind).map_err(to_api(kinds::DB))
+        let kind = kind.map(str::to_string);
+        self.db(move |s| s.list_filters(kind.as_deref()))
+            .await
+            .map_err(to_api(kinds::DB))
     }
 
     pub async fn filter_delete(&self, id: Uuid) -> CoreResult<()> {
-        self.storage.delete_filter(id).map_err(to_api(kinds::DB))
+        self.db(move |s| s.delete_filter(id))
+            .await
+            .map_err(to_api(kinds::DB))
     }
 }

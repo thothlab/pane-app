@@ -48,12 +48,23 @@ impl Core {
             .map_err(to_api(kinds::REMOVE_FAILED))
     }
 
+    // `DeviceManager` reads through `Storage`'s connection mutex like
+    // everything else, so these two go to the blocking pool for the same
+    // reason the `Core::db` helper exists.
     pub async fn device_get(&self, id: Uuid) -> CoreResult<DeviceDto> {
-        self.devices.get(id).map_err(to_api(kinds::NOT_FOUND))
+        let devices = self.devices.clone();
+        tokio::task::spawn_blocking(move || devices.get(id))
+            .await
+            .map_err(to_api(kinds::DB))?
+            .map_err(to_api(kinds::NOT_FOUND))
     }
 
     pub async fn devices_list(&self) -> CoreResult<Vec<DeviceDto>> {
-        self.devices.list().map_err(to_api(kinds::DB))
+        let devices = self.devices.clone();
+        tokio::task::spawn_blocking(move || devices.list())
+            .await
+            .map_err(to_api(kinds::DB))?
+            .map_err(to_api(kinds::DB))
     }
 
     pub async fn android_tooling_status(&self) -> CoreResult<AndroidToolingStatusDto> {

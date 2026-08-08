@@ -90,8 +90,10 @@ const en = {
     copy_dump: "Copy",
     copy_dump_title:
       "Copy the full request + response (headers and bodies) to the clipboard in OkHttp-logger format",
+    copy_dump_working: "Copying…",
     copy_dump_done: "Copied to clipboard ({{bytes}} bytes)",
     copy_dump_failed: "Copy failed: {{message}}",
+    copy_dump_timeout: "the app did not respond in time",
     selection_enter: "Select",
     selection_enter_title: "Select multiple captures to copy or export",
     selection_cancel: "Cancel selection",
@@ -176,6 +178,7 @@ const en = {
     tls: "TLS",
     replay: "Replay",
     curl: "cURL",
+    curl_failed: "Copy failed",
     select_capture: "Select a capture to see details.",
     id: "ID",
     version: "Version",

@@ -162,11 +162,11 @@ pub async fn handle(
     // can mutate the upstream response below.
     let mut patch_rule: Option<pane_storage::ActiveRule> = None;
     if let Ok(rules) = storage.list_active_rules() {
-        tracing::debug!(
-            count = rules.len(),
-            ids = ?rules.iter().map(|r| (r.id, r.name.as_str())).collect::<Vec<_>>(),
-            "active rules loaded for HTTP request"
-        );
+        // Count only. Dumping every rule's id and name here produced ~83 KB
+        // per line against a real rule library, on every single request — it
+        // was most of a 3.9 GB log file and a steady 480 KB/s of disk writes.
+        // Which rule actually matched is recorded on the capture itself.
+        tracing::debug!(count = rules.len(), "active rules loaded for HTTP request");
         let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
             host: &host,
@@ -384,11 +384,8 @@ async fn handle_tls_inner(
     // fall through to upstream so we can mutate the response below.
     let mut patch_rule: Option<pane_storage::ActiveRule> = None;
     if let Ok(rules) = storage.list_active_rules() {
-        tracing::debug!(
-            count = rules.len(),
-            ids = ?rules.iter().map(|r| (r.id, r.name.as_str())).collect::<Vec<_>>(),
-            "active rules loaded for HTTPS request"
-        );
+        // See the HTTP path above: the per-rule dump is deliberately gone.
+        tracing::debug!(count = rules.len(), "active rules loaded for HTTPS request");
         let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
             host: &host,

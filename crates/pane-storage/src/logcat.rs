@@ -10,7 +10,7 @@ use std::io::Write;
 use anyhow::Result;
 use pane_ipc::LogcatRowDto;
 use rusqlite::functions::FunctionFlags;
-use rusqlite::{params, Connection, ToSql};
+use rusqlite::{params, Connection, ToSql, TransactionBehavior};
 use time::OffsetDateTime;
 
 use crate::Storage;
@@ -43,8 +43,15 @@ impl Storage {
         if rows.is_empty() {
             return Ok(0);
         }
-        let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
+        let mut conn = self.logcat_write.lock();
+        // IMMEDIATE, not the default DEFERRED. There are two writer
+        // connections on this database now (this one and `conn`), and a
+        // deferred transaction that reads before it writes gets an instant
+        // SQLITE_BUSY on the upgrade — the busy_timeout never gets a chance to
+        // wait it out. Taking the write lock at BEGIN keeps the timeout in
+        // play, so a collision with a capture insert is a short wait rather
+        // than a dropped batch.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         // OR IGNORE against the logcat_dedup unique index (V011): when adb
         // re-dumps the device ring buffer (every window reopen / reconnect),
         // the replayed lines collide with what's already stored and are
@@ -201,7 +208,7 @@ impl Storage {
 
     /// Delete all logcat rows for one device (the Clear button).
     pub fn clear_logcat(&self, serial: &str) -> Result<usize> {
-        let conn = self.conn.lock();
+        let conn = self.logcat_write.lock();
         let n = conn.execute(
             "DELETE FROM logcat_entry WHERE serial = ?1",
             params![serial],
@@ -209,43 +216,116 @@ impl Storage {
         Ok(n)
     }
 
+    /// Rows deleted per transaction by [`Storage::prune_logcat`].
+    ///
+    /// Retention used to run as one big transaction: a `DELETE` across the
+    /// whole table plus, per device, a `DELETE ... id <= (SELECT ... OFFSET
+    /// cap)` whose subquery walked `cap` index entries. At a 2M-row cap on a
+    /// GB-sized database that held the write lock for many seconds every five
+    /// minutes, and every UI command queued behind it. Chunking bounds how
+    /// long the lock is held at a time; the loop still deletes everything it
+    /// set out to, it just lets ingest and readers interleave.
+    const PRUNE_CHUNK: usize = 10_000;
+
     /// Retention: drop rows older than `retention_ms` (by ingest time), then
-    /// trim each device down to its newest `per_device_cap` rows. Runs on the
-    /// main write connection. Returns rows deleted.
+    /// trim each device down to its newest `per_device_cap` rows. Returns rows
+    /// deleted.
+    ///
+    /// Runs on the logcat write connection, in bounded chunks, releasing the
+    /// lock between each one.
     pub fn prune_logcat(&self, retention_ms: i64, per_device_cap: i64) -> Result<usize> {
         let now_ms = (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64;
-        let cutoff = now_ms - retention_ms;
-        let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
-        let mut deleted = tx.execute(
-            "DELETE FROM logcat_entry WHERE created_at < ?1",
-            params![cutoff],
-        )?;
+        let cutoff = now_ms.saturating_sub(retention_ms);
+        let mut deleted = 0usize;
+
+        // Age-based sweep. `logcat_created_at` indexes the predicate, so each
+        // chunk is an index range scan, not a table scan.
+        loop {
+            let n = {
+                let conn = self.logcat_write.lock();
+                conn.execute(
+                    "DELETE FROM logcat_entry WHERE id IN (
+                         SELECT id FROM logcat_entry WHERE created_at < ?1 LIMIT ?2
+                     )",
+                    params![cutoff, Self::PRUNE_CHUNK as i64],
+                )?
+            };
+            deleted += n;
+            if n < Self::PRUNE_CHUNK {
+                break;
+            }
+        }
+
         let serials: Vec<String> = {
-            let mut stmt = tx.prepare("SELECT DISTINCT serial FROM logcat_entry")?;
+            let conn = self.logcat_write.lock();
+            let mut stmt = conn.prepare("SELECT DISTINCT serial FROM logcat_entry")?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
+
         for s in serials {
-            // The subquery is the id of the (cap+1)-th newest row; deleting
-            // `id <=` it keeps exactly the newest `cap`. When a device has
-            // `cap` or fewer rows the subquery returns NULL and `id <= NULL`
-            // is never true — a correct no-op, no guard needed.
-            deleted += tx.execute(
-                "DELETE FROM logcat_entry WHERE serial = ?1 AND id <= (
-                     SELECT id FROM logcat_entry WHERE serial = ?1
-                     ORDER BY id DESC LIMIT 1 OFFSET ?2
-                 )",
-                params![s, per_device_cap],
-            )?;
+            // How many rows this device is over its cap. Counted once: rows
+            // ingested while we delete are newer than everything we are about
+            // to drop, so they can't change which rows are the oldest N.
+            //
+            // `id` is a *global* rowid, not per-device, so the newest `cap`
+            // rows for one serial are not "id > max_id - cap" — with two
+            // devices streaming, their ids interleave and that would trim the
+            // quieter one to far less than its cap. Counting per serial keeps
+            // the cap meaning what it says. `logcat_serial_id` makes both the
+            // count and the oldest-first read index-only.
+            let mut excess: i64 = {
+                let conn = self.logcat_write.lock();
+                let n: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM logcat_entry WHERE serial = ?1",
+                    params![s],
+                    |r| r.get(0),
+                )?;
+                n - per_device_cap
+            };
+            while excess > 0 {
+                let take = excess.min(Self::PRUNE_CHUNK as i64);
+                let n = {
+                    let conn = self.logcat_write.lock();
+                    // ORDER BY id ASC LIMIT n walks the front of the
+                    // (serial, id) index directly — no OFFSET scan.
+                    conn.execute(
+                        "DELETE FROM logcat_entry WHERE id IN (
+                             SELECT id FROM logcat_entry
+                             WHERE serial = ?1 ORDER BY id ASC LIMIT ?2
+                         )",
+                        params![s, take],
+                    )?
+                };
+                deleted += n;
+                if n == 0 {
+                    break;
+                }
+                excess -= n as i64;
+            }
         }
-        tx.commit()?;
-        // A firehose can outpace autocheckpoint; truncate the WAL so the
-        // -wal file doesn't grow without bound.
-        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+
+        // A firehose can outpace autocheckpoint, so the -wal file still needs
+        // truncating occasionally — but TRUNCATE rewrites the whole WAL and
+        // fsyncs, which is far too expensive to do on every pass. Only when it
+        // has actually grown.
+        if self.logcat_wal_bytes() > WAL_TRUNCATE_THRESHOLD_BYTES {
+            let conn = self.logcat_write.lock();
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+        }
         Ok(deleted)
     }
+
+    fn logcat_wal_bytes(&self) -> u64 {
+        std::fs::metadata(self.data_dir().join("captures.db-wal"))
+            .map(|m| m.len())
+            .unwrap_or(0)
+    }
 }
+
+/// Truncate the WAL only once it passes this. Below it, SQLite's own
+/// autocheckpoint keeps the file bounded for free.
+const WAL_TRUNCATE_THRESHOLD_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Build `WHERE serial=? AND (<dsl>) [AND pid IN(..)] [AND pid NOT IN(..)]`
 /// plus the ordered bind params (without the trailing LIMIT).
@@ -560,5 +640,74 @@ mod tests {
         // The survivors are the last three inserted.
         assert_eq!(got[0].message, "m7");
         assert_eq!(got[2].message, "m9");
+    }
+
+    /// The cap is applied per device, and `id` is a *global* rowid. Trimming
+    /// by "id > max_id - cap" would charge one device for the other's rows, so
+    /// the quiet device would end up under its cap. Interleave two serials and
+    /// check both keep exactly `cap`.
+    #[test]
+    fn per_device_cap_is_not_charged_for_another_device() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        // Alternate serials so their rowids interleave.
+        for i in 0..20 {
+            s.insert_logcat_batch("A", 10_000_000_000_000, &[ins("T", &format!("a{i}"), 1, 2)])
+                .unwrap();
+            s.insert_logcat_batch("B", 10_000_000_000_000, &[ins("T", &format!("b{i}"), 1, 2)])
+                .unwrap();
+        }
+        s.prune_logcat(i64::MAX, 5).unwrap();
+
+        let a = s.query_logcat("A", None, &[], &[], 100).unwrap();
+        let b = s.query_logcat("B", None, &[], &[], 100).unwrap();
+        assert_eq!(a.len(), 5, "device A kept the wrong number of rows");
+        assert_eq!(b.len(), 5, "device B kept the wrong number of rows");
+        assert_eq!(a[0].message, "a15");
+        assert_eq!(b[0].message, "b15");
+    }
+
+    /// Retention deletes in bounded chunks now, so an excess larger than one
+    /// chunk has to keep going rather than stopping after the first pass.
+    #[test]
+    fn prune_loops_until_the_cap_is_reached_across_chunks() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        // Two and a half chunks over the cap.
+        let total = Storage::PRUNE_CHUNK * 2 + Storage::PRUNE_CHUNK / 2 + 7;
+        let batch: Vec<LogcatInsert> = (0..total)
+            .map(|i| ins("T", &format!("m{i}"), 1, 2))
+            .collect();
+        s.insert_logcat_batch("DEV", 10_000_000_000_000, &batch)
+            .unwrap();
+
+        let deleted = s.prune_logcat(i64::MAX, 7).unwrap();
+        assert_eq!(deleted, total - 7);
+        let got = s.query_logcat("DEV", None, &[], &[], 100).unwrap();
+        assert_eq!(got.len(), 7);
+        assert_eq!(got[6].message, format!("m{}", total - 1));
+    }
+
+    /// The age sweep is chunked too — same requirement, different predicate.
+    #[test]
+    fn age_sweep_clears_more_than_one_chunk() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let old = Storage::PRUNE_CHUNK + 500;
+        let stale: Vec<LogcatInsert> = (0..old)
+            .map(|i| ins("T", &format!("old{i}"), 1, 2))
+            .collect();
+        // Ingest-stamped in 1970; anything but an enormous window is "old".
+        s.insert_logcat_batch("DEV", 1_000, &stale).unwrap();
+        let fresh_at = (OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64;
+        s.insert_logcat_batch("DEV", fresh_at, &[ins("T", "fresh", 1, 2)])
+            .unwrap();
+
+        // Retain one hour: every "old" row is past it, the fresh one is not.
+        let deleted = s.prune_logcat(60 * 60 * 1000, i64::MAX).unwrap();
+        assert_eq!(deleted, old);
+        let got = s.query_logcat("DEV", None, &[], &[], 100).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].message, "fresh");
     }
 }

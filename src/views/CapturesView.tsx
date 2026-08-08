@@ -29,6 +29,7 @@ import {
 import { filters, refreshFilters, saveFilter } from "@/stores/saved-filters";
 import HelpButton from "@/components/HelpButton";
 import { writeClipboard } from "@/lib/clipboard";
+import { withTimeout } from "@/lib/async";
 import { t, tr } from "@/i18n";
 
 const FILTER_PALETTE = [
@@ -505,7 +506,12 @@ const CapturesView: Component = () => {
     // off from a previous session, they need something to look at.
     void refresh(true);
     const off = listenToCaptures(() => debouncedRefresh());
-    const t = setInterval(refresh, 1500);
+    // `listenToCaptures` already pushes on every completed capture, so this
+    // interval is only a safety net for a dropped event — it does not need to
+    // be fast. At 1.5 s it was firing ~40 IPC calls a minute per window on top
+    // of the event stream, which is load the backend has to answer even when
+    // nothing changed.
+    const t = setInterval(refresh, 10_000);
     onCleanup(() => {
       off();
       clearInterval(t);
@@ -818,15 +824,33 @@ const CapturesView: Component = () => {
     }
   };
 
+  /// A copy is four round trips to the backend (capture, both bodies, the
+  /// clipboard write). If any of them is slow the user got no feedback at all:
+  /// the menu stayed open, the button's `disabled={addBusy()}` guard was never
+  /// armed because this function never set it, and clicking again queued a
+  /// second full chain. Close the menu on click, hold `addBusy` for the whole
+  /// chain, and never wait forever without saying so.
+  const COPY_TIMEOUT_MS = 15_000;
+
   const copyDump = async (captureId: string) => {
+    if (addBusy()) return;
+    setAddBusy(true);
+    closeAddMenu();
+    setAddToast(tr("captures.copy_dump_working"));
     try {
-      const text = await buildHttpDump(captureId);
-      await writeClipboard(text);
+      const text = await withTimeout(
+        (async () => {
+          const t = await buildHttpDump(captureId);
+          await writeClipboard(t);
+          return t;
+        })(),
+        COPY_TIMEOUT_MS,
+        tr("captures.copy_dump_timeout"),
+      );
       setAddToast(
         tr("captures.copy_dump_done", { bytes: String(text.length) }),
       );
       setTimeout(() => setAddToast(null), 2500);
-      closeAddMenu();
     } catch (e: unknown) {
       setAddToast(
         tr("captures.copy_dump_failed", {
@@ -834,6 +858,8 @@ const CapturesView: Component = () => {
         }),
       );
       setTimeout(() => setAddToast(null), 3500);
+    } finally {
+      setAddBusy(false);
     }
   };
 

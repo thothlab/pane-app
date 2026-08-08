@@ -121,23 +121,25 @@ impl Core {
     }
 
     pub async fn logcat_query(&self, args: LogcatQueryArgs) -> CoreResult<Vec<LogcatRowDto>> {
-        self.storage
-            .query_logcat(
+        self.db(move |s| {
+            s.query_logcat(
                 &args.serial,
                 args.filter.as_deref(),
                 &args.include_pids,
                 &args.exclude_pids,
                 args.limit,
             )
-            .map_err(to_api(kinds::DB))
+        })
+        .await
+        .map_err(to_api(kinds::DB))
     }
 
     pub async fn logcat_query_older(
         &self,
         args: LogcatQueryOlderArgs,
     ) -> CoreResult<Vec<LogcatRowDto>> {
-        self.storage
-            .query_logcat_before(
+        self.db(move |s| {
+            s.query_logcat_before(
                 &args.serial,
                 args.filter.as_deref(),
                 &args.include_pids,
@@ -145,39 +147,46 @@ impl Core {
                 args.before_id,
                 args.limit,
             )
-            .map_err(to_api(kinds::DB))
+        })
+        .await
+        .map_err(to_api(kinds::DB))
     }
 
     pub async fn logcat_new_count(&self, args: LogcatNewCountArgs) -> CoreResult<i64> {
-        self.storage
-            .count_logcat_new(
+        self.db(move |s| {
+            s.count_logcat_new(
                 &args.serial,
                 args.filter.as_deref(),
                 &args.include_pids,
                 &args.exclude_pids,
                 args.after_id,
             )
-            .map_err(to_api(kinds::DB))
+        })
+        .await
+        .map_err(to_api(kinds::DB))
     }
 
     pub async fn logcat_clear(&self, serial: &str) -> CoreResult<ClearResult> {
+        let serial = serial.to_string();
         let n = self
-            .storage
-            .clear_logcat(serial)
+            .db(move |s| s.clear_logcat(&serial))
+            .await
             .map_err(to_api(kinds::DB))?;
         Ok(ClearResult { deleted: n as u64 })
     }
 
     pub async fn logcat_export(&self, args: LogcatExportArgs) -> CoreResult<usize> {
-        self.storage
-            .export_logcat(
+        self.db(move |s| {
+            s.export_logcat(
                 &args.serial,
                 args.filter.as_deref(),
                 &args.include_pids,
                 &args.exclude_pids,
                 &args.path,
             )
-            .map_err(to_api(kinds::IO))
+        })
+        .await
+        .map_err(to_api(kinds::IO))
     }
 
     /// PID → process-name snapshot, for labelling rows with the package they

@@ -87,8 +87,10 @@ const ru: Dict = {
     copy_dump: "Копировать",
     copy_dump_title:
       "Скопировать в буфер обмена полный запрос + ответ (заголовки и тела) в формате OkHttp-логгера",
+    copy_dump_working: "Копирую…",
     copy_dump_done: "Скопировано ({{bytes}} байт)",
     copy_dump_failed: "Не удалось скопировать: {{message}}",
+    copy_dump_timeout: "приложение не ответило вовремя",
     selection_enter: "Выделить",
     selection_enter_title: "Выделить несколько записей для копирования или экспорта",
     selection_cancel: "Отменить выделение",
@@ -173,6 +175,7 @@ const ru: Dict = {
     tls: "TLS",
     replay: "Повтор",
     curl: "cURL",
+    curl_failed: "Не скопировалось",
     select_capture: "Выберите запись чтобы увидеть детали.",
     id: "ID",
     version: "Версия",

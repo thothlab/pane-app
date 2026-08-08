@@ -19,18 +19,25 @@ impl Core {
                     .map_err(to_api(kinds::FILTER_PARSE))?;
             }
         }
-        self.storage
-            .list_captures(args.filter.as_deref(), args.limit, args.before)
+        let ListCapturesArgs {
+            filter,
+            limit,
+            before,
+        } = args;
+        self.db(move |s| s.list_captures(filter.as_deref(), limit, before))
+            .await
             .map_err(to_api(kinds::DB))
     }
 
     pub async fn captures_count(&self) -> CoreResult<i64> {
-        self.storage.captures_count().map_err(to_api(kinds::DB))
+        self.db(|s| s.captures_count())
+            .await
+            .map_err(to_api(kinds::DB))
     }
 
     pub async fn capture_get(&self, id: Uuid) -> CoreResult<CaptureDto> {
-        self.storage
-            .get_capture(id)
+        self.db(move |s| s.get_capture(id))
+            .await
             .map_err(to_api(kinds::NOT_FOUND))
     }
 
@@ -39,22 +46,23 @@ impl Core {
         body_id: Uuid,
         max_bytes: Option<u64>,
     ) -> CoreResult<CaptureBodyDto> {
-        self.storage
-            .get_body(body_id, max_bytes)
+        self.db(move |s| s.get_body(body_id, max_bytes))
+            .await
             .map_err(to_api(kinds::NOT_FOUND))
     }
 
     pub async fn captures_clear(&self, older_than: Option<String>) -> CoreResult<ClearResult> {
         let n = self
-            .storage
-            .clear_captures(older_than)
+            .db(move |s| s.clear_captures(older_than))
+            .await
             .map_err(to_api(kinds::DB))?;
         Ok(ClearResult { deleted: n as u64 })
     }
 
     pub async fn capture_export(&self, id: Uuid, format: &str) -> CoreResult<ExportOneResult> {
-        self.storage
-            .export_one(id, format)
+        let format = format.to_string();
+        self.db(move |s| s.export_one(id, &format))
+            .await
             .map_err(to_api(kinds::EXPORT_FAILED))
     }
 }

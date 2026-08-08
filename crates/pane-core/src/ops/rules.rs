@@ -11,11 +11,13 @@ use crate::Core;
 
 impl Core {
     pub async fn rules_list(&self) -> CoreResult<Vec<RuleDto>> {
-        self.storage.list_rules().map_err(to_api(kinds::DB))
+        self.db(|s| s.list_rules()).await.map_err(to_api(kinds::DB))
     }
 
     pub async fn rule_get(&self, id: Uuid) -> CoreResult<RuleDto> {
-        self.storage.get_rule(id).map_err(to_api(kinds::NOT_FOUND))
+        self.db(move |s| s.get_rule(id))
+            .await
+            .map_err(to_api(kinds::NOT_FOUND))
     }
 
     /// Create or update a rule.
@@ -24,16 +26,20 @@ impl Core {
     /// process: `proxy_loop` calls `list_active_rules()` per request rather
     /// than caching.
     pub async fn rule_upsert(&self, args: RuleUpsertArgs) -> CoreResult<RuleDto> {
-        self.storage.upsert_rule(args).map_err(to_api(kinds::DB))
+        self.db(move |s| s.upsert_rule(args))
+            .await
+            .map_err(to_api(kinds::DB))
     }
 
     pub async fn rule_delete(&self, id: Uuid) -> CoreResult<()> {
-        self.storage.delete_rule(id).map_err(to_api(kinds::DB))
+        self.db(move |s| s.delete_rule(id))
+            .await
+            .map_err(to_api(kinds::DB))
     }
 
     pub async fn rule_set_enabled(&self, args: RuleSetEnabledArgs) -> CoreResult<()> {
-        self.storage
-            .set_rule_enabled(args)
+        self.db(move |s| s.set_rule_enabled(args))
+            .await
             .map_err(to_api(kinds::DB))
     }
 
@@ -42,45 +48,47 @@ impl Core {
         &self,
         args: RulesSetEnabledBulkArgs,
     ) -> CoreResult<RulesSetEnabledBulkResult> {
-        self.storage
-            .set_rules_enabled_bulk(args)
+        self.db(move |s| s.set_rules_enabled_bulk(args))
+            .await
             .map_err(to_api(kinds::DB))
     }
 
     pub async fn rule_set_priority(&self, args: RuleSetPriorityArgs) -> CoreResult<()> {
-        self.storage
-            .set_rule_priority(args)
+        self.db(move |s| s.set_rule_priority(args))
+            .await
             .map_err(to_api(kinds::DB))
     }
 
     pub async fn collections_list(&self) -> CoreResult<Vec<RuleCollectionDto>> {
-        self.storage.list_collections().map_err(to_api(kinds::DB))
+        self.db(|s| s.list_collections())
+            .await
+            .map_err(to_api(kinds::DB))
     }
 
     pub async fn collection_upsert(
         &self,
         args: CollectionUpsertArgs,
     ) -> CoreResult<RuleCollectionDto> {
-        self.storage
-            .upsert_collection(args)
+        self.db(move |s| s.upsert_collection(args))
+            .await
             .map_err(to_api(kinds::DB))
     }
 
     pub async fn collection_delete(&self, id: Uuid) -> CoreResult<()> {
-        self.storage
-            .delete_collection(id)
+        self.db(move |s| s.delete_collection(id))
+            .await
             .map_err(to_api(kinds::DB))
     }
 
     pub async fn collection_set_enabled(&self, args: CollectionSetEnabledArgs) -> CoreResult<()> {
-        self.storage
-            .set_collection_enabled(args)
+        self.db(move |s| s.set_collection_enabled(args))
+            .await
             .map_err(to_api(kinds::DB))
     }
 
     pub async fn collection_set_priority(&self, args: CollectionSetPriorityArgs) -> CoreResult<()> {
-        self.storage
-            .set_collection_priority(args)
+        self.db(move |s| s.set_collection_priority(args))
+            .await
             .map_err(to_api(kinds::DB))
     }
 }
