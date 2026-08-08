@@ -269,6 +269,11 @@ const en = {
     export_rule_title: "Export this rule",
     duplicate_rule_title: "Duplicate this rule",
     drag_collection: "Drag to reorder",
+    collection_on_title:
+      "Collection is on. Click to silence every rule in it without changing which ones are ticked.",
+    collection_off_title:
+      "Collection is off — none of its rules can match. Click to bring it back.",
+    collection_off_badge: "collection off",
     copy_suffix: " - copy",
     export_failed: "Export failed: {{message}}",
     import_invalid: "This file isn't a Pane rules export: {{message}}",

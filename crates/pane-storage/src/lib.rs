@@ -1060,9 +1060,24 @@ impl Storage {
     }
 
     /// Load active rules with their bodies materialized for the engine
-    /// matcher. A rule is active solely based on its own `enabled` flag;
-    /// collections are purely a UI grouping. Ordered by collection priority
-    /// then rule priority then created_at.
+    /// matcher. A rule fires only when **both** its own `enabled` flag and its
+    /// collection's are set; a rule with no collection needs only its own.
+    /// Ordered by collection priority then rule priority then created_at.
+    ///
+    /// The cascade was dropped in 81dc73e when the per-collection toggle left
+    /// the GUI, and `collection.enabled` became a column nothing read. That was
+    /// coherent until the CLI and MCP server arrived (de55cb6) and re-exposed
+    /// it as `collections enable|disable|only` — the documented way to switch
+    /// between mock scenarios, in `AGENTS.md` and both skills. Those commands
+    /// wrote the column, reported success, and changed nothing about which
+    /// rules served traffic. An automated run could switch scenarios, watch the
+    /// wrong rules answer, and still look green — the exact failure the
+    /// `rule:` filter exists to catch.
+    ///
+    /// Restoring the cascade makes the collection mean what all three surfaces
+    /// already claim it means. It is deliberately the *stricter* reading: a
+    /// disabled collection masks its rules regardless of their own flags, so
+    /// `collections only <sel>` is a real scenario switch and not a hint.
     pub fn list_active_rules(&self) -> Result<Vec<ActiveRule>> {
         let dtos = {
             let conn = self.conn.lock();
@@ -1075,6 +1090,7 @@ impl Storage {
                  FROM rule r
                  LEFT JOIN rule_collection c ON c.id = r.collection_id
                  WHERE r.enabled=1
+                   AND (r.collection_id IS NULL OR c.enabled=1)
                  ORDER BY COALESCE(c.priority, 0) ASC,
                           r.priority ASC,
                           r.created_at ASC",
@@ -1262,6 +1278,136 @@ mod filter_dedup_tests {
         let a = s.save_filter(args("RC1", "host:rc1", "captures")).unwrap();
         let b = s.save_filter(args("  rc1 ", "host:x", "captures")).unwrap();
         assert_eq!(a.id, b.id, "trim + lowercase name should match");
+    }
+}
+
+#[cfg(test)]
+mod collection_cascade_tests {
+    use super::*;
+    use pane_ipc::{CollectionSetEnabledArgs, CollectionUpsertArgs, RuleUpsertArgs};
+    use tempfile::tempdir;
+
+    fn collection(s: &Storage, name: &str, enabled: bool) -> Uuid {
+        s.upsert_collection(CollectionUpsertArgs {
+            id: None,
+            name: name.into(),
+            enabled,
+            priority: 0,
+        })
+        .unwrap()
+        .id
+    }
+
+    fn rule(s: &Storage, name: &str, collection_id: Option<Uuid>) -> Uuid {
+        s.upsert_rule(RuleUpsertArgs {
+            id: None,
+            name: name.into(),
+            enabled: true,
+            priority: 0,
+            collection_id,
+            mode: "stub".into(),
+            patches: vec![],
+            match_host_glob: Some("api.example.com".into()),
+            match_method: None,
+            match_path_glob: None,
+            match_params: vec![],
+            match_req_body: None,
+            match_conditions: vec![],
+            res_status: 200,
+            res_headers: vec![],
+            res_body_id: None,
+            res_body_base64: None,
+            res_body_mime: None,
+            res_delay_ms: 0,
+        })
+        .unwrap()
+        .id
+    }
+
+    fn active_names(s: &Storage) -> Vec<String> {
+        s.list_active_rules()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect()
+    }
+
+    /// The regression that made `pane collections only` a no-op: an enabled
+    /// rule inside a disabled collection kept serving traffic, so switching
+    /// scenarios changed nothing while reporting success.
+    #[test]
+    fn disabled_collection_masks_its_enabled_rules() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let off = collection(&s, "scenario-off", false);
+        rule(&s, "in-disabled-collection", Some(off));
+
+        assert!(
+            active_names(&s).is_empty(),
+            "an enabled rule in a disabled collection must not be active"
+        );
+    }
+
+    #[test]
+    fn ungrouped_rules_need_only_their_own_flag() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        rule(&s, "ungrouped", None);
+
+        assert_eq!(
+            active_names(&s),
+            vec!["ungrouped"],
+            "a rule with no collection has no collection to be masked by"
+        );
+    }
+
+    /// What `collections only <sel>` is supposed to do end to end.
+    #[test]
+    fn toggling_a_collection_switches_the_live_rule_set() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let a = collection(&s, "scenario-a", true);
+        let b = collection(&s, "scenario-b", false);
+        rule(&s, "rule-a", Some(a));
+        rule(&s, "rule-b", Some(b));
+
+        assert_eq!(active_names(&s), vec!["rule-a"]);
+
+        // Flip to the other scenario, exactly as `collections only` does.
+        s.set_collection_enabled(CollectionSetEnabledArgs {
+            id: a,
+            enabled: false,
+        })
+        .unwrap();
+        s.set_collection_enabled(CollectionSetEnabledArgs {
+            id: b,
+            enabled: true,
+        })
+        .unwrap();
+
+        assert_eq!(
+            active_names(&s),
+            vec!["rule-b"],
+            "switching collections must switch which rules serve traffic"
+        );
+    }
+
+    /// The collection flag masks, it does not enable: re-enabling a collection
+    /// must not resurrect rules the user disabled individually.
+    #[test]
+    fn enabled_collection_does_not_override_a_disabled_rule() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let c = collection(&s, "scenario", true);
+        let id = rule(&s, "explicitly-off", Some(c));
+        s.set_rule_enabled(pane_ipc::RuleSetEnabledArgs { id, enabled: false })
+            .unwrap();
+
+        assert!(active_names(&s).is_empty());
     }
 }
 
