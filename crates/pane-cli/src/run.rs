@@ -904,32 +904,28 @@ async fn collections(s: &mut Session, cmd: CollectionsCmd, format: Format) -> Re
         CollectionsCmd::Enable { selector } => set_collection(s, &selector, true).await,
         CollectionsCmd::Disable { selector } => set_collection(s, &selector, false).await,
         CollectionsCmd::Only { selector } => {
+            // "Only this scenario" = clear every checkbox, then tick this
+            // collection's. Expressed in `rule.enabled`, the one flag the
+            // engine reads and the user can see in the list — there is no
+            // separate collection switch to fall out of sync with it.
             let all = as_array(s.call("collections.list", Value::Null).await?);
             let keep = resolve(&all, &selector, "name", "collection")?;
-            let mut enabled = 0usize;
-            let mut disabled = 0usize;
-            for c in &all {
-                let id = c["id"].as_str().unwrap_or("").to_string();
-                let want = id == keep;
-                // Skip the ones already in the right state: each call is a
-                // round trip, and with a dozen collections that is the
-                // difference between one write and twelve.
-                if c["enabled"].as_bool().unwrap_or(false) == want {
-                    continue;
-                }
-                s.call(
-                    "collections.set_enabled",
-                    json!({ "id": id, "enabled": want }),
+
+            s.call(
+                "rules.set_enabled_bulk",
+                json!({ "enabled": false, "scope": { "kind": "all" } }),
+            )
+            .await?;
+            let v = s
+                .call(
+                    "rules.set_enabled_bulk",
+                    json!({ "enabled": true, "scope": { "kind": "collection", "id": keep } }),
                 )
                 .await?;
-                if want {
-                    enabled += 1
-                } else {
-                    disabled += 1
-                }
-            }
+            let on = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
+
             note(format!(
-                "enabled {enabled}, disabled {disabled} — only `{}` is live",
+                "only `{}` is live — {on} rule(s) enabled, everything else off",
                 all.iter()
                     .find(|c| c["id"].as_str() == Some(keep.as_str()))
                     .and_then(|c| c["name"].as_str())
@@ -991,21 +987,25 @@ async fn resolve_collection(s: &mut Session, selector: &str) -> Result<String> {
     resolve(&all, selector, "name", "collection")
 }
 
+/// Tick or untick every rule in a collection.
+///
+/// Deliberately not a write to `rule_collection.enabled`: that column exists
+/// but nothing reads it when deciding what serves traffic, so writing it would
+/// report success and change nothing.
 async fn set_collection(s: &mut Session, selector: &str, enabled: bool) -> Result<i32> {
-    let all = as_array(s.call("collections.list", Value::Null).await?);
-    let id = resolve(&all, selector, "name", "collection")?;
-    s.call(
-        "collections.set_enabled",
-        json!({ "id": id, "enabled": enabled }),
-    )
-    .await?;
+    let id = resolve_collection(s, selector).await?;
+    let v = s
+        .call(
+            "rules.set_enabled_bulk",
+            json!({ "enabled": enabled, "scope": { "kind": "collection", "id": id } }),
+        )
+        .await?;
+    let matched = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
+    let changed = v.get("changed").and_then(|x| x.as_u64()).unwrap_or(0);
     note(format!(
-        "{} {}",
+        "{} {changed} of {matched} rule(s) in {}",
         if enabled { "enabled" } else { "disabled" },
-        all.iter()
-            .find(|c| c["id"].as_str() == Some(id.as_str()))
-            .and_then(|c| c["name"].as_str())
-            .unwrap_or(&id)
+        short(&id)
     ));
     Ok(exit::OK)
 }

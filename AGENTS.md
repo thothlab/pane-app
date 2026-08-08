@@ -35,10 +35,11 @@ both sides:
 
 ## Rules
 
-- A rule fires only when **both** it and its collection are enabled. A rule with
-  no collection needs only its own flag. So `collections disable <sel>` silences
-  a whole scenario without disturbing which rules inside it are ticked —
-  re-enabling restores exactly the selection you had.
+- A rule fires on its own `enabled` flag alone. There is no second switch on the
+  collection — a collection is grouping and ordering only, so a ticked rule is
+  always live and there is never a second place to look.
+- `collections enable|disable|only <sel>` therefore tick and untick the rules
+  themselves. `only` = disable everything, then enable that collection.
 - The reliable way into a known state is `pane rules disable --all` followed by
   `pane rules enable --collection <sel>`, rather than trusting whatever the last
   run left behind.

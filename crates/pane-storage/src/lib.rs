@@ -1118,24 +1118,24 @@ impl Storage {
     }
 
     /// Load active rules with their bodies materialized for the engine
-    /// matcher. A rule fires only when **both** its own `enabled` flag and its
-    /// collection's are set; a rule with no collection needs only its own.
-    /// Ordered by collection priority then rule priority then created_at.
+    /// matcher. A rule is active on its own `enabled` flag alone. Ordered by
+    /// collection priority then rule priority then created_at.
     ///
-    /// The cascade was dropped in 81dc73e when the per-collection toggle left
-    /// the GUI, and `collection.enabled` became a column nothing read. That was
-    /// coherent until the CLI and MCP server arrived (de55cb6) and re-exposed
-    /// it as `collections enable|disable|only` — the documented way to switch
-    /// between mock scenarios, in `AGENTS.md` and both skills. Those commands
-    /// wrote the column, reported success, and changed nothing about which
-    /// rules served traffic. An automated run could switch scenarios, watch the
-    /// wrong rules answer, and still look green — the exact failure the
-    /// `rule:` filter exists to catch.
+    /// **The checkbox is the only truth.** There is deliberately no second
+    /// switch on the collection that can also silence a rule. A collection is
+    /// grouping and ordering, nothing more.
     ///
-    /// Restoring the cascade makes the collection mean what all three surfaces
-    /// already claim it means. It is deliberately the *stricter* reading: a
-    /// disabled collection masks its rules regardless of their own flags, so
-    /// `collections only <sel>` is a real scenario switch and not a hint.
+    /// This was tried the other way and rejected: with a cascade, a rule can
+    /// sit there ticked and still not fire, and nothing about the rule itself
+    /// explains why. Every "my mock isn't working" then has two places to look
+    /// instead of one. Switching scenarios does not need the extra state —
+    /// `set_rules_enabled_bulk` over a collection scope ticks and unticks the
+    /// boxes directly, which is both visible in the UI and the same mechanism
+    /// the user operates by hand.
+    ///
+    /// `rule_collection.enabled` still exists in the schema (V003) and is still
+    /// carried in the DTO for export/import round-trips, but nothing reads it
+    /// to decide what serves traffic. Do not reintroduce it here.
     pub fn list_active_rules(&self) -> Result<Vec<ActiveRule>> {
         let dtos = {
             let conn = self.conn.lock();
@@ -1148,7 +1148,6 @@ impl Storage {
                  FROM rule r
                  LEFT JOIN rule_collection c ON c.id = r.collection_id
                  WHERE r.enabled=1
-                   AND (r.collection_id IS NULL OR c.enabled=1)
                  ORDER BY COALESCE(c.priority, 0) ASC,
                           r.priority ASC,
                           r.created_at ASC",
@@ -1340,7 +1339,7 @@ mod filter_dedup_tests {
 }
 
 #[cfg(test)]
-mod collection_cascade_tests {
+mod rule_enablement_tests {
     use super::*;
     use pane_ipc::{CollectionSetEnabledArgs, CollectionUpsertArgs, RuleUpsertArgs};
     use tempfile::tempdir;
@@ -1390,20 +1389,22 @@ mod collection_cascade_tests {
             .collect()
     }
 
-    /// The regression that made `pane collections only` a no-op: an enabled
-    /// rule inside a disabled collection kept serving traffic, so switching
-    /// scenarios changed nothing while reporting success.
+    /// The checkbox is the only truth. A collection's own flag must never
+    /// mask a ticked rule — that was tried and reverted, because it produced
+    /// rules that looked enabled in the list and silently never fired, with
+    /// nothing on the rule itself to explain why.
     #[test]
-    fn disabled_collection_masks_its_enabled_rules() {
+    fn a_collections_flag_never_masks_its_rules() {
         let dir = tempdir().unwrap();
         let s = Storage::open(dir.path()).unwrap();
 
-        let off = collection(&s, "scenario-off", false);
-        rule(&s, "in-disabled-collection", Some(off));
+        let off = collection(&s, "flag-is-off", false);
+        rule(&s, "ticked", Some(off));
 
-        assert!(
-            active_names(&s).is_empty(),
-            "an enabled rule in a disabled collection must not be active"
+        assert_eq!(
+            active_names(&s),
+            vec!["ticked"],
+            "rule.enabled alone decides whether a rule serves traffic"
         );
     }
 
@@ -1414,35 +1415,30 @@ mod collection_cascade_tests {
 
         rule(&s, "ungrouped", None);
 
-        assert_eq!(
-            active_names(&s),
-            vec!["ungrouped"],
-            "a rule with no collection has no collection to be masked by"
-        );
+        assert_eq!(active_names(&s), vec!["ungrouped"]);
     }
 
-    /// What `collections only <sel>` is supposed to do end to end.
+    /// What `collections only <sel>` does now: clear every box, then tick the
+    /// one collection. Same outcome as before, expressed in the state the user
+    /// can actually see.
     #[test]
-    fn toggling_a_collection_switches_the_live_rule_set() {
+    fn switching_scenarios_moves_the_checkboxes() {
         let dir = tempdir().unwrap();
         let s = Storage::open(dir.path()).unwrap();
 
         let a = collection(&s, "scenario-a", true);
-        let b = collection(&s, "scenario-b", false);
+        let b = collection(&s, "scenario-b", true);
         rule(&s, "rule-a", Some(a));
         rule(&s, "rule-b", Some(b));
 
-        assert_eq!(active_names(&s), vec!["rule-a"]);
-
-        // Flip to the other scenario, exactly as `collections only` does.
-        s.set_collection_enabled(CollectionSetEnabledArgs {
-            id: a,
+        s.set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
             enabled: false,
+            scope: RuleBulkScope::All,
         })
         .unwrap();
-        s.set_collection_enabled(CollectionSetEnabledArgs {
-            id: b,
+        s.set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
             enabled: true,
+            scope: RuleBulkScope::Collection { id: b },
         })
         .unwrap();
 
@@ -1523,21 +1519,6 @@ mod collection_cascade_tests {
             .unwrap();
         assert_eq!((r.matched, r.changed), (1, 1));
         assert_eq!(active_names(&s), vec!["grouped"]);
-    }
-
-    /// The collection flag masks, it does not enable: re-enabling a collection
-    /// must not resurrect rules the user disabled individually.
-    #[test]
-    fn enabled_collection_does_not_override_a_disabled_rule() {
-        let dir = tempdir().unwrap();
-        let s = Storage::open(dir.path()).unwrap();
-
-        let c = collection(&s, "scenario", true);
-        let id = rule(&s, "explicitly-off", Some(c));
-        s.set_rule_enabled(pane_ipc::RuleSetEnabledArgs { id, enabled: false })
-            .unwrap();
-
-        assert!(active_names(&s).is_empty());
     }
 }
 

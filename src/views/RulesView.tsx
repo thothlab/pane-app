@@ -22,8 +22,6 @@ import {
   FilePlus,
   Minus,
   AlertTriangle,
-  Power,
-  PowerOff,
 } from "lucide-solid";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readClipboard } from "@/lib/clipboard";
@@ -285,16 +283,10 @@ const RulesView: Component = () => {
     await refresh();
   };
 
-  // Flip the collection's own flag — a different thing from the tri-state
-  // checkbox next to it, which edits the rules. The collection flag *masks*:
-  // switching it off silences the whole group without touching what each rule
-  // remembers, so switching back restores exactly the selection you had.
-  //
-  // This is the switch `pane collections enable|disable|only` writes, and the
-  // one the engine reads. It lives in the GUI so the two surfaces agree —
-  // without it, a scenario switched from the CLI would be invisible here.
-  const toggleCollectionEnabled = async (c: RuleCollectionDto) => {
-    await api.collections.setEnabled(c.id, !c.enabled);
+  // Tick or untick every rule in the library, in one call.
+  const toggleAllRules = async (targetEnabled: boolean) => {
+    if (rules().every((r) => r.enabled === targetEnabled)) return;
+    await api.rules.setEnabledBulk(targetEnabled, { kind: "all" });
     await refresh();
   };
 
@@ -615,6 +607,43 @@ const RulesView: Component = () => {
             <HelpButton path="/rules/" title={t()("rules.help_title")} />
           </div>
         </div>
+
+        {/*
+          Master checkbox over the whole library. Same tri-state reading as the
+          per-collection one, one level up: all ticked → clears everything,
+          otherwise → ticks everything. One call, not one per rule.
+
+          It earns its place in the header because resetting to a known state
+          is the single most common thing done here — before a run you want
+          everything off, then exactly one collection on. Without it that was
+          a click per rule.
+        */}
+        <Show when={rules().length > 0}>
+          <div class="flex items-center gap-2 pl-2">
+            <Checkbox
+              state={
+                rules().every((r) => r.enabled)
+                  ? "on"
+                  : rules().every((r) => !r.enabled)
+                  ? "off"
+                  : "mixed"
+              }
+              title={
+                rules().every((r) => r.enabled)
+                  ? t()("rules.uncheck_all_title")
+                  : t()("rules.check_all_title")
+              }
+              onClick={() => void toggleAllRules(!rules().every((r) => r.enabled))}
+            />
+            <span class="text-xs text-fg-muted">
+              {t()("rules.enabled_count", {
+                on: String(rules().filter((r) => r.enabled).length),
+                total: String(rules().length),
+              })}
+            </span>
+          </div>
+        </Show>
+
         <div class="ml-auto flex items-center gap-2">
           <button
             class="inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-border hover:bg-bg-muted"
@@ -707,7 +736,6 @@ const RulesView: Component = () => {
               onReorderCollection={reorderCollection}
               onToggleRule={toggleRule}
               onToggleCollection={(en) => toggleCollection(c.id, rulesByCollection().get(c.id) ?? [], en)}
-              onToggleCollectionEnabled={() => toggleCollectionEnabled(c)}
               onDeleteRule={removeRule}
               editing={editing()}
               onSaved={onRuleSaved}
@@ -746,9 +774,6 @@ const RulesView: Component = () => {
           onReorderCollection={reorderCollection}
           onToggleRule={toggleRule}
           onToggleCollection={(en) => toggleCollection(null, rulesByCollection().get(UNGROUPED_KEY) ?? [], en)}
-          // Ungrouped is not a row in `rule_collection`, so it has no flag to
-          // flip; the button that would call this is hidden for it.
-          onToggleCollectionEnabled={() => {}}
           onDeleteRule={removeRule}
           editing={editing()}
           onSaved={onRuleSaved}
@@ -829,7 +854,6 @@ const CollectionSection: Component<{
   onReorderCollection: (draggedId: string, targetId: string, position: "before" | "after") => void;
   onToggleRule: (r: RuleDto) => void;
   onToggleCollection: (enable: boolean) => void;
-  onToggleCollectionEnabled: () => void;
   onDeleteRule: (r: RuleDto) => void;
   editing: Editing;
   onSaved: (r: RuleDto) => void | Promise<void>;
@@ -986,35 +1010,6 @@ const CollectionSection: Component<{
         </button>
 
         {/*
-          The collection's own on/off switch — `collection.enabled`, the flag
-          the engine actually reads and the one the CLI's `collections
-          enable|disable|only` writes. Distinct from the tri-state checkbox
-          beside it: this one masks the whole group while leaving each rule's
-          own flag untouched, so flipping it back restores the exact selection.
-          Ungrouped has no row to toggle.
-        */}
-        <Show when={!isUngrouped()}>
-          <button
-            class={`shrink-0 rounded p-0.5 ${
-              p.collection!.enabled
-                ? "text-accent hover:text-accent/80"
-                : "text-fg-muted hover:text-fg"
-            }`}
-            title={
-              p.collection!.enabled
-                ? t()("rules.collection_on_title")
-                : t()("rules.collection_off_title")
-            }
-            aria-pressed={p.collection!.enabled}
-            onClick={() => p.onToggleCollectionEnabled()}
-          >
-            <Show when={p.collection!.enabled} fallback={<PowerOff size={14} />}>
-              <Power size={14} />
-            </Show>
-          </button>
-        </Show>
-
-        {/*
           Collection-level toggle. State reflects the aggregate:
           - all rules enabled  → "on", clicking disables all
           - all rules disabled → "off", clicking enables all
@@ -1048,26 +1043,10 @@ const CollectionSection: Component<{
           when={isRenaming()}
           fallback={
             <>
-              <div
-                class={`font-medium text-sm ${
-                  p.collection && !p.collection.enabled ? "text-fg-muted" : ""
-                }`}
-              >
+              <div class="font-medium text-sm">
                 {p.collection?.name ?? t()("rules.ungrouped")}
               </div>
               <div class="text-xs text-fg-muted">({p.rules.length})</div>
-              {/*
-                Without this badge a disabled collection is indistinguishable
-                from an empty run: every rule inside still looks ticked, because
-                each rule's own flag is genuinely still on. Say why nothing is
-                matching instead of letting the user re-check rules that were
-                never the problem.
-              */}
-              <Show when={p.collection && !p.collection.enabled}>
-                <div class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-bg-muted text-fg-muted shrink-0">
-                  {t()("rules.collection_off_badge")}
-                </div>
-              </Show>
             </>
           }
         >

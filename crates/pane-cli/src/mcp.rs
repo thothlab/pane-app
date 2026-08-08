@@ -109,7 +109,7 @@ pub fn tools() -> Vec<Value> {
     let filter_doc = "Captures filter DSL, identical to the GUI search bar. Keys: host: path: \
                       method: status: mime: size: duration: error: device: state: rule:. A bare \
                       word matches host OR path. `a,b` = OR, `N..M` = range, `!` negates. \
-                      state is completed|stubbed|patched|error; rule: matches the rule that \
+                      state is completed|stubbed|patched|tunneled|error; rule: matches the rule that \
                       served a mocked response.";
     vec![
         tool("pane_doctor", "Proxy state, paired/attached devices, adb availability and CA fingerprint. Run this first.", json!({}), vec![]),
@@ -152,19 +152,19 @@ pub fn tools() -> Vec<Value> {
         tool("pane_captures_clear", "Delete every capture. Use between scenarios so assertions cannot match a previous run.", json!({}), vec![]),
         tool(
             "pane_collections_list",
-            "Rule collections with their enabled state and rule count. A collection groups the rules for one scenario, so listing these is usually the right first step before switching scenarios.",
+            "Rule collections and how many rules each holds. A collection groups the rules for one scenario, so listing these is usually the right first step before switching scenarios. Note: whether a rule fires depends on the rule's own enabled flag, not on the collection.",
             json!({}),
             vec![],
         ),
         tool(
             "pane_collection_set_enabled",
-            "Enable or disable a whole collection by name substring or id — switches every rule in that scenario at once.",
+            "Enable or disable every rule in a collection, by name substring or id. This ticks the rules themselves — there is no separate collection switch.",
             json!({ "selector": { "type": "string" }, "enabled": { "type": "boolean" } }),
             vec!["selector", "enabled"],
         ),
         tool(
             "pane_collection_only",
-            "Enable exactly one collection and disable all the others. The usual way to move from one scenario to the next without leaving the previous scenario's rules live and shadowing it.",
+            "Switch to exactly one scenario: disables every rule in the library, then enables the rules of this collection. The usual way to move between scenarios without leaving the previous one's rules live and shadowing it.",
             json!({ "selector": { "type": "string" } }),
             vec!["selector"],
         ),
@@ -326,37 +326,36 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
                 .unwrap_or(true);
             let all = s.call("collections.list", Value::Null).await?;
             let id = pick_named(&all, selector, "collection")?;
-            s.call(
-                "collections.set_enabled",
-                json!({ "id": id, "enabled": enabled }),
-            )
-            .await?;
+            let v = s
+                .call(
+                    "rules.set_enabled_bulk",
+                    json!({ "enabled": enabled, "scope": { "kind": "collection", "id": id } }),
+                )
+                .await?;
+            let matched = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
             Ok(format!(
-                "{} collection {id}",
+                "{} {matched} rule(s) in collection {id}",
                 if enabled { "enabled" } else { "disabled" }
             ))
         }
         "pane_collection_only" => {
             let selector = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
             let all = s.call("collections.list", Value::Null).await?;
-            let keep = pick_named(&all, selector, "collection")?;
-            let empty = vec![];
-            let mut changed = 0usize;
-            for c in all.as_array().unwrap_or(&empty) {
-                let id = c["id"].as_str().unwrap_or("").to_string();
-                let want = id == keep;
-                if c["enabled"].as_bool().unwrap_or(false) == want {
-                    continue;
-                }
-                s.call(
-                    "collections.set_enabled",
-                    json!({ "id": id, "enabled": want }),
+            let id = pick_named(&all, selector, "collection")?;
+            s.call(
+                "rules.set_enabled_bulk",
+                json!({ "enabled": false, "scope": { "kind": "all" } }),
+            )
+            .await?;
+            let v = s
+                .call(
+                    "rules.set_enabled_bulk",
+                    json!({ "enabled": true, "scope": { "kind": "collection", "id": id } }),
                 )
                 .await?;
-                changed += 1;
-            }
+            let on = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
             Ok(format!(
-                "only `{selector}` is enabled now ({changed} collection(s) changed)"
+                "only collection {id} is live — {on} rule(s) enabled, everything else disabled"
             ))
         }
         "pane_rules_list" => pretty(s.call("rules.list", Value::Null).await?),
