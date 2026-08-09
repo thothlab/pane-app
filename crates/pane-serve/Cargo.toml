@@ -1,0 +1,32 @@
+[package]
+name = "pane-serve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Serves the Pane UI and API over local HTTP, for a browser"
+
+# axum and tower-http are pinned to the same versions apps/web already uses, so
+# this crate adds no new entries to Cargo.lock. That matters more than usual
+# here: CI builds with --locked against a pinned toolchain, so a new dependency
+# is expensive to introduce.
+[dependencies]
+axum = "0.7"
+tower-http = { version = "0.6", features = ["trace"] }
+
+anyhow.workspace = true
+bytes.workspace = true
+futures.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+pane-control.workspace = true
+pane-core.workspace = true
+pane-ipc.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+tempfile.workspace = true
