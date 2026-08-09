@@ -11,9 +11,17 @@
  * release marked `releases/latest`. Failures (no network, 404 before
  * manifest is published, signature mismatch) are logged but never
  * surfaced silently — we don't want to nag users about flaky checks.
+ *
+ * Desktop-only. Every entry point here no-ops in a browser, but that makes them
+ * *quietly* useless — a "Check for updates" button that reports success without
+ * checking anything is worse than one that is not there. Callers gate their UI
+ * on `updatesSupported`, re-exported below.
  */
 
 import { createSignal } from "solid-js";
+import { isTauri, updatesSupported } from "@/ipc/platform";
+
+export { updatesSupported };
 
 type UpdateHandle = {
   version: string;
@@ -32,10 +40,6 @@ export const updaterLastCheckedAt = lastCheckedAt;
 
 export function pendingUpdateVersion(): string | null {
   return pending()?.version ?? null;
-}
-
-function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 async function runCheck(): Promise<{ found: boolean; error?: unknown }> {

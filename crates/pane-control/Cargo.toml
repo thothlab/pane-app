@@ -24,3 +24,7 @@ libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true
+# Seeding capture rows for the subscription tests. There is no public insert
+# API — the proxy loop and the replay path both write that table directly — so
+# the tests do the same.
+rusqlite.workspace = true

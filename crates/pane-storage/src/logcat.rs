@@ -167,8 +167,7 @@ impl Storage {
     }
 
     /// Export the full (uncapped) filtered set for a device to `path` in
-    /// threadtime format. Streams row-by-row so a day's worth never has to
-    /// materialize in memory. Returns the line count written.
+    /// threadtime format. Returns the line count written.
     pub fn export_logcat(
         &self,
         serial: &str,
@@ -176,6 +175,27 @@ impl Storage {
         include_pids: &[u32],
         exclude_pids: &[u32],
         path: &str,
+    ) -> Result<usize> {
+        let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
+        let count = self.export_logcat_to(serial, filter, include_pids, exclude_pids, &mut w)?;
+        w.flush()?;
+        Ok(count)
+    }
+
+    /// Same export, into any sink.
+    ///
+    /// Generic over the writer because the browser build streams this straight
+    /// into an HTTP response body while the desktop writes a file. The set is
+    /// uncapped — a day off a chatty device is hundreds of megabytes — so it is
+    /// written row-by-row and must never be collected into a `Vec` on the way
+    /// out. Returns the line count.
+    pub fn export_logcat_to<W: std::io::Write>(
+        &self,
+        serial: &str,
+        filter: Option<&str>,
+        include_pids: &[u32],
+        exclude_pids: &[u32],
+        w: &mut W,
     ) -> Result<usize> {
         let (where_sql, params) = logcat_where(serial, filter, include_pids, exclude_pids)?;
         let sql = format!(
@@ -186,7 +206,6 @@ impl Storage {
         let mut stmt = conn.prepare(&sql)?;
         let refs: Vec<&dyn ToSql> = params.iter().map(|b| b.as_ref()).collect();
         let mut rows = stmt.query(refs.as_slice())?;
-        let mut w = std::io::BufWriter::new(std::fs::File::create(path)?);
         let mut count = 0usize;
         while let Some(r) = rows.next()? {
             let device_ts: String = r.get(0)?;
@@ -202,7 +221,6 @@ impl Storage {
             )?;
             count += 1;
         }
-        w.flush()?;
         Ok(count)
     }
 

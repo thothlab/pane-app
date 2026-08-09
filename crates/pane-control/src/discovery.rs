@@ -39,6 +39,27 @@ pub struct Discovery {
     /// reading that database directly.
     pub data_dir: PathBuf,
     pub started_at: String,
+    /// Present when this instance also serves the UI over HTTP (`pane serve`).
+    ///
+    /// It rides in here rather than in a file of its own because this one is
+    /// already written atomically at 0600, which is exactly what a bearer token
+    /// needs — and because "where is the running instance" is the question this
+    /// file already answers. `#[serde(default)]` so a `control.json` written by
+    /// an older build still parses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<HttpEndpoint>,
+}
+
+/// Where the browser UI is, and the token that gets in.
+///
+/// Anyone who can read this file is already the same uid as the process, so the
+/// token adds no boundary against them — it exists to stop *other* local
+/// processes, which can reach a loopback TCP port but cannot read a 0600 file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpEndpoint {
+    /// Full origin, e.g. `http://127.0.0.1:8890`.
+    pub url: String,
+    pub token: String,
 }
 
 impl Discovery {
@@ -170,7 +191,44 @@ mod tests {
             endpoint: Discovery::socket_path_in(dir),
             data_dir: dir.to_path_buf(),
             started_at: "2026-08-05T09:00:00Z".into(),
+            http: None,
         }
+    }
+
+    /// `control.json` files written before `pane serve` existed have no `http`
+    /// key at all. They must still parse, or upgrading strands the CLI.
+    #[test]
+    fn metadata_without_an_http_endpoint_still_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        let json = serde_json::json!({
+            "protocol": PROTOCOL_VERSION,
+            "pid": 1234,
+            "app_version": "0.2.9",
+            "kind": "gui",
+            "endpoint": Discovery::socket_path_in(dir.path()),
+            "data_dir": dir.path(),
+            "started_at": "2026-08-05T09:00:00Z",
+        });
+        std::fs::write(Discovery::path_in(dir.path()), json.to_string()).unwrap();
+
+        let got = Discovery::read(dir.path()).unwrap().expect("parsed");
+        assert!(got.http.is_none());
+    }
+
+    #[test]
+    fn an_http_endpoint_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut d = sample(dir.path());
+        d.http = Some(HttpEndpoint {
+            url: "http://127.0.0.1:8890".into(),
+            token: "secret".into(),
+        });
+        d.write(dir.path()).unwrap();
+
+        let got = Discovery::read(dir.path()).unwrap().expect("parsed");
+        let http = got.http.expect("http endpoint survived the round trip");
+        assert_eq!(http.url, "http://127.0.0.1:8890");
+        assert_eq!(http.token, "secret");
     }
 
     #[test]

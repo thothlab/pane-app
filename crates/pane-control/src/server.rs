@@ -16,7 +16,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::discovery::{self, Discovery, InstanceKind};
-use crate::protocol::{EventFrame, Request, Response, SubscribeAck, SubscribeArgs};
+use crate::protocol::{Request, Response, SubscribeAck, SubscribeArgs};
 
 /// Outbound line queue depth per connection.
 const WRITE_QUEUE: usize = 1024;
@@ -31,7 +31,16 @@ impl ControlServer {
     ///
     /// The caller must already hold the instance lock — that is what makes it
     /// safe to delete a leftover socket inode here.
-    pub async fn bind(core: Arc<Core>, kind: InstanceKind) -> Result<(Self, ServeHandle)> {
+    /// `http` is `Some` when this process also serves the browser UI
+    /// (`pane serve`). It is passed in rather than registered afterwards so
+    /// `control.json` is written exactly once, already complete — a second
+    /// write would be a window in which a reader sees an instance with no
+    /// endpoint.
+    pub async fn bind(
+        core: Arc<Core>,
+        kind: InstanceKind,
+        http: Option<crate::HttpEndpoint>,
+    ) -> Result<(Self, ServeHandle)> {
         let data_dir = core.data_dir().to_path_buf();
         discovery::clear_stale(&data_dir);
 
@@ -46,6 +55,7 @@ impl ControlServer {
             endpoint: sock_path.clone(),
             data_dir: data_dir.clone(),
             started_at: time::OffsetDateTime::now_utc().to_string(),
+            http,
         }
         .write(&data_dir)
         .context("writing control metadata")?;
@@ -255,8 +265,10 @@ async fn send(tx: &mpsc::Sender<String>, resp: Response) -> Result<()> {
 
 /// Stream bus events for one subscription.
 ///
-/// Enrichment and filtering happen here rather than in the bus pump, so a slow
-/// disk read only delays this subscriber instead of every consumer.
+/// What belongs on the stream is decided by [`crate::subscription::shape_event`],
+/// which the HTTP/SSE front end in `pane-serve` also calls — this function owns
+/// only the socket plumbing. Shaping happens per subscriber rather than in the
+/// bus pump, so a slow disk read delays this subscriber alone.
 fn spawn_subscription(
     core: Arc<Core>,
     tx: mpsc::Sender<String>,
@@ -266,75 +278,22 @@ fn spawn_subscription(
     let mut rx = core.events.subscribe();
     tokio::spawn(async move {
         loop {
-            let ev = match rx.recv().await {
-                Ok(ev) => ev,
-                // Report the gap instead of tearing the stream down — a
-                // consumer would rather know it missed N events than have the
-                // connection die mid-run.
+            let frame = match rx.recv().await {
+                Ok(ev) => match crate::subscription::shape_event(&core, &args, &ev).await {
+                    Some(frame) => frame,
+                    None => continue,
+                },
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    let _ = send(
-                        &tx,
-                        Response::Event {
-                            id: id.clone(),
-                            event: EventFrame {
-                                topic: "stream.lagged".into(),
-                                payload: serde_json::json!({ "skipped": n }),
-                            },
-                        },
-                    )
-                    .await;
-                    continue;
+                    crate::subscription::lagged_frame(n)
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
-
-            if !args.topics.is_empty() && !args.topics.contains(&ev.topic) {
-                continue;
-            }
-
-            let mut payload = ev.payload.clone();
-
-            // capture.completed carries only {id, status, duration_ms,
-            // total_bytes}; host/method/path lived on capture.started, a
-            // different event. Re-read the row so one line is one whole
-            // capture.
-            if ev.topic == "capture.completed" {
-                let cap_id = ev
-                    .payload
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok());
-                if let Some(cap_id) = cap_id {
-                    if let Some(filter) = args.filter.as_deref() {
-                        match core.storage.capture_matches(cap_id, filter) {
-                            Ok(true) => {}
-                            Ok(false) => continue,
-                            Err(e) => {
-                                tracing::debug!(error = %e, "tail filter evaluation failed");
-                                continue;
-                            }
-                        }
-                    }
-                    if args.enrich == "summary" {
-                        if let Ok(cap) = core.capture_get(cap_id).await {
-                            if let Ok(v) = serde_json::to_value(&cap) {
-                                payload = v;
-                            }
-                        }
-                    }
-                } else if args.filter.is_some() {
-                    continue;
-                }
-            }
 
             if send(
                 &tx,
                 Response::Event {
                     id: id.clone(),
-                    event: EventFrame {
-                        topic: ev.topic,
-                        payload,
-                    },
+                    event: frame,
                 },
             )
             .await

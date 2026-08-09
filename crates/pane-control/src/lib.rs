@@ -24,8 +24,9 @@ pub mod discovery;
 pub mod dispatch;
 pub mod protocol;
 pub mod server;
+pub mod subscription;
 
 pub use client::{Client, ConnectError};
-pub use discovery::{Discovery, InstanceKind};
+pub use discovery::{Discovery, HttpEndpoint, InstanceKind};
 pub use protocol::{EventFrame, Request, Response, SubscribeArgs, PROTOCOL_VERSION};
-pub use server::ControlServer;
+pub use server::{ControlServer, ServeHandle};

@@ -179,9 +179,12 @@ pub fn run() {
             if std::env::var("PANE_CONTROL").as_deref() != Ok("off") {
                 let control_core = core.clone();
                 tauri::async_runtime::spawn(async move {
+                    // No HTTP endpoint: the desktop app already has its UI in a
+                    // window. `pane serve` is what publishes one.
                     match pane_control::ControlServer::bind(
                         control_core,
                         pane_control::InstanceKind::Gui,
+                        None,
                     )
                     .await
                     {
