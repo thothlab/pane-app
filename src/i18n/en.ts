@@ -157,6 +157,10 @@ const en = {
     host_capture_failed: "Couldn't capture this Mac: {{message}}",
     column_resize_title: "Drag to resize · double-click to reset",
     empty_state: "No captures yet. Start the proxy and pair a device.",
+    ca_untrusted_title: "The device doesn't trust the Pane CA",
+    ca_untrusted_body:
+      "Nothing decrypted this session and {{hosts}} hosts were passed through. Usually this means the Pane root certificate isn't installed on the device - every Pane install has its own CA, so one from another computer won't do. Open Devices and reinstall the CA, or clear the list in Settings.",
+    ca_untrusted_dismiss: "Dismiss",
     tunneled_hint:
       "Passed through without decryption — this host rejects Pane's certificate (release build or certificate pinning), so the connection is tunnelled to keep the app online. Timing and size are recorded; contents are not.",
     error_tls_handshake:

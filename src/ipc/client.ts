@@ -21,6 +21,7 @@ import type {
   RuleDto,
   RuleUpsertArgs,
   SessionDto,
+  TlsHealthDto,
   TunneledHostsDto,
 } from "./types";
 
@@ -92,6 +93,9 @@ export const api = {
       call<{ text: string; mime: string }>("export_one", { args: { id, format } }),
     exportWrite: (path: string, content: string) =>
       call<number>("captures_export_write", { path, content }),
+    // Drives the "device doesn't trust the CA" banner: how much of this
+    // session tunnelled vs how much actually decrypted.
+    tlsHealth: () => call<TlsHealthDto>("captures_tls_health"),
   },
   replay: {
     send: (request: RequestSpec, sourceId?: string) =>

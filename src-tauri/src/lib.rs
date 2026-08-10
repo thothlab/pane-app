@@ -84,6 +84,7 @@ pub fn run() {
             commands::captures::clear,
             commands::captures::export_one,
             commands::captures::captures_export_write,
+            commands::captures::captures_tls_health,
             // replay
             commands::replay::send,
             // filters

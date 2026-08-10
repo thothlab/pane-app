@@ -25,7 +25,7 @@ use pane_ipc::{
     FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs, RuleCollectionDto, RuleConditionDto,
     RuleDto, RuleHeaderDto, RuleParamDto, RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs,
     RuleUpsertArgs,
-    SaveFilterArgs, SessionDto,
+    SaveFilterArgs, SessionDto, TlsHealthDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -298,6 +298,45 @@ impl Storage {
             )
             .optional()?;
         Ok(id.and_then(|s| Uuid::parse_str(&s).ok()))
+    }
+
+    /// Is the device trusting our CA at all, in the session running right now?
+    ///
+    /// Some hosts tunnelling is normal — release builds and pinned apps have
+    /// always done that. The state worth warning about is *nothing* decrypting
+    /// while several hosts tunnel, which is what a CA that was never installed
+    /// (or was installed on a different machine, since each Pane install has
+    /// its own root) looks like from here.
+    ///
+    /// Both halves are scoped to the current session, and the decrypted count
+    /// is scoped to `https` — plain-HTTP captures need no trust at all, so
+    /// counting them would mask exactly the case this is meant to catch.
+    pub fn tls_health(&self) -> Result<TlsHealthDto> {
+        let Some(session_id) = self.current_session_id()? else {
+            return Ok(TlsHealthDto {
+                tunneled_hosts: 0,
+                decrypted_https: 0,
+            });
+        };
+        let conn = self.conn.lock();
+        let sid = session_id.to_string();
+        let tunneled_hosts: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT server_host) FROM capture
+             WHERE session_id=?1 AND error_kind='tunneled'",
+            params![sid],
+            |r| r.get(0),
+        )?;
+        let decrypted_https: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM capture
+             WHERE session_id=?1 AND scheme='https' AND error_kind IS NULL
+               AND state IN ('completed', 'patched', 'stubbed')",
+            params![sid],
+            |r| r.get(0),
+        )?;
+        Ok(TlsHealthDto {
+            tunneled_hosts: tunneled_hosts.max(0) as u32,
+            decrypted_https: decrypted_https.max(0) as u32,
+        })
     }
 
     // ---------- Captures ----------

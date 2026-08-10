@@ -265,3 +265,11 @@ export interface TunneledHostsDto {
   /** Baked-in app-pinning patterns. Always tunnelled, never clearable. */
   seeded: string[];
 }
+
+/** Whether the device trusts our CA at all, for the current session. */
+export interface TlsHealthDto {
+  /** Distinct hosts tunnelled without decryption in this session. */
+  tunneled_hosts: number;
+  /** HTTPS captures successfully decrypted in this session. */
+  decrypted_https: number;
+}

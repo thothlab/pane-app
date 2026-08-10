@@ -2,7 +2,7 @@ use super::{to_api, CmdResult};
 use crate::state::AppState;
 use pane_ipc::{
     CaptureBodyDto, CaptureDto, ClearArgs, ClearResult, ExportOneArgs, ExportOneResult,
-    GetBodyArgs, ListCapturesArgs,
+    GetBodyArgs, ListCapturesArgs, TlsHealthDto,
 };
 use tauri::State;
 use uuid::Uuid;
@@ -38,6 +38,13 @@ pub async fn clear(state: State<'_, AppState>, args: ClearArgs) -> CmdResult<Cle
         .clear_captures(args.older_than)
         .map_err(to_api("db"))?;
     Ok(ClearResult { deleted: n as u64 })
+}
+
+/// Feeds the "the device doesn't trust our CA" banner. Cheap enough to call on
+/// every capture batch: two indexed counts over the current session.
+#[tauri::command]
+pub async fn captures_tls_health(state: State<'_, AppState>) -> CmdResult<TlsHealthDto> {
+    state.storage.tls_health().map_err(to_api("db"))
 }
 
 #[tauri::command]
