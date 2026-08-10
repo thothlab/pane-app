@@ -324,6 +324,10 @@ pub async fn handle(
 /// an app talked to a host, when, and for how long is genuinely useful even
 /// without the payload, and a silently missing row would read as "Pane didn't
 /// see this traffic" — the exact confusion this feature exists to end.
+// Eighth parameter is `why`, added so the tunnelled capture row can say what
+// put it here. Same trade-off `handle` above already makes: the alternative is
+// a context struct used by exactly one call site.
+#[allow(clippy::too_many_arguments)]
 async fn tunnel(
     mut client: TcpStream,
     host: String,

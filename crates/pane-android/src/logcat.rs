@@ -204,7 +204,6 @@ pub fn spawn(
         .to_string_lossy()
         .into_owned();
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
-    let cfg = cfg;
     tokio::spawn(async move {
         let mut attempt: u32 = 0;
         loop {
