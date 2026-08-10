@@ -219,6 +219,10 @@ pub struct CaptureDto {
     pub duration_ms: Option<u64>,
     pub state: String,
     pub error_kind: Option<String>,
+    /// Human-readable evidence behind `error_kind`: the TLS alert the client
+    /// sent, the upstream I/O error, or why a host is being tunnelled. `None`
+    /// for successes and for captures recorded before this was persisted.
+    pub error_detail: Option<String>,
     /// Persisted device-row id of the device this capture came from, or `None`
     /// for old captures, iOS, and connections on unattributed proxy ports.
     pub device_id: Option<String>,

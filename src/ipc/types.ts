@@ -91,6 +91,9 @@ export interface CaptureDto {
   duration_ms: number | null;
   state: string;
   error_kind: string | null;
+  /** Evidence behind `error_kind`: the TLS alert, the I/O error, or why the
+   *  host is being tunnelled. Null on success and on pre-0.2.10 captures. */
+  error_detail: string | null;
   device_id: string | null;
   req_headers?: HeaderDto[];
   res_headers?: HeaderDto[];

@@ -93,8 +93,8 @@ pub async fn handle(
         // Hosts we already know we can't decrypt never get a handshake
         // attempted — the client talks to the real server through us and keeps
         // working. See `passthrough` for what lands here and why.
-        if no_mitm.should_tunnel(&host) {
-            return tunnel(stream, host, port, cap_id, started_at, storage, events).await;
+        if let Some(why) = no_mitm.why_tunnel(&host) {
+            return tunnel(stream, host, port, cap_id, started_at, storage, events, why).await;
         }
 
         let tls_stream = match tls_acceptor.accept(stream).await {
@@ -318,6 +318,7 @@ async fn tunnel(
     started_at: OffsetDateTime,
     storage: Arc<Storage>,
     events: broadcast::Sender<EngineEvent>,
+    why: String,
 ) -> anyhow::Result<()> {
     let mut upstream = match TcpStream::connect((host.as_str(), port)).await {
         Ok(s) => s,
@@ -343,7 +344,7 @@ async fn tunnel(
 
     let ended_at = OffsetDateTime::now_utc();
     let duration_ms = (ended_at - started_at).whole_milliseconds().max(0) as i64;
-    mark_tunneled(&storage, cap_id, copied as i64, duration_ms, ended_at)?;
+    mark_tunneled(&storage, cap_id, copied as i64, duration_ms, ended_at, &why)?;
     emit_completed(&events, cap_id, 0, duration_ms as u64, copied);
     Ok(())
 }
@@ -988,13 +989,15 @@ fn mark_tunneled(
     total_bytes: i64,
     duration_ms: i64,
     ended_at: OffsetDateTime,
+    why: &str,
 ) -> anyhow::Result<()> {
     let conn = storage.conn().lock();
     conn.execute(
-        "UPDATE capture SET state='tunneled', error_kind='tunneled', ended_at=?1,
-                            duration_ms=?2, total_bytes=?3
-         WHERE id=?4",
+        "UPDATE capture SET state='tunneled', error_kind='tunneled', error_detail=?1,
+                            ended_at=?2, duration_ms=?3, total_bytes=?4
+         WHERE id=?5",
         params![
+            clamp_detail(why),
             ended_at.unix_timestamp(),
             duration_ms,
             total_bytes,
@@ -1004,17 +1007,35 @@ fn mark_tunneled(
     Ok(())
 }
 
-fn mark_error(storage: &Storage, id: Uuid, kind: &str, _msg: &str) -> anyhow::Result<()> {
+fn mark_error(storage: &Storage, id: Uuid, kind: &str, msg: &str) -> anyhow::Result<()> {
     let conn = storage.conn().lock();
     conn.execute(
-        "UPDATE capture SET state='error', error_kind=?1, ended_at=?2 WHERE id=?3",
+        "UPDATE capture SET state='error', error_kind=?1, error_detail=?2, ended_at=?3
+         WHERE id=?4",
         params![
             kind,
+            clamp_detail(msg),
             OffsetDateTime::now_utc().unix_timestamp(),
             id.to_string()
         ],
     )?;
     Ok(())
+}
+
+/// Error text is written on a path that runs per failed connection, and a
+/// pathological upstream can produce very long messages. Keep rows small; the
+/// discriminating part of a TLS alert or I/O error is always at the front.
+const MAX_ERROR_DETAIL: usize = 500;
+
+fn clamp_detail(msg: &str) -> Option<String> {
+    let trimmed = msg.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(match trimmed.char_indices().nth(MAX_ERROR_DETAIL) {
+        Some((idx, _)) => format!("{}…", &trimmed[..idx]),
+        None => trimmed.to_string(),
+    })
 }
 
 fn emit_started(

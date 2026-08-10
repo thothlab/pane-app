@@ -135,6 +135,26 @@ impl NoMitmSet {
         self.inner.lock().learned.contains_key(&norm(host))
     }
 
+    /// Why `host` is being tunnelled, phrased for the capture row's error
+    /// detail. `None` when we aren't tunnelling it at all.
+    ///
+    /// Without this a tunnelled row says only "passed through", and the user
+    /// has no way to tell a host we were told to skip from one that rejected
+    /// our certificate ten minutes ago.
+    pub fn why_tunnel(&self, host: &str) -> Option<String> {
+        if pane_pinning::is_app_pinned(host) {
+            return Some("seeded: host is in the bundled app-pinning list".into());
+        }
+        self.inner.lock().learned.get(&norm(host)).map(|l| {
+            let detail = if l.detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", l.detail)
+            };
+            format!("learned: {}{detail}", l.reason.as_str())
+        })
+    }
+
     /// Record that `host` sent a TLS alert rejecting our certificate. Returns
     /// `true` if this is new information, so the caller can log the transition
     /// once rather than on every failed connection.
@@ -351,6 +371,20 @@ mod tests {
             IoFailure::Noted { strikes: 1 }
         );
         assert!(!s.should_tunnel("api.example.com"));
+    }
+
+    #[test]
+    fn why_tunnel_distinguishes_seeded_from_learned() {
+        let s = NoMitmSet::new();
+        assert_eq!(s.why_tunnel("api.example.com"), None);
+        s.learn_rejected("api.example.com", "alert: unknown_ca");
+        assert_eq!(
+            s.why_tunnel("api.example.com").as_deref(),
+            Some("learned: cert_rejected (alert: unknown_ca)")
+        );
+        assert!(s
+            .why_tunnel("graph.facebook.com")
+            .is_some_and(|w| w.starts_with("seeded:")));
     }
 
     #[test]

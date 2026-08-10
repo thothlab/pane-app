@@ -195,6 +195,7 @@ const ru: Dict = {
     status: "Статус",
     state: "Состояние",
     error: "Ошибка",
+    error_detail: "Причина",
     started: "Начало",
     duration: "Длительность",
     size: "Размер",

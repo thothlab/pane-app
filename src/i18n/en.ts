@@ -198,6 +198,7 @@ const en = {
     status: "Status",
     state: "State",
     error: "Error",
+    error_detail: "Reason",
     started: "Started",
     duration: "Duration",
     size: "Size",
