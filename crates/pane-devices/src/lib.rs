@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use pane_android::{AndroidPlatform, DeviceProxyState, Presence};
 use pane_ca::CaMaterial;
-use pane_engine::DevicePortRegistry;
+use pane_engine::{DevicePortRegistry, PortAssignment};
 use pane_ios::IosPlatform;
 use pane_ipc::{AndroidToolingStatusDto, DeviceDto, DiscoveredDeviceDto, RemoveDeviceResult};
 use pane_storage::Storage;
@@ -57,9 +57,18 @@ impl DeviceManager {
     /// Assign this serial its Mac-side proxy port, resolving + storing the
     /// device_id for attribution. Idempotent per serial (returns the existing
     /// port on re-pair / reapply).
-    fn assign_port(&self, serial: &str) -> u16 {
+    fn assign_port(&self, serial: &str) -> PortAssignment {
         let device_id = self.android_device_id(serial);
-        self.registry.assign(serial, device_id)
+        let assignment = self.registry.assign(serial, device_id);
+        if !assignment.attributed {
+            tracing::warn!(
+                serial,
+                port = assignment.port,
+                "proxy port pool exhausted; this device shares a port and its \
+                 captures will show no device"
+            );
+        }
+        assignment
     }
 
     /// Devices physically attached right now.
@@ -91,7 +100,7 @@ impl DeviceManager {
         // (or is about to be) wired to. On a fresh process the registry is
         // empty and this assigns one — the probe then correctly reports the
         // reverse as down, and the watchdog repairs it.
-        let mac_port = self.assign_port(serial);
+        let mac_port = self.assign_port(serial).port;
         self.android.probe_proxy_state(serial, mac_port).await
     }
 
@@ -133,12 +142,12 @@ impl DeviceManager {
         // Resolve device_id + reserve the Mac-side port AFTER the pairing row
         // exists (so android_device_id finds it) but BEFORE add_usb sets up the
         // `adb reverse`, which needs the assigned port.
-        let mac_port = self.assign_port(serial);
+        let assignment = self.assign_port(serial);
         // Interactive: the user clicked Add or Re-sync against the on-screen
         // attached list, which may be a few seconds stale after a replug.
         let outcome = self
             .android
-            .add_usb(serial, &ca, mac_port, Presence::Wait)
+            .add_usb(serial, &ca, assignment.port, Presence::Wait)
             .await;
         match outcome {
             Ok(device) => {
@@ -146,6 +155,20 @@ impl DeviceManager {
                 Ok(device)
             }
             Err(e) => {
+                // Give the port back if this call is what took it. A pairing
+                // that failed set up no `adb reverse`, so nothing on the device
+                // can send traffic to that port — holding it just shrinks the
+                // pool. A phone that has been unplugged for weeks was still
+                // reserving a port on every proxy start this way, and eight of
+                // those quietly turn every device unattributed.
+                //
+                // `fresh` matters: on a failed Re-sync of a device that paired
+                // successfully earlier, the phone may still have a live reverse
+                // onto this port, and handing it to another device would stamp
+                // that device's id on this phone's traffic.
+                if assignment.fresh {
+                    self.registry.release(serial);
+                }
                 self.transition("android", serial, "error", Some(&e.to_string()))?;
                 Err(e)
             }
@@ -157,8 +180,25 @@ impl DeviceManager {
         let cleaned = match dev.platform.as_str() {
             "ios" => self.ios.remove(&dev.serial).await.is_ok(),
             "android" => {
-                self.registry.release(&dev.serial);
-                self.android.remove(&dev.serial).await.is_ok()
+                // Release the port only once the teardown that kills the
+                // device's `adb reverse` has actually succeeded. Releasing
+                // first — which is what this did — hands the port back to the
+                // pool while an unreachable phone may still be reversing onto
+                // it; the next device to pair inherits that port, and the first
+                // phone's traffic starts arriving stamped with the new device's
+                // id. Removing a device with the cable unplugged is exactly the
+                // case that fails here, and it is a common one.
+                let ok = self.android.remove(&dev.serial).await.is_ok();
+                if ok {
+                    self.registry.release(&dev.serial);
+                } else {
+                    tracing::warn!(
+                        serial = %dev.serial,
+                        "couldn't tear down proxy on removal; keeping its port \
+                         reserved so no other device inherits it"
+                    );
+                }
+                ok
             }
             _ => false,
         };
@@ -199,12 +239,12 @@ impl DeviceManager {
         serial: &str,
         ca: CaMaterial,
     ) -> anyhow::Result<()> {
-        let mac_port = self.assign_port(serial);
+        let assignment = self.assign_port(serial);
         // Background sweep over every paired device, most of which may not be
         // plugged in at all — waiting on each would delay the one that is.
         match self
             .android
-            .add_usb(serial, &ca, mac_port, Presence::Assume)
+            .add_usb(serial, &ca, assignment.port, Presence::Assume)
             .await
         {
             Ok(device) => {
@@ -214,6 +254,11 @@ impl DeviceManager {
                 Ok(())
             }
             Err(e) => {
+                // Same rollback as the interactive path: a reapply that never
+                // established a reverse shouldn't keep a pool port booked.
+                if assignment.fresh {
+                    self.registry.release(serial);
+                }
                 // Surface it on the device row. Without this the reapply paths
                 // fail entirely in the logs and the UI keeps showing "ready".
                 let _ = self.transition("android", serial, "error", Some(&e.to_string()));
@@ -226,17 +271,40 @@ impl DeviceManager {
     /// reconnects while Pane proxy is stopped — restores the phone's
     /// internet by stripping the stale http_proxy setting.
     pub async fn clear_one_android_proxy(&self, serial: &str) -> anyhow::Result<()> {
-        self.registry.release(serial);
-        self.android.remove(serial).await
+        // Release after the teardown, and only if it worked — see `remove`.
+        let outcome = self.android.remove(serial).await;
+        if outcome.is_ok() {
+            self.registry.release(serial);
+        }
+        outcome
     }
 
     pub async fn reapply_all_android_proxies(&self, ca: CaMaterial) -> Vec<String> {
+        // Only touch phones that are actually plugged in. Every paired row used
+        // to get the full treatment on each proxy start, so a device last seen
+        // weeks ago still reserved a pool port and produced a burst of "device
+        // 'X' not found" errors in the log before failing — with eight pool
+        // ports, a handful of those stale rows is enough to leave the phone on
+        // the desk unattributed.
+        //
+        // An enumeration failure means "adb couldn't answer", not "nothing is
+        // attached", so fall back to trying everything rather than silently
+        // configuring nothing.
+        let attached: Option<std::collections::HashSet<String>> =
+            match self.discover_attached().await {
+                Ok(list) => Some(list.into_iter().map(|d| d.serial).collect()),
+                Err(e) => {
+                    tracing::debug!(error = %e, "reapply: device enumeration failed; trying all paired");
+                    None
+                }
+            };
         let serials: Vec<String> = self
             .list()
             .unwrap_or_default()
             .into_iter()
             .filter(|d| d.platform == "android" && d.connection == "usb")
             .map(|d| d.serial)
+            .filter(|s| attached.as_ref().is_none_or(|a| a.contains(s)))
             .collect();
         let mut ok = Vec::with_capacity(serials.len());
         for serial in serials {
@@ -270,8 +338,11 @@ impl DeviceManager {
             .collect();
         let mut cleaned = Vec::with_capacity(serials.len());
         for serial in serials {
-            self.registry.release(&serial);
+            // Same ordering rule as `remove`: the port goes back only once the
+            // reverse it names is really gone. A phone we failed to reach may
+            // still be pointing at that port.
             if self.android.remove(&serial).await.is_ok() {
+                self.registry.release(&serial);
                 cleaned.push(serial);
             }
         }

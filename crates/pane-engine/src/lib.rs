@@ -16,7 +16,7 @@ use uuid::Uuid;
 mod passthrough;
 mod registry;
 pub use passthrough::{IoFailure, NoMitmSet, TunnelReason};
-pub use registry::{DevicePortRegistry, PROXY_PORT_POOL};
+pub use registry::{DevicePortRegistry, PortAssignment, PROXY_PORT_POOL};
 
 pub struct EngineConfig {
     pub listen: SocketAddr,
