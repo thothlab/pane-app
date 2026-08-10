@@ -45,10 +45,16 @@ pub struct HostProxySnapshot {
 
 /// The local MITM port reserved for Mac-local (host) traffic. Devices use
 /// 8891+; 8888 is never in the device pool, so 8888 → "__host__".
+///
+/// Gated like the rest of the host-capture surface: both constants are read
+/// only from the macOS `imp` module below, so on Linux/Windows CI they are
+/// dead code and `clippy -D warnings` rejects the build.
+#[cfg(target_os = "macos")]
 pub const HOST_PROXY_PORT: u16 = 8888;
 
 /// Sentinel device_id stamped on the registry for port 8888 so host traffic is
 /// attributed and filterable, without a real `device` table row.
+#[cfg(target_os = "macos")]
 pub const HOST_SENTINEL: &str = "__host__";
 
 // ───────────────────────────── macOS implementation ─────────────────────────
