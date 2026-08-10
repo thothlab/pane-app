@@ -96,6 +96,12 @@ const DevicesView: Component = () => {
         <button
           class="text-xs px-3 py-1.5 rounded border border-border hover:bg-bg-muted inline-flex items-center gap-1"
           onClick={() => {
+            // Clear the last failure too. Without this the banner from a
+            // failed Add outlives the condition that caused it: adb loses the
+            // device for a few seconds after a replug, Add fails, and the red
+            // "device not found" stays pinned above a list that has since
+            // found the device again — which reads as a live error.
+            setError(null);
             refetch();
             refetchAttached();
             refetchAdbStatus();
