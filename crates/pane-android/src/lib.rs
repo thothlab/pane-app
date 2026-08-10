@@ -1092,6 +1092,12 @@ const ADB_APPEAR_TIMEOUT: Duration = Duration::from_secs(8);
 /// error is rewritten because the raw one ("timed out after 8s") reads like an
 /// internal fault rather than the actionable "your phone isn't connected".
 async fn wait_for_device(serial: &str) -> Result<()> {
+    // Check this first: `run_for` reports a missing adb through the same Err
+    // channel, and rewriting *that* into "replug the cable" would send a user
+    // with no platform-tools chasing a hardware problem they don't have.
+    if resolve_adb().is_none() {
+        return Err(anyhow!(ADB_NOT_FOUND_MSG));
+    }
     run_for(
         "adb",
         &["-s", serial, "wait-for-device"],

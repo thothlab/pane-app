@@ -3504,6 +3504,7 @@ version = "0.2.9"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "directories",
  "hex",
  "nom 7.1.3",
  "pane-ipc",

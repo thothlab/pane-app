@@ -95,10 +95,11 @@ pub async fn stop(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
     if let Some(h) = handle {
         h.shutdown().await.map_err(to_api("engine_stop"))?;
     }
-    // Drop the tunnelled-host set with the engine that filled it, so a stopped
-    // proxy never shows stale hosts in Settings. `start` resets too — this is
-    // the half that keeps the *displayed* state honest while we're down.
-    state.no_mitm.reset();
+    // Deliberately NOT clearing the tunnelled-host set here. Stopping the proxy
+    // is often the first thing a user does after noticing everything turned
+    // into CONNECT, and the Settings panel listing what got tunnelled — and why
+    // — is the answer they came for. `start` clears it, so the next run is
+    // still clean; wiping it on the way down would just empty the evidence.
     // Clear http_proxy + adb-reverse on every paired Android device.
     // Otherwise the phone keeps pointing at 127.0.0.1:8888 which now
     // refuses connections — manifesting on the device as "no internet"
