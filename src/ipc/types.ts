@@ -249,3 +249,19 @@ export interface CollectionUpsertArgs {
   enabled: boolean;
   priority: number;
 }
+
+/** One host the proxy decided not to decrypt, with the evidence for it. */
+export interface TunneledHostDto {
+  host: string;
+  learned_at: string;
+  /** "cert_rejected" (client sent a TLS alert) or "repeated_failure". */
+  reason: string;
+  detail: string;
+}
+
+export interface TunneledHostsDto {
+  /** Learned this proxy run; individually forgettable and cleared on reset. */
+  learned: TunneledHostDto[];
+  /** Baked-in app-pinning patterns. Always tunnelled, never clearable. */
+  seeded: string[];
+}

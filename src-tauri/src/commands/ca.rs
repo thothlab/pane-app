@@ -11,7 +11,15 @@ pub async fn current(state: State<'_, AppState>) -> CmdResult<CaCertificateDto> 
 
 #[tauri::command]
 pub async fn rotate(state: State<'_, AppState>) -> CmdResult<CaCertificateDto> {
-    state.ca.rotate().map_err(to_api("rotate_failed"))
+    let dto = state.ca.rotate().map_err(to_api("rotate_failed"))?;
+    // Every "this client won't accept our certificate" verdict was reached
+    // against the old CA and says nothing about the new one. Keeping them would
+    // mean the user installs a fresh CA and Pane still refuses to decrypt.
+    let forgotten = state.no_mitm.reset();
+    if forgotten > 0 {
+        tracing::info!(hosts = forgotten, "CA rotated; cleared tunnelled-host set");
+    }
+    Ok(dto)
 }
 
 #[tauri::command]

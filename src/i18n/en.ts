@@ -513,6 +513,16 @@ const en = {
     ca_format_mobileconfig: "Apple Configuration Profile",
     ca_export_success: "Saved {{bytes}} bytes → {{path}}",
     ca_export_failed: "Save failed: {{message}}",
+    tunneled_section: "Hosts passed through",
+    tunneled_body:
+      "Hosts Pane relays without decrypting. The client negotiates TLS directly with the real server, so the app keeps working but its payloads stay invisible. Apps that don't trust the Pane CA end up here. The list lasts until the proxy restarts, and clears itself on CA rotation and on pairing a device.",
+    tunneled_empty: "Nothing is being tunnelled yet.",
+    tunneled_refresh: "Refresh",
+    tunneled_reset: "Clear all",
+    tunneled_forget: "Forget",
+    tunneled_reason_cert: "client rejected the certificate",
+    tunneled_reason_repeated: "repeated connection failures",
+    tunneled_seeded: "Always tunnelled",
     privacy_section: "Privacy",
     privacy_body:
       "Pane collects zero telemetry. No data leaves your machine unless you explicitly export it. Crash reports stay in logs/ next to the data dir.",

@@ -4,6 +4,7 @@ pub mod devices;
 pub mod filters;
 pub mod host;
 pub mod logcat;
+pub mod passthrough;
 pub mod proxy;
 pub mod replay;
 pub mod rules;

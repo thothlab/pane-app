@@ -21,6 +21,7 @@ import type {
   RuleDto,
   RuleUpsertArgs,
   SessionDto,
+  TunneledHostsDto,
 } from "./types";
 
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -70,6 +71,14 @@ export const api = {
     list: () => call<DeviceDto[]>("devices_list"),
     androidToolingStatus: () =>
       call<AndroidToolingStatusDto>("android_tooling_status"),
+  },
+  // Hosts the proxy passes through without decrypting. `reset` returns how
+  // many learned hosts were dropped; seeded patterns are never dropped.
+  passthrough: {
+    list: () => call<TunneledHostsDto>("tunneled_hosts_list"),
+    reset: () => call<number>("tunneled_hosts_reset"),
+    forget: (host: string) =>
+      call<boolean>("tunneled_host_forget", { args: { host } }),
   },
   captures: {
     list: (filter?: string, limit = 500, before?: string) =>

@@ -28,13 +28,30 @@ pub async fn list_attached_usb(state: State<'_, AppState>) -> CmdResult<Vec<Disc
     }))
 }
 
+/// Pairing (and its UI twin, Re-sync) re-pushes the CA and rebuilds the tunnel,
+/// so any earlier "this host won't accept our certificate" verdict was reached
+/// against a setup that no longer exists. Clearing here is what makes Re-sync
+/// mean something: before, a user who fixed CA trust on the phone still saw
+/// every host tunnelled until they thought to restart the proxy.
+fn clear_tunnelled_after_pairing(state: &AppState) {
+    let forgotten = state.no_mitm.reset();
+    if forgotten > 0 {
+        tracing::info!(
+            hosts = forgotten,
+            "device paired/re-synced; cleared tunnelled-host set"
+        );
+    }
+}
+
 #[tauri::command]
 pub async fn add_ios_usb(state: State<'_, AppState>, args: AddDeviceArgs) -> CmdResult<DeviceDto> {
-    state
+    let device = state
         .devices
         .add_ios_usb(&args.serial, state.ca.material())
         .await
-        .map_err(to_api("ios_add_failed"))
+        .map_err(to_api("ios_add_failed"))?;
+    clear_tunnelled_after_pairing(&state);
+    Ok(device)
 }
 
 #[tauri::command]
@@ -53,11 +70,13 @@ pub async fn add_android_usb(
              dead 127.0.0.1:8888 and lose internet."
         )));
     }
-    state
+    let device = state
         .devices
         .add_android_usb(&args.serial, state.ca.material())
         .await
-        .map_err(to_api("android_add_failed"))
+        .map_err(to_api("android_add_failed"))?;
+    clear_tunnelled_after_pairing(&state);
+    Ok(device)
 }
 
 #[tauri::command]
