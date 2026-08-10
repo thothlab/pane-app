@@ -91,6 +91,9 @@ export interface CaptureDto {
   duration_ms: number | null;
   state: string;
   error_kind: string | null;
+  /** Evidence behind `error_kind`: the TLS alert, the I/O error, or why the
+   *  host is being tunnelled. Null on success and on pre-0.2.10 captures. */
+  error_detail: string | null;
   device_id: string | null;
   req_headers?: HeaderDto[];
   res_headers?: HeaderDto[];
@@ -245,4 +248,28 @@ export interface CollectionUpsertArgs {
   name: string;
   enabled: boolean;
   priority: number;
+}
+
+/** One host the proxy decided not to decrypt, with the evidence for it. */
+export interface TunneledHostDto {
+  host: string;
+  learned_at: string;
+  /** "cert_rejected" (client sent a TLS alert) or "repeated_failure". */
+  reason: string;
+  detail: string;
+}
+
+export interface TunneledHostsDto {
+  /** Learned this proxy run; individually forgettable and cleared on reset. */
+  learned: TunneledHostDto[];
+  /** Baked-in app-pinning patterns. Always tunnelled, never clearable. */
+  seeded: string[];
+}
+
+/** Whether the device trusts our CA at all, for the current session. */
+export interface TlsHealthDto {
+  /** Distinct hosts tunnelled without decryption in this session. */
+  tunneled_hosts: number;
+  /** HTTPS captures successfully decrypted in this session. */
+  decrypted_https: number;
 }

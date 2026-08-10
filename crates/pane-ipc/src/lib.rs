@@ -219,6 +219,10 @@ pub struct CaptureDto {
     pub duration_ms: Option<u64>,
     pub state: String,
     pub error_kind: Option<String>,
+    /// Human-readable evidence behind `error_kind`: the TLS alert the client
+    /// sent, the upstream I/O error, or why a host is being tunnelled. `None`
+    /// for successes and for captures recorded before this was persisted.
+    pub error_detail: Option<String>,
     /// Persisted device-row id of the device this capture came from, or `None`
     /// for old captures, iOS, and connections on unattributed proxy ports.
     pub device_id: Option<String>,
@@ -488,4 +492,44 @@ pub struct PinningEventDto {
     pub capture_id: Uuid,
     pub host: String,
     pub hint_kind: String,
+}
+
+// ------------------- SSL passthrough -------------------
+
+/// One host the proxy has decided not to decrypt, and the evidence for it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunneledHostDto {
+    pub host: String,
+    pub learned_at: String,
+    /// `cert_rejected` (client sent a TLS alert about our leaf) or
+    /// `repeated_failure` (a burst of transport failures, no alert).
+    pub reason: String,
+    /// Raw evidence — the TLS alert or I/O error text.
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunneledHostsDto {
+    /// Learned this run. Individually forgettable, and cleared on reset.
+    pub learned: Vec<TunneledHostDto>,
+    /// Baked-in `app_pin` patterns. Always tunnelled; not clearable.
+    pub seeded: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForgetTunneledHostArgs {
+    pub host: String,
+}
+
+/// Whether the device appears to trust our CA at all, for the current session.
+///
+/// The distinction that matters: *some* hosts tunnelling is normal (release
+/// builds, pinned apps), but *nothing* decrypting while several hosts tunnel
+/// means the root CA isn't installed or isn't trusted on the device.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsHealthDto {
+    /// Distinct hosts tunnelled without decryption in this session.
+    pub tunneled_hosts: u32,
+    /// HTTPS captures we successfully decrypted in this session.
+    pub decrypted_https: u32,
 }

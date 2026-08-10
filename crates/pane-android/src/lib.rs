@@ -306,12 +306,22 @@ impl AndroidPlatform {
     /// (the phone's `http_proxy` is always `127.0.0.1:8888`); only the local
     /// forwarding port differs per device, so the proxy can attribute each
     /// connection back to its device. First device gets 8888 (backward-compat).
-    pub async fn add_usb(&self, serial: &str, ca: &CaMaterial, mac_port: u16) -> Result<DeviceDto> {
+    pub async fn add_usb(
+        &self,
+        serial: &str,
+        ca: &CaMaterial,
+        mac_port: u16,
+        presence: Presence,
+    ) -> Result<DeviceDto> {
         // Serialise against any other add_usb/remove on this same serial. See
         // `serial_locks` for why this matters — concurrent runs corrupt each
         // other's work and used to leave devices silently unproxied.
         let lock = self.serial_lock(serial);
         let _guard = lock.lock().await;
+
+        if presence == Presence::Wait {
+            wait_for_device(serial).await?;
+        }
 
         // Probe root + version.
         let rooted = run("adb", &["-s", serial, "shell", "which", "su"])
@@ -1046,6 +1056,64 @@ const ADB_TIMEOUT: Duration = Duration::from_secs(15);
 /// manager. Minutes would be wrong, but 15 s is genuinely too tight on a cold
 /// or busy device.
 const ADB_INSTALL_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Whether `add_usb` should wait for adb to see the device before working on it.
+///
+/// The two callers want opposite things. A user clicking Add or Re-sync is
+/// acting on the on-screen attached list, which is a snapshot of `adb devices`
+/// from whenever they last hit Refresh — and adb needs a few seconds to
+/// re-enumerate a phone after a replug. Clicking inside that window used to
+/// fail outright with "device 'X' not found": a device visibly listed on screen
+/// that Pane insists doesn't exist.
+///
+/// The background reapply that runs on `proxy.start`, by contrast, walks *every*
+/// paired device in turn, including ones that haven't been plugged in for weeks.
+/// Waiting there would add the full timeout per absent device to the delay
+/// before the device that *is* connected gets its proxy back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    /// Interactive: give adb a moment to find the device, then fail clearly.
+    Wait,
+    /// Background: the caller already knows the device is attached, or doesn't
+    /// care enough to pay for finding out.
+    Assume,
+}
+
+/// How long to let adb re-enumerate a device before giving up on pairing it.
+/// A USB replug settles in a couple of seconds; anything past this is a device
+/// that genuinely isn't there, or one stuck on the "Allow USB debugging?"
+/// prompt, and the user is better served by an error than by a longer wait.
+const ADB_APPEAR_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Block until adb can actually see `serial`.
+///
+/// `adb wait-for-device` returns the moment the device reaches the `device`
+/// state, so on an already-connected phone this costs one round-trip. Its
+/// error is rewritten because the raw one ("timed out after 8s") reads like an
+/// internal fault rather than the actionable "your phone isn't connected".
+async fn wait_for_device(serial: &str) -> Result<()> {
+    // Check this first: `run_for` reports a missing adb through the same Err
+    // channel, and rewriting *that* into "replug the cable" would send a user
+    // with no platform-tools chasing a hardware problem they don't have.
+    if resolve_adb().is_none() {
+        return Err(anyhow!(ADB_NOT_FOUND_MSG));
+    }
+    run_for(
+        "adb",
+        &["-s", serial, "wait-for-device"],
+        ADB_APPEAR_TIMEOUT,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| {
+        anyhow!(
+            "adb can't see device {serial} ({}s). Replug the cable, confirm the \
+             \"Allow USB debugging?\" prompt on the phone, then hit Refresh. \
+             ({e})",
+            ADB_APPEAR_TIMEOUT.as_secs()
+        )
+    })
+}
 
 async fn run(bin: &str, args: &[&str]) -> Result<String> {
     run_for(bin, args, ADB_TIMEOUT).await

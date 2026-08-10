@@ -149,6 +149,7 @@ async fn end_to_end_https_mitm() {
             pac_listen: None,
             heartbeat_listen: None,
             registry: pane_engine::DevicePortRegistry::new(),
+            no_mitm: pane_engine::NoMitmSet::new(),
         })
         .await
         .unwrap();

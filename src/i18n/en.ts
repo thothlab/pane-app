@@ -157,6 +157,10 @@ const en = {
     host_capture_failed: "Couldn't capture this Mac: {{message}}",
     column_resize_title: "Drag to resize · double-click to reset",
     empty_state: "No captures yet. Start the proxy and pair a device.",
+    ca_untrusted_title: "The device doesn't trust the Pane CA",
+    ca_untrusted_body:
+      "Nothing decrypted this session and {{hosts}} hosts were passed through. Usually this means the Pane root certificate isn't installed on the device - every Pane install has its own CA, so one from another computer won't do. Open Devices and reinstall the CA, or clear the list in Settings.",
+    ca_untrusted_dismiss: "Dismiss",
     tunneled_hint:
       "Passed through without decryption — this host rejects Pane's certificate (release build or certificate pinning), so the connection is tunnelled to keep the app online. Timing and size are recorded; contents are not.",
     error_tls_handshake:
@@ -198,6 +202,7 @@ const en = {
     status: "Status",
     state: "State",
     error: "Error",
+    error_detail: "Reason",
     started: "Started",
     duration: "Duration",
     size: "Size",
@@ -512,6 +517,16 @@ const en = {
     ca_format_mobileconfig: "Apple Configuration Profile",
     ca_export_success: "Saved {{bytes}} bytes → {{path}}",
     ca_export_failed: "Save failed: {{message}}",
+    tunneled_section: "Hosts passed through",
+    tunneled_body:
+      "Hosts Pane relays without decrypting. The client negotiates TLS directly with the real server, so the app keeps working but its payloads stay invisible. Apps that don't trust the Pane CA end up here. The list lasts until the proxy restarts, and clears itself on CA rotation and on pairing a device.",
+    tunneled_empty: "Nothing is being tunnelled yet.",
+    tunneled_refresh: "Refresh",
+    tunneled_reset: "Clear all",
+    tunneled_forget: "Forget",
+    tunneled_reason_cert: "client rejected the certificate",
+    tunneled_reason_repeated: "repeated connection failures",
+    tunneled_seeded: "Always tunnelled",
     privacy_section: "Privacy",
     privacy_body:
       "Pane collects zero telemetry. No data leaves your machine unless you explicitly export it. Crash reports stay in logs/ next to the data dir.",

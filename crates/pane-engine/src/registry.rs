@@ -38,6 +38,21 @@ struct Inner {
     port_to_device: HashMap<u16, String>,
 }
 
+/// What `assign` handed out, and what the caller needs to know about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortAssignment {
+    /// The Mac-side port this device's `adb reverse` should target.
+    pub port: u16,
+    /// False when the pool was exhausted and this device had to share a port
+    /// with another one. Traffic on a shared port can't be traced to either
+    /// device, so it is deliberately left unattributed — see `assign`.
+    pub attributed: bool,
+    /// True when this call reserved the port, rather than returning one the
+    /// serial already held. Lets a caller whose setup then failed give back
+    /// exactly what it took and nothing else.
+    pub fresh: bool,
+}
+
 /// Thread-safe, cheaply cloneable handle to the shared port registry.
 #[derive(Clone, Default)]
 pub struct DevicePortRegistry {
@@ -56,14 +71,21 @@ impl DevicePortRegistry {
     /// still reserves the port but leaves it unattributed until a later assign
     /// supplies the id.
     ///
-    /// Pool exhaustion (9th+ device) falls back to the first pool port — that
-    /// device shares a port (and thus attribution) with device #1, but still
-    /// gets a working proxy. The pool caps at 8 by design, so this is a safety
-    /// net, not an expected path.
-    pub fn assign(&self, serial: &str, device_id: Option<String>) -> u16 {
+    /// Pool exhaustion (9th+ device) falls back to the first pool port so the
+    /// device still gets a working proxy. What it does *not* do is keep a
+    /// device_id on that port: two devices reversing onto one local port means
+    /// a connection arriving there could have come from either, and the old
+    /// behaviour — last writer wins — silently stamped every one of device #1's
+    /// captures with device #9's id. Unattributed is wrong-in-a-visible-way
+    /// ("—" in the Devices column); a confident wrong label is not.
+    ///
+    /// The pool caps at 8 by design, so this is a safety net rather than an
+    /// expected path — and now that failed pairings hand their port back, it
+    /// takes eight genuinely-paired devices to reach it.
+    pub fn assign(&self, serial: &str, device_id: Option<String>) -> PortAssignment {
         let mut inner = self.inner.lock();
-        let port = match inner.serial_to_port.get(serial) {
-            Some(&p) => p,
+        let (port, fresh) = match inner.serial_to_port.get(serial) {
+            Some(&p) => (p, false),
             None => {
                 let used: std::collections::HashSet<u16> =
                     inner.serial_to_port.values().copied().collect();
@@ -73,18 +95,40 @@ impl DevicePortRegistry {
                     .find(|p| !used.contains(p))
                     .unwrap_or(PROXY_PORT_POOL[0]);
                 inner.serial_to_port.insert(serial.to_string(), port);
-                port
+                (port, true)
             }
         };
-        if let Some(id) = device_id {
+        let shared = inner
+            .serial_to_port
+            .values()
+            .filter(|&&p| p == port)
+            .count()
+            > 1;
+        if shared {
+            inner.port_to_device.remove(&port);
+        } else if let Some(id) = device_id {
             inner.port_to_device.insert(port, id);
         }
-        port
+        PortAssignment {
+            port,
+            attributed: !shared,
+            fresh,
+        }
     }
 
     /// Free the port held by `serial` (device removal). The `port → device_id`
     /// mapping is dropped too, so any late connection on that port resolves to
     /// NULL rather than mis-attributing to a now-gone device.
+    ///
+    /// Only call this once the device's `adb reverse` is actually gone. A port
+    /// released while the phone still reverses onto it goes back in the pool,
+    /// gets handed to the next device, and then that device's id is stamped on
+    /// the first phone's traffic — see `DeviceManager::remove`, which keeps the
+    /// reservation when teardown failed.
+    ///
+    /// If the port was shared (pool exhaustion), the remaining holder becomes
+    /// its sole owner and is re-attributed by the next `assign` for that
+    /// serial — the watchdog issues one every few seconds when it probes.
     pub fn release(&self, serial: &str) {
         let mut inner = self.inner.lock();
         if let Some(port) = inner.serial_to_port.remove(serial) {
@@ -126,8 +170,11 @@ mod tests {
         let r = DevicePortRegistry::new();
         let p1 = r.assign("A", Some("dev-a".into()));
         let p2 = r.assign("A", Some("dev-a".into()));
-        assert_eq!(p1, p2);
-        assert_eq!(p1, 8891, "first device gets the first pool port (8888 reserved)");
+        assert_eq!(p1.port, p2.port);
+        assert_eq!(p1.port, 8891, "first device gets the first pool port (8888 reserved)");
+        assert!(p1.fresh, "first assign reserved the port");
+        assert!(!p2.fresh, "second assign only reported the existing one");
+        assert!(p1.attributed && p2.attributed);
     }
 
     #[test]
@@ -135,7 +182,7 @@ mod tests {
         let r = DevicePortRegistry::new();
         assert!(!PROXY_PORT_POOL.contains(&8888), "8888 must stay out of the pool");
         let a = r.assign("A", None);
-        assert_ne!(a, 8888, "device must not be attributed to the Mac-local port");
+        assert_ne!(a.port, 8888, "device must not be attributed to the Mac-local port");
     }
 
     #[test]
@@ -143,9 +190,9 @@ mod tests {
         let r = DevicePortRegistry::new();
         let a = r.assign("A", None);
         let b = r.assign("B", None);
-        assert_ne!(a, b);
-        assert_eq!(a, 8891);
-        assert_eq!(b, 8892);
+        assert_ne!(a.port, b.port);
+        assert_eq!(a.port, 8891);
+        assert_eq!(b.port, 8892);
     }
 
     #[test]
@@ -153,11 +200,62 @@ mod tests {
         let r = DevicePortRegistry::new();
         let a = r.assign("A", Some("dev-a".into()));
         r.release("A");
-        assert_eq!(r.device_for_port(a), None);
+        assert_eq!(r.device_for_port(a.port), None);
         // The freed port is the lowest free one again.
         let c = r.assign("C", Some("dev-c".into()));
-        assert_eq!(c, a);
-        assert_eq!(r.device_for_port(c).as_deref(), Some("dev-c"));
+        assert_eq!(c.port, a.port);
+        assert_eq!(r.device_for_port(c.port).as_deref(), Some("dev-c"));
+    }
+
+    #[test]
+    fn an_exhausted_pool_shares_a_port_without_faking_attribution() {
+        // Nine devices, eight ports. The ninth shares 8891 with the first —
+        // that part is unavoidable and it still gets a working proxy. What must
+        // NOT happen is the old behaviour: the last assign overwriting the
+        // mapping so every one of device #1's captures was stamped with the
+        // other device's id.
+        let r = DevicePortRegistry::new();
+        for i in 0..PROXY_PORT_POOL.len() {
+            let a = r.assign(&format!("S{i}"), Some(format!("dev-{i}")));
+            assert!(a.attributed, "device {i} fits in the pool");
+        }
+        assert_eq!(r.device_for_port(PROXY_PORT_POOL[0]).as_deref(), Some("dev-0"));
+
+        let overflow = r.assign("S8", Some("dev-8".into()));
+        assert_eq!(overflow.port, PROXY_PORT_POOL[0], "falls back to the first port");
+        assert!(!overflow.attributed, "a shared port can't attribute anything");
+        assert_eq!(
+            r.device_for_port(PROXY_PORT_POOL[0]),
+            None,
+            "neither device is labelled, rather than one wearing the other's id"
+        );
+    }
+
+    #[test]
+    fn freeing_a_shared_port_lets_the_survivor_be_attributed_again() {
+        let r = DevicePortRegistry::new();
+        for i in 0..=PROXY_PORT_POOL.len() {
+            r.assign(&format!("S{i}"), Some(format!("dev-{i}")));
+        }
+        r.release("S8");
+        // Re-attribution happens on the next assign, which the watchdog issues
+        // every few seconds via probe_android_proxy.
+        let again = r.assign("S0", Some("dev-0".into()));
+        assert!(again.attributed);
+        assert!(!again.fresh, "S0 kept the port it already held");
+        assert_eq!(r.device_for_port(PROXY_PORT_POOL[0]).as_deref(), Some("dev-0"));
+    }
+
+    #[test]
+    fn fresh_marks_only_the_call_that_reserved_the_port() {
+        // Drives the rollback in add_android_usb: a failed pairing must return
+        // the port it just took, and must NOT return one an earlier successful
+        // pairing is still using.
+        let r = DevicePortRegistry::new();
+        assert!(r.assign("A", None).fresh);
+        assert!(!r.assign("A", None).fresh);
+        r.release("A");
+        assert!(r.assign("A", None).fresh, "after release it is fresh again");
     }
 
     #[test]
@@ -175,7 +273,7 @@ mod tests {
     fn port_resolves_to_device_id() {
         let r = DevicePortRegistry::new();
         let p = r.assign("A", Some("dev-a".into()));
-        assert_eq!(r.device_for_port(p).as_deref(), Some("dev-a"));
+        assert_eq!(r.device_for_port(p.port).as_deref(), Some("dev-a"));
         assert_eq!(r.device_for_port(9999), None);
     }
 }

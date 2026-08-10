@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 
 use pane_ca::CaStore;
 use pane_devices::DeviceManager;
-use pane_engine::{DevicePortRegistry, EngineHandle};
+use pane_engine::{DevicePortRegistry, EngineHandle, NoMitmSet};
 use pane_storage::Storage;
 
 pub struct AppState {
@@ -21,6 +21,12 @@ pub struct AppState {
     /// wiring (DeviceManager) and the proxy engine (via EngineConfig) see the
     /// same map.
     pub registry: DevicePortRegistry,
+    /// Hosts the proxy has given up decrypting. Lives here, not in the engine,
+    /// so the UI can list and clear it and so the paths that invalidate it
+    /// (CA rotation, pairing a device) can reach it without a running proxy.
+    /// `proxy.start`/`proxy.stop` reset it, so its effective scope is still one
+    /// proxy run — it just stopped being unreachable state.
+    pub no_mitm: NoMitmSet,
     /// "Capture this Mac" prior-proxy snapshot. `Some` ⇒ host capture is
     /// active; holds the exact network service and its prior web/secure proxy
     /// config so `host_proxy::disable` restores it verbatim. macOS-only.
@@ -47,6 +53,7 @@ impl AppState {
             devices,
             proxy_handle: Mutex::new(None),
             registry,
+            no_mitm: NoMitmSet::new(),
             #[cfg(target_os = "macos")]
             host_proxy: Mutex::new(None),
         })

@@ -17,7 +17,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use pane_engine::{DevicePortRegistry, EngineEvent};
+use pane_engine::{DevicePortRegistry, EngineEvent, NoMitmSet};
 use pane_storage::Storage;
 use rusqlite::params;
 use time::OffsetDateTime;
@@ -36,7 +36,7 @@ pub async fn handle(
     storage: Arc<Storage>,
     events: broadcast::Sender<EngineEvent>,
     tls_acceptor: TlsAcceptor,
-    no_mitm: crate::passthrough::NoMitmSet,
+    no_mitm: NoMitmSet,
 ) -> anyhow::Result<()> {
     // Resolve which device this connection belongs to from the local port it
     // landed on. Each USB device has its own Mac-side proxy port; ports with no
@@ -93,27 +93,58 @@ pub async fn handle(
         // Hosts we already know we can't decrypt never get a handshake
         // attempted — the client talks to the real server through us and keeps
         // working. See `passthrough` for what lands here and why.
-        if no_mitm.should_tunnel(&host) {
-            return tunnel(stream, host, port, cap_id, started_at, storage, events).await;
+        if let Some(why) = no_mitm.why_tunnel(&host) {
+            return tunnel(stream, host, port, cap_id, started_at, storage, events, why).await;
         }
 
         let tls_stream = match tls_acceptor.accept(stream).await {
-            Ok(s) => s,
+            Ok(s) => {
+                // Proof this client accepts our leaf, so whatever transport
+                // failures we counted against this host earlier weren't a
+                // verdict on the certificate. Start the count over.
+                no_mitm.note_handshake_ok(&host);
+                s
+            }
             Err(e) => {
-                // The client rejected our leaf: a release build that trusts
-                // only the system store, or an app pinning its own anchors.
-                // Remember it so its retry — and everything after — is
-                // tunnelled instead of broken. This connection is already
-                // lost; its ClientHello was consumed by the failed handshake
+                // Why the handshake died decides whether we learn from it. An
+                // alert about our certificate is a verdict and will repeat; a
+                // dead socket is an accident. Either way this connection is
+                // lost — its ClientHello was consumed by the failed handshake
                 // and can't be replayed.
-                if no_mitm.learn(&host) {
+                let detail = e.to_string();
+                let verdict = crate::handshake::classify(&e);
+                let learned = match verdict {
+                    crate::handshake::HandshakeFailure::CertRejected(alert) => {
+                        no_mitm.learn_rejected(&host, &format!("alert: {alert}"))
+                    }
+                    // Not evidence on its own. Counted, and only a burst of
+                    // them inside the strike window reaches a verdict — that
+                    // is how we still catch pinning clients that just RST.
+                    _ => matches!(
+                        no_mitm.note_io_failure(&host, &detail),
+                        pane_engine::IoFailure::Learned
+                    ),
+                };
+                // Logged on every failure, with the classification: "why is
+                // everything CONNECT on that machine" has to be answerable
+                // from the log alone, and previously only the very first
+                // learned host left a trace.
+                tracing::debug!(
+                    host = %host,
+                    verdict = verdict.as_str(),
+                    learned,
+                    error = %detail,
+                    "TLS handshake with client failed"
+                );
+                if learned {
                     tracing::info!(
                         host = %host,
-                        "TLS handshake rejected by client; tunnelling this host from now on"
+                        verdict = verdict.as_str(),
+                        "client won't accept our certificate; tunnelling this host from now on"
                     );
                 }
-                mark_error(&storage, cap_id, "tls_handshake", &e.to_string())?;
-                emit_error(&events, cap_id, &host, "tls_handshake", &e.to_string());
+                mark_error(&storage, cap_id, "tls_handshake", &detail)?;
+                emit_error(&events, cap_id, &host, "tls_handshake", &detail);
                 return Ok(());
             }
         };
@@ -287,6 +318,7 @@ async fn tunnel(
     started_at: OffsetDateTime,
     storage: Arc<Storage>,
     events: broadcast::Sender<EngineEvent>,
+    why: String,
 ) -> anyhow::Result<()> {
     let mut upstream = match TcpStream::connect((host.as_str(), port)).await {
         Ok(s) => s,
@@ -312,7 +344,7 @@ async fn tunnel(
 
     let ended_at = OffsetDateTime::now_utc();
     let duration_ms = (ended_at - started_at).whole_milliseconds().max(0) as i64;
-    mark_tunneled(&storage, cap_id, copied as i64, duration_ms, ended_at)?;
+    mark_tunneled(&storage, cap_id, copied as i64, duration_ms, ended_at, &why)?;
     emit_completed(&events, cap_id, 0, duration_ms as u64, copied);
     Ok(())
 }
@@ -957,13 +989,15 @@ fn mark_tunneled(
     total_bytes: i64,
     duration_ms: i64,
     ended_at: OffsetDateTime,
+    why: &str,
 ) -> anyhow::Result<()> {
     let conn = storage.conn().lock();
     conn.execute(
-        "UPDATE capture SET state='tunneled', error_kind='tunneled', ended_at=?1,
-                            duration_ms=?2, total_bytes=?3
-         WHERE id=?4",
+        "UPDATE capture SET state='tunneled', error_kind='tunneled', error_detail=?1,
+                            ended_at=?2, duration_ms=?3, total_bytes=?4
+         WHERE id=?5",
         params![
+            clamp_detail(why),
             ended_at.unix_timestamp(),
             duration_ms,
             total_bytes,
@@ -973,17 +1007,35 @@ fn mark_tunneled(
     Ok(())
 }
 
-fn mark_error(storage: &Storage, id: Uuid, kind: &str, _msg: &str) -> anyhow::Result<()> {
+fn mark_error(storage: &Storage, id: Uuid, kind: &str, msg: &str) -> anyhow::Result<()> {
     let conn = storage.conn().lock();
     conn.execute(
-        "UPDATE capture SET state='error', error_kind=?1, ended_at=?2 WHERE id=?3",
+        "UPDATE capture SET state='error', error_kind=?1, error_detail=?2, ended_at=?3
+         WHERE id=?4",
         params![
             kind,
+            clamp_detail(msg),
             OffsetDateTime::now_utc().unix_timestamp(),
             id.to_string()
         ],
     )?;
     Ok(())
+}
+
+/// Error text is written on a path that runs per failed connection, and a
+/// pathological upstream can produce very long messages. Keep rows small; the
+/// discriminating part of a TLS alert or I/O error is always at the front.
+const MAX_ERROR_DETAIL: usize = 500;
+
+fn clamp_detail(msg: &str) -> Option<String> {
+    let trimmed = msg.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(match trimmed.char_indices().nth(MAX_ERROR_DETAIL) {
+        Some((idx, _)) => format!("{}…", &trimmed[..idx]),
+        None => trimmed.to_string(),
+    })
 }
 
 fn emit_started(
