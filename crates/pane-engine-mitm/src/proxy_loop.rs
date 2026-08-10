@@ -98,22 +98,53 @@ pub async fn handle(
         }
 
         let tls_stream = match tls_acceptor.accept(stream).await {
-            Ok(s) => s,
+            Ok(s) => {
+                // Proof this client accepts our leaf, so whatever transport
+                // failures we counted against this host earlier weren't a
+                // verdict on the certificate. Start the count over.
+                no_mitm.note_handshake_ok(&host);
+                s
+            }
             Err(e) => {
-                // The client rejected our leaf: a release build that trusts
-                // only the system store, or an app pinning its own anchors.
-                // Remember it so its retry — and everything after — is
-                // tunnelled instead of broken. This connection is already
-                // lost; its ClientHello was consumed by the failed handshake
+                // Why the handshake died decides whether we learn from it. An
+                // alert about our certificate is a verdict and will repeat; a
+                // dead socket is an accident. Either way this connection is
+                // lost — its ClientHello was consumed by the failed handshake
                 // and can't be replayed.
-                if no_mitm.learn_rejected(&host, &e.to_string()) {
+                let detail = e.to_string();
+                let verdict = crate::handshake::classify(&e);
+                let learned = match verdict {
+                    crate::handshake::HandshakeFailure::CertRejected(alert) => {
+                        no_mitm.learn_rejected(&host, &format!("alert: {alert}"))
+                    }
+                    // Not evidence on its own. Counted, and only a burst of
+                    // them inside the strike window reaches a verdict — that
+                    // is how we still catch pinning clients that just RST.
+                    _ => matches!(
+                        no_mitm.note_io_failure(&host, &detail),
+                        pane_engine::IoFailure::Learned
+                    ),
+                };
+                // Logged on every failure, with the classification: "why is
+                // everything CONNECT on that machine" has to be answerable
+                // from the log alone, and previously only the very first
+                // learned host left a trace.
+                tracing::debug!(
+                    host = %host,
+                    verdict = verdict.as_str(),
+                    learned,
+                    error = %detail,
+                    "TLS handshake with client failed"
+                );
+                if learned {
                     tracing::info!(
                         host = %host,
-                        "TLS handshake rejected by client; tunnelling this host from now on"
+                        verdict = verdict.as_str(),
+                        "client won't accept our certificate; tunnelling this host from now on"
                     );
                 }
-                mark_error(&storage, cap_id, "tls_handshake", &e.to_string())?;
-                emit_error(&events, cap_id, &host, "tls_handshake", &e.to_string());
+                mark_error(&storage, cap_id, "tls_handshake", &detail)?;
+                emit_error(&events, cap_id, &host, "tls_handshake", &detail);
                 return Ok(());
             }
         };
