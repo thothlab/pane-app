@@ -80,6 +80,18 @@ pub fn is_app_pinned(host: &str) -> bool {
     matches!(classify(host), HintKind::AppPin)
 }
 
+/// The `app_pin` patterns themselves, for the UI's "what is being tunnelled"
+/// panel. These match by pattern rather than by hostname, so unlike learned
+/// hosts they can't be forgotten — listing them is the only honest way to
+/// explain why a host nobody learned is still going through a blind tunnel.
+pub fn app_pinned_patterns() -> Vec<&'static str> {
+    HINTS
+        .iter()
+        .filter(|h| h.hint == "app_pin")
+        .map(|h| h.pattern.as_str())
+        .collect()
+}
+
 fn pattern_matches(pattern: &str, host: &str) -> bool {
     if let Some(stripped) = pattern.strip_prefix("*.") {
         host.ends_with(stripped) && host.len() > stripped.len()

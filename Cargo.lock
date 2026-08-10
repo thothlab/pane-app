@@ -3392,6 +3392,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "pane-ca",
+ "pane-ipc",
+ "pane-pinning",
  "parking_lot",
  "serde",
  "serde_json",

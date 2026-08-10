@@ -34,6 +34,16 @@ pub async fn start(
         .parse()
         .map_err(to_api("invalid_addr"))?;
 
+    // Forget which hosts we gave up decrypting last run, before a single accept
+    // loop is up. The set lives in AppState so the UI can see it, but its
+    // meaning is per-proxy-run: a user who stops and starts the proxy is
+    // telling us to try again, and that was the only escape hatch this state
+    // ever had. Anything still un-decryptable re-learns itself immediately.
+    let forgotten = state.no_mitm.reset();
+    if forgotten > 0 {
+        tracing::info!(hosts = forgotten, "cleared tunnelled-host set on proxy start");
+    }
+
     let ca_material = state.ca.material();
     let engine: Arc<dyn ProxyEngine> = Arc::new(MitmEngine::new(state.storage.clone()));
     let handle = engine
@@ -43,6 +53,7 @@ pub async fn start(
             pac_listen: Some(pac_listen),
             heartbeat_listen: Some(heartbeat_listen),
             registry: state.registry.clone(),
+            no_mitm: state.no_mitm.clone(),
         })
         .await
         .map_err(to_api("engine_start"))?;
@@ -84,6 +95,10 @@ pub async fn stop(state: State<'_, AppState>) -> CmdResult<serde_json::Value> {
     if let Some(h) = handle {
         h.shutdown().await.map_err(to_api("engine_stop"))?;
     }
+    // Drop the tunnelled-host set with the engine that filled it, so a stopped
+    // proxy never shows stale hosts in Settings. `start` resets too — this is
+    // the half that keeps the *displayed* state honest while we're down.
+    state.no_mitm.reset();
     // Clear http_proxy + adb-reverse on every paired Android device.
     // Otherwise the phone keeps pointing at 127.0.0.1:8888 which now
     // refuses connections — manifesting on the device as "no internet"

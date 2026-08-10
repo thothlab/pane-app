@@ -489,3 +489,43 @@ pub struct PinningEventDto {
     pub host: String,
     pub hint_kind: String,
 }
+
+// ------------------- SSL passthrough -------------------
+
+/// One host the proxy has decided not to decrypt, and the evidence for it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunneledHostDto {
+    pub host: String,
+    pub learned_at: String,
+    /// `cert_rejected` (client sent a TLS alert about our leaf) or
+    /// `repeated_failure` (a burst of transport failures, no alert).
+    pub reason: String,
+    /// Raw evidence — the TLS alert or I/O error text.
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunneledHostsDto {
+    /// Learned this run. Individually forgettable, and cleared on reset.
+    pub learned: Vec<TunneledHostDto>,
+    /// Baked-in `app_pin` patterns. Always tunnelled; not clearable.
+    pub seeded: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForgetTunneledHostArgs {
+    pub host: String,
+}
+
+/// Whether the device appears to trust our CA at all, for the current session.
+///
+/// The distinction that matters: *some* hosts tunnelling is normal (release
+/// builds, pinned apps), but *nothing* decrypting while several hosts tunnel
+/// means the root CA isn't installed or isn't trusted on the device.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsHealthDto {
+    /// Distinct hosts tunnelled without decryption in this session.
+    pub tunneled_hosts: u32,
+    /// HTTPS captures we successfully decrypted in this session.
+    pub decrypted_https: u32,
+}

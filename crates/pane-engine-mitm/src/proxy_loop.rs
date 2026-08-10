@@ -17,7 +17,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use pane_engine::{DevicePortRegistry, EngineEvent};
+use pane_engine::{DevicePortRegistry, EngineEvent, NoMitmSet};
 use pane_storage::Storage;
 use rusqlite::params;
 use time::OffsetDateTime;
@@ -36,7 +36,7 @@ pub async fn handle(
     storage: Arc<Storage>,
     events: broadcast::Sender<EngineEvent>,
     tls_acceptor: TlsAcceptor,
-    no_mitm: crate::passthrough::NoMitmSet,
+    no_mitm: NoMitmSet,
 ) -> anyhow::Result<()> {
     // Resolve which device this connection belongs to from the local port it
     // landed on. Each USB device has its own Mac-side proxy port; ports with no
@@ -106,7 +106,7 @@ pub async fn handle(
                 // tunnelled instead of broken. This connection is already
                 // lost; its ClientHello was consumed by the failed handshake
                 // and can't be replayed.
-                if no_mitm.learn(&host) {
+                if no_mitm.learn_rejected(&host, &e.to_string()) {
                     tracing::info!(
                         host = %host,
                         "TLS handshake rejected by client; tunnelling this host from now on"

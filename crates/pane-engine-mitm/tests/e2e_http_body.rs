@@ -147,6 +147,7 @@ async fn plain_http_post_body_round_trip() {
             pac_listen: None,
             heartbeat_listen: None,
             registry: pane_engine::DevicePortRegistry::new(),
+            no_mitm: pane_engine::NoMitmSet::new(),
         })
         .await
         .unwrap();
