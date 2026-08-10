@@ -94,7 +94,10 @@ fn format_device_name(
         // reads " · Android  · <tail>" — a leading-dot ghost row in the UI.
         (true, true) => "Android device".to_string(),
     };
-    format!("{head} · Android {android_release} · {}", serial_tail(serial))
+    format!(
+        "{head} · Android {android_release} · {}",
+        serial_tail(serial)
+    )
 }
 
 /// Android package identifiers for the Pane companion APK. The helper
@@ -545,7 +548,9 @@ impl AndroidPlatform {
     pub async fn list_third_party_packages(&self, serial: &str) -> Result<Vec<String>> {
         let out = run(
             "adb",
-            &["-s", serial, "shell", "pm", "list", "packages", "--user", "0", "-3"],
+            &[
+                "-s", serial, "shell", "pm", "list", "packages", "--user", "0", "-3",
+            ],
         )
         .await?;
         Ok(out
@@ -561,10 +566,7 @@ impl AndroidPlatform {
     /// from. One `ps -A` round-trip (~50ms over USB), polled every
     /// 10s. PID reuse on Android is rare enough at that cadence that
     /// stale entries aren't worth tracking separately.
-    pub async fn pid_names(
-        &self,
-        serial: &str,
-    ) -> Result<std::collections::HashMap<u32, String>> {
+    pub async fn pid_names(&self, serial: &str) -> Result<std::collections::HashMap<u32, String>> {
         let out = run(
             "adb",
             &["-s", serial, "shell", "ps", "-A", "-o", "PID,NAME"],
@@ -677,7 +679,13 @@ async fn read_http_proxy(serial: &str) -> Result<bool> {
     let out = run(
         "adb",
         &[
-            "-s", serial, "shell", "settings", "get", "global", "http_proxy",
+            "-s",
+            serial,
+            "shell",
+            "settings",
+            "get",
+            "global",
+            "http_proxy",
         ],
     )
     .await?;
@@ -852,9 +860,9 @@ async fn install_helper_apk(serial: &str, apk: &std::path::Path) -> Result<()> {
                     ],
                 )
                 .await;
-                install()
-                    .await
-                    .map_err(|e2| anyhow!("pm install failed after sig-mismatch uninstall: {e2}"))?;
+                install().await.map_err(|e2| {
+                    anyhow!("pm install failed after sig-mismatch uninstall: {e2}")
+                })?;
                 Ok(())
             } else {
                 Err(anyhow!("pm install failed: {e}"))

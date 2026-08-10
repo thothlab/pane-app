@@ -87,7 +87,11 @@ pub fn compile_to_sql(input: &str) -> Result<(String, Vec<Box<dyn ToSql>>)> {
                     "pid" => pid_group(&values, &mut params)?,
                     other => return Err(anyhow!("unknown filter key: {other}")),
                 };
-                where_parts.push(if negate { format!("NOT ({frag})") } else { frag });
+                where_parts.push(if negate {
+                    format!("NOT ({frag})")
+                } else {
+                    frag
+                });
             }
         }
     }
@@ -462,8 +466,14 @@ mod tests {
         let (_s, p) = compile_to_sql("msg:foo_bar").unwrap();
         let text = param_text(p[0].as_ref());
         // (?i) Unicode fold; `_` is a regex literal (not a wildcard, no escape).
-        assert!(text.starts_with("(?i)"), "expected case-insensitive flag, got {text}");
-        assert!(text.contains("foo_bar"), "expected literal underscore, got {text}");
+        assert!(
+            text.starts_with("(?i)"),
+            "expected case-insensitive flag, got {text}"
+        );
+        assert!(
+            text.contains("foo_bar"),
+            "expected literal underscore, got {text}"
+        );
     }
 
     #[test]
@@ -471,7 +481,10 @@ mod tests {
         // A literal dot/paren in a value must not become a regex wildcard.
         let (_s, p) = compile_to_sql("tag:a.b(c)").unwrap();
         let text = param_text(p[0].as_ref());
-        assert!(text.contains(r"a\.b\(c\)"), "metachars must be escaped, got {text}");
+        assert!(
+            text.contains(r"a\.b\(c\)"),
+            "metachars must be escaped, got {text}"
+        );
     }
 
     #[test]

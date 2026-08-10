@@ -317,14 +317,16 @@ impl DeviceManager {
         // An enumeration failure means "adb couldn't answer", not "nothing is
         // attached", so fall back to trying everything rather than silently
         // configuring nothing.
-        let attached: Option<std::collections::HashSet<String>> =
-            match self.discover_attached().await {
-                Ok(list) => Some(list.into_iter().map(|d| d.serial).collect()),
-                Err(e) => {
-                    tracing::debug!(error = %e, "reapply: device enumeration failed; trying all paired");
-                    None
-                }
-            };
+        let attached: Option<std::collections::HashSet<String>> = match self
+            .discover_attached()
+            .await
+        {
+            Ok(list) => Some(list.into_iter().map(|d| d.serial).collect()),
+            Err(e) => {
+                tracing::debug!(error = %e, "reapply: device enumeration failed; trying all paired");
+                None
+            }
+        };
         let serials: Vec<String> = self
             .list()
             .unwrap_or_default()

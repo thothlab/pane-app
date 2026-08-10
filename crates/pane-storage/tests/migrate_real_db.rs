@@ -30,9 +30,14 @@ fn migrations_apply_to_an_existing_database() {
     // Reading a capture back exercises the SELECT column lists against the
     // migrated schema — an off-by-one in the projection shows up here and
     // nowhere else.
-    let caps = storage.list_captures(None, 10, None).expect("list captures");
+    let caps = storage
+        .list_captures(None, 10, None)
+        .expect("list captures");
     for c in &caps {
-        assert!(!c.server_host.is_empty(), "row decoded into the wrong columns");
+        assert!(
+            !c.server_host.is_empty(),
+            "row decoded into the wrong columns"
+        );
     }
     // Idempotent: opening again must be a no-op, not a re-run.
     let _ = Storage::open(dir.path()).expect("second open");

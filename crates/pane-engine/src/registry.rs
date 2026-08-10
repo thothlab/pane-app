@@ -171,7 +171,10 @@ mod tests {
         let p1 = r.assign("A", Some("dev-a".into()));
         let p2 = r.assign("A", Some("dev-a".into()));
         assert_eq!(p1.port, p2.port);
-        assert_eq!(p1.port, 8891, "first device gets the first pool port (8888 reserved)");
+        assert_eq!(
+            p1.port, 8891,
+            "first device gets the first pool port (8888 reserved)"
+        );
         assert!(p1.fresh, "first assign reserved the port");
         assert!(!p2.fresh, "second assign only reported the existing one");
         assert!(p1.attributed && p2.attributed);
@@ -180,9 +183,15 @@ mod tests {
     #[test]
     fn devices_never_get_the_reserved_8888() {
         let r = DevicePortRegistry::new();
-        assert!(!PROXY_PORT_POOL.contains(&8888), "8888 must stay out of the pool");
+        assert!(
+            !PROXY_PORT_POOL.contains(&8888),
+            "8888 must stay out of the pool"
+        );
         let a = r.assign("A", None);
-        assert_ne!(a.port, 8888, "device must not be attributed to the Mac-local port");
+        assert_ne!(
+            a.port, 8888,
+            "device must not be attributed to the Mac-local port"
+        );
     }
 
     #[test]
@@ -219,11 +228,20 @@ mod tests {
             let a = r.assign(&format!("S{i}"), Some(format!("dev-{i}")));
             assert!(a.attributed, "device {i} fits in the pool");
         }
-        assert_eq!(r.device_for_port(PROXY_PORT_POOL[0]).as_deref(), Some("dev-0"));
+        assert_eq!(
+            r.device_for_port(PROXY_PORT_POOL[0]).as_deref(),
+            Some("dev-0")
+        );
 
         let overflow = r.assign("S8", Some("dev-8".into()));
-        assert_eq!(overflow.port, PROXY_PORT_POOL[0], "falls back to the first port");
-        assert!(!overflow.attributed, "a shared port can't attribute anything");
+        assert_eq!(
+            overflow.port, PROXY_PORT_POOL[0],
+            "falls back to the first port"
+        );
+        assert!(
+            !overflow.attributed,
+            "a shared port can't attribute anything"
+        );
         assert_eq!(
             r.device_for_port(PROXY_PORT_POOL[0]),
             None,
@@ -243,7 +261,10 @@ mod tests {
         let again = r.assign("S0", Some("dev-0".into()));
         assert!(again.attributed);
         assert!(!again.fresh, "S0 kept the port it already held");
-        assert_eq!(r.device_for_port(PROXY_PORT_POOL[0]).as_deref(), Some("dev-0"));
+        assert_eq!(
+            r.device_for_port(PROXY_PORT_POOL[0]).as_deref(),
+            Some("dev-0")
+        );
     }
 
     #[test]

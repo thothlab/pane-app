@@ -393,7 +393,10 @@ mod tests {
     fn host_comma_list_ors_alternatives() {
         let (sql, p) = compile_to_sql("host:api.foo.com,api.bar.com").unwrap();
         assert!(sql.contains("server_host LIKE"));
-        assert!(sql.contains(" OR "), "expected OR between hosts, got: {sql}");
+        assert!(
+            sql.contains(" OR "),
+            "expected OR between hosts, got: {sql}"
+        );
         assert_eq!(p.len(), 2);
     }
 
@@ -402,7 +405,10 @@ mod tests {
         // !host:a,b means "host is neither a nor b" → AND NOT LIKE × N
         let (sql, p) = compile_to_sql("!host:cdn.example.com,fonts.example.com").unwrap();
         assert!(sql.contains("server_host NOT LIKE"));
-        assert!(sql.contains(" AND "), "expected AND for negated list, got: {sql}");
+        assert!(
+            sql.contains(" AND "),
+            "expected AND for negated list, got: {sql}"
+        );
         assert_eq!(p.len(), 2);
     }
 

@@ -127,17 +127,14 @@ pub async fn logcat_open(
             // every replayed line collides with the dedup index and `inserted`
             // is 0 — so we skip the ping entirely and the window doesn't churn
             // through no-op re-queries of history it already shows from the DB.
-            let inserted = match storage_for_db.insert_logcat_batch(
-                &serial_db,
-                created_at_ms,
-                &rows,
-            ) {
-                Ok(n) => n,
-                Err(e) => {
-                    tracing::warn!(error = %e, "logcat: db insert failed");
-                    0
-                }
-            };
+            let inserted =
+                match storage_for_db.insert_logcat_batch(&serial_db, created_at_ms, &rows) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "logcat: db insert failed");
+                        0
+                    }
+                };
             // The DB is the source of truth; the webview reads it via
             // logcat_query. Emit only a lightweight "rows appended" ping (count
             // of new rows) so the window knows to re-query / bump its badge —
@@ -149,10 +146,7 @@ pub async fn logcat_open(
             }
         }
         LogcatEvent::Error(msg) => {
-            let _ = win_for_emit.emit(
-                "logcat://error",
-                serde_json::json!({ "message": msg }),
-            );
+            let _ = win_for_emit.emit("logcat://error", serde_json::json!({ "message": msg }));
         }
     })
     .map_err(to_api("logcat_spawn"))?;
@@ -281,10 +275,7 @@ pub async fn logcat_clear(
 /// Export the full (uncapped) filtered set for a device to a file in
 /// threadtime format. Returns the number of lines written.
 #[tauri::command]
-pub async fn logcat_export(
-    state: State<'_, AppState>,
-    args: LogcatExportArgs,
-) -> CmdResult<usize> {
+pub async fn logcat_export(state: State<'_, AppState>, args: LogcatExportArgs) -> CmdResult<usize> {
     state
         .storage
         .export_logcat(

@@ -359,8 +359,7 @@ mod tests {
 
     #[test]
     fn parses_error_with_colons_in_message() {
-        let line =
-            "04-13 12:34:56.789  1234  5678 E CrashTag: java.lang.NullPointerException: foo";
+        let line = "04-13 12:34:56.789  1234  5678 E CrashTag: java.lang.NullPointerException: foo";
         let e = parse_logcat_line(line).unwrap();
         assert_eq!(e.level, LogLevel::Error);
         assert!(e.message.contains("NullPointerException"));
@@ -390,8 +389,7 @@ mod tests {
         // Latin-1, invalid as standalone UTF-8) must not kill the
         // stream: we lossy-decode the raw bytes the same way the read
         // loop does and the line still parses into an entry.
-        let mut bytes: Vec<u8> =
-            b"04-13 12:34:56.789  1234  5678 E Tag: caf".to_vec();
+        let mut bytes: Vec<u8> = b"04-13 12:34:56.789  1234  5678 E Tag: caf".to_vec();
         bytes.push(0xE9); // invalid UTF-8 here
         bytes.extend_from_slice(b" done\n");
         let line = String::from_utf8_lossy(&bytes);

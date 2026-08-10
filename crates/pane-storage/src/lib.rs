@@ -21,11 +21,10 @@ use anyhow::{anyhow, Context, Result};
 use base64::Engine as _;
 use pane_ipc::{
     CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionSetPriorityArgs,
-    CollectionUpsertArgs, ExportOneResult,
-    FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs, RuleCollectionDto, RuleConditionDto,
-    RuleDto, RuleHeaderDto, RuleParamDto, RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs,
-    RuleUpsertArgs,
-    SaveFilterArgs, SessionDto, TlsHealthDto,
+    CollectionUpsertArgs, ExportOneResult, FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs,
+    RuleCollectionDto, RuleConditionDto, RuleDto, RuleHeaderDto, RuleParamDto, RulePatchOpDto,
+    RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs, SaveFilterArgs, SessionDto,
+    TlsHealthDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};

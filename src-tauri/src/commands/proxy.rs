@@ -41,7 +41,10 @@ pub async fn start(
     // ever had. Anything still un-decryptable re-learns itself immediately.
     let forgotten = state.no_mitm.reset();
     if forgotten > 0 {
-        tracing::info!(hosts = forgotten, "cleared tunnelled-host set on proxy start");
+        tracing::info!(
+            hosts = forgotten,
+            "cleared tunnelled-host set on proxy start"
+        );
     }
 
     let ca_material = state.ca.material();

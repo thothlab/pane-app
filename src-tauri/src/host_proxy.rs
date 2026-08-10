@@ -229,7 +229,14 @@ mod imp {
         // -a all matches, -Z prints SHA-1 + SHA-256 hashes.
         let out = match run(
             "security",
-            &["find-certificate", "-a", "-Z", "-c", "Pane Root CA", &keychain],
+            &[
+                "find-certificate",
+                "-a",
+                "-Z",
+                "-c",
+                "Pane Root CA",
+                &keychain,
+            ],
         ) {
             Ok(o) => o,
             Err(_) => return false,
@@ -293,7 +300,12 @@ mod imp {
         if prior.enabled && !prior.server.is_empty() {
             run(
                 "networksetup",
-                &[kind.set_flag(), service, &prior.server, &prior.port.to_string()],
+                &[
+                    kind.set_flag(),
+                    service,
+                    &prior.server,
+                    &prior.port.to_string(),
+                ],
             )?;
         } else {
             run("networksetup", &[kind.state_flag(), service, "off"])?;
@@ -402,7 +414,10 @@ mod imp {
         let secure = get_secure_web_proxy(&service).unwrap_or_default();
         if stale(&web) || stale(&secure) {
             let _ = run("networksetup", &["-setwebproxystate", &service, "off"]);
-            let _ = run("networksetup", &["-setsecurewebproxystate", &service, "off"]);
+            let _ = run(
+                "networksetup",
+                &["-setsecurewebproxystate", &service, "off"],
+            );
             tracing::warn!(
                 service = %service,
                 "host capture self-heal: cleared stale 127.0.0.1:8888 proxy pointer"
