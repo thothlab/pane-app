@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use pane_android::{AndroidPlatform, DeviceProxyState};
+use pane_android::{AndroidPlatform, DeviceProxyState, Presence};
 use pane_ca::CaMaterial;
 use pane_engine::DevicePortRegistry;
 use pane_ios::IosPlatform;
@@ -134,7 +134,12 @@ impl DeviceManager {
         // exists (so android_device_id finds it) but BEFORE add_usb sets up the
         // `adb reverse`, which needs the assigned port.
         let mac_port = self.assign_port(serial);
-        let outcome = self.android.add_usb(serial, &ca, mac_port).await;
+        // Interactive: the user clicked Add or Re-sync against the on-screen
+        // attached list, which may be a few seconds stale after a replug.
+        let outcome = self
+            .android
+            .add_usb(serial, &ca, mac_port, Presence::Wait)
+            .await;
         match outcome {
             Ok(device) => {
                 self.record_ready(&device)?;
@@ -195,7 +200,13 @@ impl DeviceManager {
         ca: CaMaterial,
     ) -> anyhow::Result<()> {
         let mac_port = self.assign_port(serial);
-        match self.android.add_usb(serial, &ca, mac_port).await {
+        // Background sweep over every paired device, most of which may not be
+        // plugged in at all — waiting on each would delay the one that is.
+        match self
+            .android
+            .add_usb(serial, &ca, mac_port, Presence::Assume)
+            .await
+        {
             Ok(device) => {
                 // Persist the outcome, so a device that had previously failed
                 // clears its error banner once it comes good again.
