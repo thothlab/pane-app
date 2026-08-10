@@ -104,6 +104,29 @@ impl DeviceManager {
         self.android.probe_proxy_state(serial, mac_port).await
     }
 
+    /// May this serial still be reversing onto its assigned pool port?
+    ///
+    /// `adb reverse` mappings are bound to the device transport: the adb server
+    /// drops them when the device disconnects, and `adb -s <gone> reverse
+    /// --list` errors with "device not found". So an unplugged phone cannot
+    /// send anything to its old port, and its reservation is pure leak — which
+    /// matters because removing a device *with the cable out* is the common
+    /// case, and each such removal would otherwise book a pool port for the
+    /// rest of the process.
+    ///
+    /// An enumeration failure means "adb couldn't answer", not "nothing is
+    /// attached" — the same rule the watchdog and `discover_attached` follow —
+    /// so it resolves to "assume it's there" and keeps the reservation.
+    async fn android_may_hold_reverse(&self, serial: &str) -> bool {
+        match self.discover_attached().await {
+            Ok(list) => list.iter().any(|d| d.serial == serial),
+            Err(e) => {
+                tracing::debug!(error = %e, serial, "can't tell if device is attached; keeping its port reserved");
+                true
+            }
+        }
+    }
+
     /// Cheap check for the proxy-stopped case: is this device still stranded
     /// pointing at us? Same `Err` == "skip, don't act" contract as
     /// `probe_android_proxy`.
@@ -180,22 +203,25 @@ impl DeviceManager {
         let cleaned = match dev.platform.as_str() {
             "ios" => self.ios.remove(&dev.serial).await.is_ok(),
             "android" => {
-                // Release the port only once the teardown that kills the
-                // device's `adb reverse` has actually succeeded. Releasing
-                // first — which is what this did — hands the port back to the
-                // pool while an unreachable phone may still be reversing onto
-                // it; the next device to pair inherits that port, and the first
-                // phone's traffic starts arriving stamped with the new device's
-                // id. Removing a device with the cable unplugged is exactly the
-                // case that fails here, and it is a common one.
+                // Release the port only once nothing can still be reversing
+                // onto it. Releasing unconditionally — which is what this did —
+                // hands the port back to the pool while a reachable phone may
+                // still be pointing at it; the next device to pair inherits the
+                // port and the first phone's traffic arrives stamped with the
+                // new device's id.
+                //
+                // Teardown succeeding is the clean case. Teardown failing on a
+                // phone that isn't attached any more is equally safe: its
+                // reverse died with the USB connection. Only a device that is
+                // still attached *and* wouldn't be cleaned keeps its port.
                 let ok = self.android.remove(&dev.serial).await.is_ok();
-                if ok {
+                if ok || !self.android_may_hold_reverse(&dev.serial).await {
                     self.registry.release(&dev.serial);
                 } else {
                     tracing::warn!(
                         serial = %dev.serial,
-                        "couldn't tear down proxy on removal; keeping its port \
-                         reserved so no other device inherits it"
+                        "couldn't tear down proxy on a still-attached device; \
+                         keeping its port reserved so no other device inherits it"
                     );
                 }
                 ok
@@ -271,9 +297,10 @@ impl DeviceManager {
     /// reconnects while Pane proxy is stopped — restores the phone's
     /// internet by stripping the stale http_proxy setting.
     pub async fn clear_one_android_proxy(&self, serial: &str) -> anyhow::Result<()> {
-        // Release after the teardown, and only if it worked — see `remove`.
+        // Release after the teardown, under the same rule as `remove`: safe
+        // once either the cleanup worked or the device is gone from the bus.
         let outcome = self.android.remove(serial).await;
-        if outcome.is_ok() {
+        if outcome.is_ok() || !self.android_may_hold_reverse(serial).await {
             self.registry.release(serial);
         }
         outcome
@@ -336,13 +363,25 @@ impl DeviceManager {
             .filter(|d| d.platform == "android" && d.connection == "usb")
             .map(|d| d.serial)
             .collect();
+        // One enumeration for the whole sweep — this runs on every proxy.stop,
+        // and the unplugged device is the common case here.
+        let attached: Option<std::collections::HashSet<String>> =
+            match self.discover_attached().await {
+                Ok(list) => Some(list.into_iter().map(|d| d.serial).collect()),
+                Err(_) => None,
+            };
         let mut cleaned = Vec::with_capacity(serials.len());
         for serial in serials {
-            // Same ordering rule as `remove`: the port goes back only once the
-            // reverse it names is really gone. A phone we failed to reach may
-            // still be pointing at that port.
-            if self.android.remove(&serial).await.is_ok() {
+            // Same rule as `remove`: the port goes back once nothing can still
+            // be reversing onto it — either the teardown worked, or the device
+            // is off the bus and its reverse died with the connection. When adb
+            // couldn't answer at all we keep the reservation.
+            let ok = self.android.remove(&serial).await.is_ok();
+            let gone = attached.as_ref().is_some_and(|a| !a.contains(&serial));
+            if ok || gone {
                 self.registry.release(&serial);
+            }
+            if ok {
                 cleaned.push(serial);
             }
         }
