@@ -227,6 +227,207 @@ export function validatePortFile(raw: unknown): PortFile | string {
   return o as unknown as PortFile;
 }
 
+// ── Readable dumps ──────────────────────────────────────────────────
+
+/**
+ * The other shape in circulation: rules nested inside their collection,
+ * `match`/`response` as objects, and the response body as literal JSON
+ * rather than base64.
+ *
+ *     { collections: [ { name, enabled, rules: [
+ *         { name, enabled, mode, patches,
+ *           match:    { method, path, host, req_body, params, conditions },
+ *           response: { status, delay_ms, mime, body } } ] } ] }
+ *
+ * It comes out of forks that serialise the backend DTOs directly, and it
+ * is what anyone hand-writing a mock set reaches for — a port file's
+ * base64 bodies are effectively uneditable by hand. Accepting it costs
+ * one normalisation pass and removes a class of "the file is fine but
+ * Pane says it's broken" reports.
+ *
+ * Everything the port file carries and this shape doesn't is inferred:
+ * `priority` from array order (which is the order the author wrote, and
+ * the order rules are evaluated in), `res_headers` as empty.
+ */
+interface ReadableRule {
+  name?: unknown;
+  enabled?: unknown;
+  mode?: unknown;
+  patches?: unknown;
+  match?: Record<string, unknown>;
+  response?: Record<string, unknown>;
+}
+
+function isReadableRule(v: unknown): v is ReadableRule {
+  if (!v || typeof v !== "object") return false;
+  const r = v as Record<string, unknown>;
+  // `match`/`response` as objects is the discriminator: a port-file rule
+  // has neither, carrying flat match_* / res_* fields instead.
+  return (
+    (typeof r.match === "object" && r.match !== null) ||
+    (typeof r.response === "object" && r.response !== null)
+  );
+}
+
+/** Does this payload look like a readable dump rather than a port file? */
+export function looksLikeReadableDump(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const o = raw as Record<string, unknown>;
+  if (o.format === FORMAT_ID) return false;
+  const collections = Array.isArray(o.collections) ? o.collections : [];
+  const nested = collections.some(
+    (c) =>
+      c &&
+      typeof c === "object" &&
+      Array.isArray((c as Record<string, unknown>).rules),
+  );
+  const looseRules = Array.isArray(o.rules) && o.rules.some(isReadableRule);
+  return nested || looseRules;
+}
+
+/**
+ * UTF-8 safe base64. `btoa` is Latin-1 only, so Cyrillic mock bodies —
+ * which is most of them here — would throw or mangle without the
+ * encode-then-widen step. Built one char at a time rather than via
+ * `String.fromCharCode(...bytes)`, which blows the argument limit on
+ * bodies of any size.
+ */
+function utf8ToBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/** JSON text for a body/matcher value, or the string itself if already text. */
+function asJsonText(v: unknown): string {
+  return typeof v === "string" ? v : JSON.stringify(v, null, 2);
+}
+
+function str(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+function arr<T>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : [];
+}
+
+function readableRuleToExported(
+  r: ReadableRule,
+  collectionRef: string | null,
+  priority: number,
+): ExportedRule {
+  const m = (r.match ?? {}) as Record<string, unknown>;
+  const resp = (r.response ?? {}) as Record<string, unknown>;
+
+  // Body: literal JSON is the common case, but accept an already-encoded
+  // blob so a half-converted file still imports.
+  let bodyBase64: string | undefined;
+  if (typeof resp.body_base64 === "string" && resp.body_base64.length > 0) {
+    bodyBase64 = resp.body_base64;
+  } else if (resp.body !== undefined && resp.body !== null) {
+    bodyBase64 = utf8ToBase64(asJsonText(resp.body));
+  }
+
+  const reqBody = m.req_body;
+  return {
+    collection_ref: collectionRef,
+    name: typeof r.name === "string" ? r.name : "",
+    enabled: r.enabled === true,
+    priority,
+    mode: r.mode === "patch" ? "patch" : "stub",
+    patches: arr(r.patches),
+    match_host_glob: str(m.host),
+    match_method: str(m.method),
+    match_path_glob: str(m.path),
+    match_params: arr(m.params),
+    match_req_body:
+      reqBody === undefined || reqBody === null ? null : asJsonText(reqBody),
+    match_conditions: arr(m.conditions),
+    res_status: typeof resp.status === "number" ? resp.status : 200,
+    res_headers: arr(resp.headers),
+    res_body_mime: str(resp.mime),
+    res_body_base64: bodyBase64,
+    res_delay_ms: typeof resp.delay_ms === "number" ? resp.delay_ms : 0,
+  };
+}
+
+/**
+ * Convert a readable dump into the port file the importer already knows
+ * how to apply. Refs are positional (`c0`, `c1`, …) rather than UUIDs —
+ * they only ever key the in-memory ref→id map during import.
+ */
+export function readableDumpToPortFile(raw: unknown): PortFile | string {
+  if (!raw || typeof raw !== "object") return "not a JSON object";
+  const o = raw as Record<string, unknown>;
+
+  const collections: ExportedCollectionEntry[] = [];
+  const rules: ExportedRule[] = [];
+
+  const rawCollections = Array.isArray(o.collections) ? o.collections : [];
+  rawCollections.forEach((rawC, ci) => {
+    if (!rawC || typeof rawC !== "object") return;
+    const c = rawC as Record<string, unknown>;
+    const ref = `c${ci}`;
+    collections.push({
+      ref,
+      name: typeof c.name === "string" ? c.name : `Collection ${ci + 1}`,
+      enabled: c.enabled === true,
+      // Evaluation order is collection priority, then rule priority, both
+      // ascending — so array position is exactly the intended precedence.
+      priority: ci,
+    });
+    arr<ReadableRule>(c.rules).forEach((r, ri) => {
+      rules.push(readableRuleToExported(r, ref, ri));
+    });
+  });
+
+  // Rules sitting at the top level are ungrouped, the same way a port
+  // file spells `collection_ref: null`.
+  arr<ReadableRule>(o.rules).forEach((r, ri) => {
+    if (isReadableRule(r)) rules.push(readableRuleToExported(r, null, ri));
+  });
+
+  if (rules.length === 0) return "no rules found in this file";
+
+  return {
+    format: FORMAT_ID,
+    version: FORMAT_VERSION,
+    exported_at:
+      typeof o.exported_at === "string" ? o.exported_at : nowIso(),
+    kind: "library",
+    collections,
+    rules,
+  };
+}
+
+/**
+ * The importer's entry point: take whatever JSON the user picked and
+ * either produce a port file or explain what's wrong.
+ *
+ * Two accepted shapes — our own port file, and the readable dump above.
+ * A file that is neither gets a message naming what it actually looked
+ * like, because the old one ("unexpected format: undefined") reads as
+ * "your file is corrupt" when the real answer is "this is a different
+ * revision of the format".
+ */
+export function parseImportFile(raw: unknown): PortFile | string {
+  if (!raw || typeof raw !== "object") return "not a JSON object";
+  const o = raw as Record<string, unknown>;
+  if (o.format === FORMAT_ID) return validatePortFile(raw);
+  if (looksLikeReadableDump(raw)) return readableDumpToPortFile(raw);
+  if (o.format === undefined) {
+    return (
+      "no `format` field — expected a Pane rules export " +
+      `("format": "${FORMAT_ID}") or a readable dump with ` +
+      "collections[].rules[]"
+    );
+  }
+  return `unexpected format: ${String(o.format)}`;
+}
+
 /**
  * Apply a parsed port file to the live database.
  *

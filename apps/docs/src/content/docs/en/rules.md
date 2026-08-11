@@ -142,6 +142,19 @@ The *Import* button in the page header opens a file picker. The file's `kind` fi
 
 **Format**: `{ format: "pane-rules", version: 1, kind, exported_at, collections, rules }`. Hand-editing the JSON is supported but unprotected — invalid fields surface as backend errors at import time, not warnings.
 
+**Readable form**: import also accepts a second shape — rules nested inside their collection, `match` and `response` as objects, and the response body as literal JSON rather than base64:
+
+```json
+{ "collections": [ { "name": "…", "enabled": false, "rules": [
+    { "name": "…", "enabled": true, "mode": "stub",
+      "match":    { "method": "POST", "path": "/x", "req_body": { "id": 1 } },
+      "response": { "status": 200, "delay_ms": 0, "mime": "application/json", "body": { "ok": true } } } ] } ] }
+```
+
+This is what dumps from Pane forks look like when they serialise the backend DTOs directly, and it's the shape you want when writing mocks by hand — a port file keeps bodies in base64, which you can only edit by decoding them first. Missing fields are inferred: `priority` from array order (which is also evaluation order), `res_headers` as empty. Export still writes port files only.
+
+Limit of the readable form: the body is a JSON value, so a non-JSON response (HTML, an image, protobuf) can't be expressed in it. Those mocks need a port file, where `res_body_base64` carries the bytes.
+
 ## Where to configure
 
 Sidebar → **Rules** → collection → rule in `Patch — forward, then mutate` mode.
