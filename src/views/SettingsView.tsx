@@ -1,5 +1,5 @@
-import { type Component, createResource, createSignal, For, Show } from "solid-js";
-import { RefreshCw, Download } from "lucide-solid";
+import { type Component, createMemo, createResource, createSignal, For, Show } from "solid-js";
+import { RefreshCw, Download, ChevronRight, X } from "lucide-solid";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
@@ -11,6 +11,14 @@ import {
   type FontScale,
 } from "@/stores/font-scale";
 import { t, tr, locale, setLocale, LOCALES } from "@/i18n";
+import { groupByBaseDomain } from "@/lib/host-grouping";
+import {
+  capturesPoll,
+  setCapturesPollEnabled,
+  setCapturesPollSeconds,
+  MIN_POLL_SECONDS,
+  MAX_POLL_SECONDS,
+} from "@/stores/captures-poll";
 
 // Theme button labels are looked up via i18n in the JSX. Statically
 // listed key names keep the i18n key set discoverable by grep and let
@@ -81,6 +89,31 @@ const SettingsView: Component = () => {
   const forgetTunneled = async (host: string) => {
     await api.passthrough.forget(host);
     await refetchTunneled();
+  };
+
+  // Sequential rather than concurrent: each call is a tiny mutation and the
+  // refetch happens once at the end, so there is nothing to gain from racing
+  // them and a partial failure stays easier to reason about.
+  const forgetGroup = async (hosts: string[]) => {
+    for (const host of hosts) await api.passthrough.forget(host);
+    await refetchTunneled();
+  };
+
+  const tunneledGroups = createMemo(() =>
+    groupByBaseDomain(tunneled()?.learned ?? [], (h) => h.host),
+  );
+
+  // Collapsed by default — the panel's first question is "what is being
+  // tunnelled", which the domain answers. Only the domains the user opened are
+  // tracked, so a refetch never silently re-collapses what they expanded.
+  const [openGroups, setOpenGroups] = createSignal<Set<string>>(new Set());
+  const isGroupOpen = (domain: string) => openGroups().has(domain);
+  const toggleGroup = (domain: string) => {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(domain)) next.add(domain);
+      return next;
+    });
   };
 
   const exportCa = async (format: CaFormat) => {
@@ -242,25 +275,75 @@ const SettingsView: Component = () => {
           when={(tunneled()?.learned.length ?? 0) > 0}
           fallback={<p class="text-sm text-fg-muted">{t()("settings.tunneled_empty")}</p>}
         >
+          {/* One row per subdomain turned a handful of services into a
+              screenful, so hosts are grouped by registrable domain and each
+              group collapses. Collapsed is the default: the question this
+              panel answers first is "what is being tunnelled", and the domain
+              answers it — the individual hosts matter only when forgetting
+              one. */}
           <ul class="text-sm divide-y divide-border/40 border border-border/40 rounded">
-            <For each={tunneled()!.learned}>
-              {(h) => (
-                <li class="flex items-start justify-between gap-3 px-3 py-2">
-                  <div class="min-w-0">
-                    <div class="font-mono truncate">{h.host}</div>
-                    <div class="text-xs text-fg-muted break-all">
-                      {h.reason === "cert_rejected"
-                        ? t()("settings.tunneled_reason_cert")
-                        : t()("settings.tunneled_reason_repeated")}
-                      {h.detail ? ` · ${h.detail}` : ""}
-                    </div>
+            <For each={tunneledGroups()}>
+              {(group) => (
+                <li>
+                  {/* Two buttons side by side rather than one nested in the
+                      other: a control inside a control is invalid markup and
+                      leaves the inner one unreachable by keyboard. */}
+                  <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-bg-muted">
+                    <button
+                      type="button"
+                      class="flex items-center gap-2 min-w-0 flex-1 text-left"
+                      aria-expanded={isGroupOpen(group.domain)}
+                      onClick={() => toggleGroup(group.domain)}
+                    >
+                      <ChevronRight
+                        size={12}
+                        class={`shrink-0 text-fg-muted transition-transform ${
+                          isGroupOpen(group.domain) ? "rotate-90" : ""
+                        }`}
+                      />
+                      <span class="font-mono truncate">{group.domain}</span>
+                      <span class="text-xs text-fg-muted tabular-nums shrink-0">
+                        {group.items.length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      class="text-xs px-2 py-0.5 rounded border border-border hover:bg-bg-subtle shrink-0"
+                      title={t()("settings.tunneled_forget_group")}
+                      onClick={() => void forgetGroup(group.items.map((h) => h.host))}
+                    >
+                      {t()("settings.tunneled_forget")}
+                    </button>
                   </div>
-                  <button
-                    class="text-xs px-2 py-1 rounded border border-border hover:bg-bg-muted shrink-0"
-                    onClick={() => forgetTunneled(h.host)}
-                  >
-                    {t()("settings.tunneled_forget")}
-                  </button>
+                  <Show when={isGroupOpen(group.domain)}>
+                    <ul class="pb-1">
+                      <For each={group.items}>
+                        {(h) => (
+                          <li class="flex items-baseline gap-2 pl-6 pr-2 py-0.5 hover:bg-bg-muted/50">
+                            <span class="font-mono text-xs truncate flex-1" title={h.host}>
+                              {h.host}
+                            </span>
+                            <span
+                              class="text-xs text-fg-muted shrink-0"
+                              title={h.detail || undefined}
+                            >
+                              {h.reason === "cert_rejected"
+                                ? t()("settings.tunneled_reason_cert")
+                                : t()("settings.tunneled_reason_repeated")}
+                            </span>
+                            <button
+                              class="text-xs text-fg-muted hover:text-fg px-1 shrink-0"
+                              title={t()("settings.tunneled_forget")}
+                              aria-label={t()("settings.tunneled_forget")}
+                              onClick={() => forgetTunneled(h.host)}
+                            >
+                              <X size={12} />
+                            </button>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
                 </li>
               )}
             </For>
@@ -271,6 +354,45 @@ const SettingsView: Component = () => {
             {t()("settings.tunneled_seeded")}: {tunneled()!.seeded.join(", ")}
           </p>
         </Show>
+      </section>
+
+      <section class="space-y-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle">
+          {t()("settings.poll_section")}
+        </h2>
+        <p class="text-sm text-fg-subtle">{t()("settings.poll_body")}</p>
+        <div class="flex items-center gap-3 flex-wrap">
+          <label class="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={capturesPoll().enabled}
+              onChange={(e) => setCapturesPollEnabled(e.currentTarget.checked)}
+            />
+            {t()("settings.poll_enabled")}
+          </label>
+          <label class="inline-flex items-center gap-2 text-sm">
+            <span class={capturesPoll().enabled ? "" : "text-fg-muted"}>
+              {t()("settings.poll_interval")}
+            </span>
+            <input
+              type="number"
+              class="w-20 px-2 py-1 rounded border border-border bg-bg-subtle text-sm disabled:opacity-40"
+              min={MIN_POLL_SECONDS}
+              max={MAX_POLL_SECONDS}
+              step="1"
+              disabled={!capturesPoll().enabled}
+              value={capturesPoll().seconds}
+              // Commit on change, not on input: typing "30" passes through "3",
+              // and re-arming the timer on every keystroke is both pointless
+              // and briefly wrong.
+              onChange={(e) => setCapturesPollSeconds(Number(e.currentTarget.value))}
+            />
+            <span class={capturesPoll().enabled ? "text-fg-muted" : "text-fg-muted/50"}>
+              {t()("settings.poll_seconds")}
+            </span>
+          </label>
+        </div>
+        <p class="text-xs text-fg-muted">{t()("settings.poll_hint")}</p>
       </section>
 
       <section class="space-y-3">
