@@ -95,7 +95,11 @@ jobs:
       # `tauri build` shells out to cargo without --locked, so gate on the
       # lockfile here instead. A lock that already satisfies Cargo.toml won't
       # be rewritten by the build that follows.
+      #
+      # `shell: bash` because this matrix includes windows-2022, where the
+      # default shell is PowerShell and `> /dev/null` is read as a path.
       - name: Verify Cargo.lock is up to date
+        shell: bash
         run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Build (debug — release builds require signing secrets)
         run: pnpm tauri build --debug --no-bundle
