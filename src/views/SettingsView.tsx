@@ -215,12 +215,16 @@ const SettingsView: Component = () => {
           {t()("settings.ca_section")}
         </h2>
         <Show when={ca()} fallback={<p class="text-fg-muted">{t()("settings.ca_loading")}</p>}>
-          <dl class="grid grid-cols-[120px_1fr] gap-y-1 text-sm font-mono">
-            <dt class="text-fg-muted">{t()("settings.ca_subject")}</dt><dd>{ca()!.subject}</dd>
-            <dt class="text-fg-muted">{t()("settings.ca_serial")}</dt><dd>{ca()!.serial}</dd>
-            <dt class="text-fg-muted">{t()("settings.ca_fingerprint")}</dt><dd class="break-all">{ca()!.sha256_fp}</dd>
-            <dt class="text-fg-muted">{t()("settings.ca_valid_from")}</dt><dd>{ca()!.valid_from}</dd>
-            <dt class="text-fg-muted">{t()("settings.ca_valid_to")}</dt><dd>{ca()!.valid_to}</dd>
+          {/* Label column sized to its content, not to a pixel count: the labels
+              are translated and the root font scales, so any fixed width is wrong
+              for some combination of the two. At Extra large in English,
+              "Fingerprint" already ran under its own value. */}
+          <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm font-mono">
+            <dt class="text-fg-muted">{t()("settings.ca_subject")}</dt><dd class="break-all min-w-0">{ca()!.subject}</dd>
+            <dt class="text-fg-muted">{t()("settings.ca_serial")}</dt><dd class="break-all min-w-0">{ca()!.serial}</dd>
+            <dt class="text-fg-muted">{t()("settings.ca_fingerprint")}</dt><dd class="break-all min-w-0">{ca()!.sha256_fp}</dd>
+            <dt class="text-fg-muted">{t()("settings.ca_valid_from")}</dt><dd class="break-all min-w-0">{ca()!.valid_from}</dd>
+            <dt class="text-fg-muted">{t()("settings.ca_valid_to")}</dt><dd class="break-all min-w-0">{ca()!.valid_to}</dd>
           </dl>
         </Show>
         <div class="flex flex-wrap gap-2">

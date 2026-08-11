@@ -143,7 +143,7 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
           </Show>
 
           <Show when={tab() === "overview"}>
-            <div class="overflow-auto p-3 flex-1 min-h-0">
+            <div class="overflow-auto p-3 flex-1 min-h-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 content-start">
               <Row k={t()("detail.id")}>{full()!.id}</Row>
               <Row k={t()("detail.method")}>{full()!.method}</Row>
               <Row k={t()("detail.url")}>{`${full()!.scheme}://${full()!.server_host}:${full()!.server_port}${full()!.url_path}`}</Row>
@@ -203,10 +203,14 @@ const EmptyDetail: Component = () => (
   </div>
 );
 
+// `contents` makes each Row's two cells participate in the parent grid, so the
+// label column is as wide as the longest label and never wider — the fixed
+// `w-20` overlapped its value once labels were translated (Russian is longer)
+// or the root font was scaled up.
 const Row: Component<{ k: string; children: any }> = (p) => (
-  <div class="flex gap-2 py-0.5">
-    <div class="w-20 text-fg-muted">{p.k}</div>
-    <div class="flex-1 break-all">{p.children}</div>
+  <div class="contents">
+    <div class="text-fg-muted whitespace-nowrap">{p.k}</div>
+    <div class="break-all min-w-0">{p.children}</div>
   </div>
 );
 
