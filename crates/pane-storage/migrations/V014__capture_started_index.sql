@@ -1,0 +1,19 @@
+-- Make the Captures list a bounded index walk instead of a full scan.
+--
+-- `list_captures` ends every query with `ORDER BY started_at DESC LIMIT n`,
+-- and no index covered `started_at` on its own — only `(session_id,
+-- started_at)`, which can't serve an ordering that doesn't fix a session. So
+-- SQLite chose `SCAN capture` plus `USE TEMP B-TREE FOR ORDER BY`: it read and
+-- sorted the whole table to hand back 500 rows, on every poll and every filter
+-- change.
+--
+-- Measured on a synthetic table with the production schema and query:
+--
+--     rows      before      after
+--     300k      333 ms      ~0 ms
+--     2M       1294 ms      ~1 ms
+--
+-- The plan becomes `SCAN capture USING INDEX idx_capture_started`, which stops
+-- after LIMIT rows. It matters most exactly when the table is large, which is
+-- also when the proxy is busiest writing to it — and both share one connection.
+CREATE INDEX IF NOT EXISTS idx_capture_started ON capture(started_at DESC);
