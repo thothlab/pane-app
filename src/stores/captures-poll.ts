@@ -23,7 +23,8 @@ import { emit, listen } from "@tauri-apps/api/event";
 const STORAGE_KEY = "pane:captures-poll";
 const SYNC_EVENT = "pane://captures-poll-changed";
 
-/** Shipped default — the value the app used before this was configurable. */
+/** Interval used when the poll is switched on — the value the app polled at
+ *  before this was configurable. */
 export const DEFAULT_POLL_SECONDS = 10;
 
 /** Below a second the timer stops being a safety net and becomes a load
@@ -37,8 +38,13 @@ export interface CapturesPoll {
   seconds: number;
 }
 
+/// Off by default. The list is driven by `capture.started` / `capture.completed`
+/// through a throttle that fires during a burst rather than after it, so a
+/// timer on top of that is redundant for anyone just watching traffic — and it
+/// is pure load on the backend an automated run is using. It stays available
+/// for the case it was written for: recovering from a dropped event.
 const FALLBACK: CapturesPoll = {
-  enabled: true,
+  enabled: false,
   seconds: DEFAULT_POLL_SECONDS,
 };
 
@@ -52,7 +58,7 @@ function parse(raw: string | null): CapturesPoll {
   try {
     const v = JSON.parse(raw) as Partial<CapturesPoll>;
     return {
-      enabled: v.enabled !== false,
+      enabled: v.enabled === true,
       seconds: clampSeconds(Number(v.seconds)),
     };
   } catch {
@@ -99,7 +105,7 @@ if (typeof window !== "undefined") {
     const v = e.payload;
     if (v && typeof v === "object") {
       setPollSignal({
-        enabled: v.enabled !== false,
+        enabled: v.enabled === true,
         seconds: clampSeconds(Number(v.seconds)),
       });
     }
