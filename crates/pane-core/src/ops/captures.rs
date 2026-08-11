@@ -1,6 +1,8 @@
 use uuid::Uuid;
 
-use pane_ipc::{kinds, CaptureBodyDto, CaptureDto, ClearResult, ExportOneResult, ListCapturesArgs};
+use pane_ipc::{
+    kinds, CaptureBodyDto, CaptureDto, ClearResult, ExportOneResult, ListCapturesArgs, TlsHealthDto,
+};
 
 use crate::error::{to_api, CoreResult};
 use crate::Core;
@@ -33,6 +35,12 @@ impl Core {
         self.db(|s| s.captures_count())
             .await
             .map_err(to_api(kinds::DB))
+    }
+
+    /// Feeds the "the device doesn't trust our CA" banner. Cheap enough to call
+    /// on every capture batch: two indexed counts over the current session.
+    pub async fn captures_tls_health(&self) -> CoreResult<TlsHealthDto> {
+        self.db(|s| s.tls_health()).await.map_err(to_api(kinds::DB))
     }
 
     pub async fn capture_get(&self, id: Uuid) -> CoreResult<CaptureDto> {

@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 
 use pane_ca::CaStore;
 use pane_devices::DeviceManager;
-use pane_engine::{DevicePortRegistry, EngineHandle, ProxyEngine};
+use pane_engine::{DevicePortRegistry, EngineHandle, NoMitmSet, ProxyEngine};
 use pane_storage::Storage;
 
 use crate::config::CoreConfig;
@@ -38,6 +38,13 @@ pub struct Core {
     /// Shared serial↔port↔device_id registry, so device wiring and the proxy
     /// engine see the same map.
     pub registry: DevicePortRegistry,
+
+    /// Hosts the proxy has given up decrypting. Lives here, not in the engine,
+    /// so the UI can list and clear it and so the paths that invalidate it
+    /// (CA rotation, pairing a device) can reach it without a running proxy.
+    /// `proxy_start`/`proxy_stop` reset it, so its effective scope is still one
+    /// proxy run — it just stopped being unreachable state.
+    pub no_mitm: NoMitmSet,
 
     /// Long-lived event bus. Created once here and never replaced, so
     /// subscribers can attach at any time — see `events.rs` for why that
@@ -109,6 +116,7 @@ impl Core {
             ca,
             devices,
             registry,
+            no_mitm: NoMitmSet::new(),
             events: EventBus::new(),
             proxy_handle: Mutex::new(None),
             engine: Mutex::new(None),
@@ -140,6 +148,7 @@ impl Core {
             ca,
             devices,
             registry,
+            no_mitm: NoMitmSet::new(),
             events: EventBus::new(),
             proxy_handle: Mutex::new(None),
             engine: Mutex::new(None),

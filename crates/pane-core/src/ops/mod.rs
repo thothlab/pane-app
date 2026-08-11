@@ -11,6 +11,7 @@ mod devices;
 mod filters;
 mod host;
 mod logcat;
+mod passthrough;
 mod proxy;
 mod replay;
 mod rules;

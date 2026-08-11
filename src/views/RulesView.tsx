@@ -35,7 +35,7 @@ import {
   buildLibraryExport,
   buildRuleExport,
   slugifyForFilename,
-  validatePortFile,
+  parseImportFile,
   type PortFile,
 } from "@/lib/rules-portfile";
 import {
@@ -412,7 +412,9 @@ const RulesView: Component = () => {
     try {
       const raw = await api.rules.importRead(path);
       const parsed = JSON.parse(raw) as unknown;
-      const validated = validatePortFile(parsed);
+      // Accepts our own port file and the readable dump shape; see
+      // `parseImportFile` for why the second one is worth supporting.
+      const validated = parseImportFile(parsed);
       if (typeof validated === "string") {
         alert(tr("rules.import_invalid", { message: validated }));
         return;

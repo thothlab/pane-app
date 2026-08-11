@@ -38,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
             pac_listen: Some("127.0.0.1:8889".parse().unwrap()),
             heartbeat_listen: Some("127.0.0.1:8890".parse().unwrap()),
             registry: pane_engine::DevicePortRegistry::new(),
+            no_mitm: pane_engine::NoMitmSet::new(),
         })
         .await?;
 

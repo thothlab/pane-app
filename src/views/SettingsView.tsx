@@ -54,15 +54,33 @@ const SettingsView: Component = () => {
   const [busy, setBusy] = createSignal(false);
   const [exported, setExported] = createSignal<string | null>(null);
 
+  const [tunneled, { refetch: refetchTunneled }] = createResource(() =>
+    api.passthrough.list(),
+  );
+
   const rotate = async () => {
     if (!confirm(tr("settings.ca_rotate_confirm"))) return;
     setBusy(true);
     try {
       await api.ca.rotate();
       await refetch();
+      // Rotating the CA invalidates every earlier "won't accept our cert"
+      // verdict, and the backend clears them — reflect that here rather than
+      // leaving a list the user has to reload by hand to trust.
+      await refetchTunneled();
     } finally {
       setBusy(false);
     }
+  };
+
+  const resetTunneled = async () => {
+    await api.passthrough.reset();
+    await refetchTunneled();
+  };
+
+  const forgetTunneled = async (host: string) => {
+    await api.passthrough.forget(host);
+    await refetchTunneled();
   };
 
   const exportCa = async (format: CaFormat) => {
@@ -195,6 +213,63 @@ const SettingsView: Component = () => {
         </div>
         <Show when={exported()}>
           <p class="text-xs text-fg-muted">{exported()}</p>
+        </Show>
+      </section>
+
+      <section class="space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle">
+            {t()("settings.tunneled_section")}
+          </h2>
+          <div class="flex items-center gap-2">
+            <button
+              class="text-xs px-3 py-1.5 rounded border border-border hover:bg-bg-muted inline-flex items-center gap-1"
+              onClick={() => refetchTunneled()}
+            >
+              <RefreshCw size={12} /> {t()("settings.tunneled_refresh")}
+            </button>
+            <button
+              class="text-xs px-3 py-1.5 rounded bg-warn/15 text-warn hover:bg-warn/25 disabled:opacity-40"
+              disabled={(tunneled()?.learned.length ?? 0) === 0}
+              onClick={resetTunneled}
+            >
+              {t()("settings.tunneled_reset")}
+            </button>
+          </div>
+        </div>
+        <p class="text-sm text-fg-subtle">{t()("settings.tunneled_body")}</p>
+        <Show
+          when={(tunneled()?.learned.length ?? 0) > 0}
+          fallback={<p class="text-sm text-fg-muted">{t()("settings.tunneled_empty")}</p>}
+        >
+          <ul class="text-sm divide-y divide-border/40 border border-border/40 rounded">
+            <For each={tunneled()!.learned}>
+              {(h) => (
+                <li class="flex items-start justify-between gap-3 px-3 py-2">
+                  <div class="min-w-0">
+                    <div class="font-mono truncate">{h.host}</div>
+                    <div class="text-xs text-fg-muted break-all">
+                      {h.reason === "cert_rejected"
+                        ? t()("settings.tunneled_reason_cert")
+                        : t()("settings.tunneled_reason_repeated")}
+                      {h.detail ? ` · ${h.detail}` : ""}
+                    </div>
+                  </div>
+                  <button
+                    class="text-xs px-2 py-1 rounded border border-border hover:bg-bg-muted shrink-0"
+                    onClick={() => forgetTunneled(h.host)}
+                  >
+                    {t()("settings.tunneled_forget")}
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+        <Show when={(tunneled()?.seeded.length ?? 0) > 0}>
+          <p class="text-xs text-fg-muted">
+            {t()("settings.tunneled_seeded")}: {tunneled()!.seeded.join(", ")}
+          </p>
         </Show>
       </section>
 

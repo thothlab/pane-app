@@ -11,7 +11,16 @@ impl Core {
     }
 
     pub async fn ca_rotate(&self) -> CoreResult<CaCertificateDto> {
-        self.ca.rotate().map_err(to_api(kinds::ROTATE_FAILED))
+        let dto = self.ca.rotate().map_err(to_api(kinds::ROTATE_FAILED))?;
+        // Every "this client won't accept our certificate" verdict was reached
+        // against the old CA and says nothing about the new one. Keeping them
+        // would mean the user installs a fresh CA and Pane still refuses to
+        // decrypt.
+        let forgotten = self.no_mitm.reset();
+        if forgotten > 0 {
+            tracing::info!(hosts = forgotten, "CA rotated; cleared tunnelled-host set");
+        }
+        Ok(dto)
     }
 
     /// Export the CA in `pem` | `der` | `qr` | `mobileconfig`.

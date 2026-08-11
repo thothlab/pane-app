@@ -36,6 +36,20 @@ impl Core {
             .parse()
             .map_err(to_api(kinds::INVALID_ADDR))?;
 
+        // Forget which hosts we gave up decrypting last run, before a single
+        // accept loop is up. The set lives on the core so the UI can see it,
+        // but its meaning is per-proxy-run: a user who stops and starts the
+        // proxy is telling us to try again, and that was the only escape hatch
+        // this state ever had. Anything still un-decryptable re-learns itself
+        // immediately.
+        let forgotten = self.no_mitm.reset();
+        if forgotten > 0 {
+            tracing::info!(
+                hosts = forgotten,
+                "cleared tunnelled-host set on proxy start"
+            );
+        }
+
         let ca_material = self.ca.material();
         let engine: Arc<dyn ProxyEngine> = Arc::new(MitmEngine::new(self.storage.clone()));
         let handle = engine
@@ -45,6 +59,7 @@ impl Core {
                 pac_listen: Some(pac_listen),
                 heartbeat_listen: Some(heartbeat_listen),
                 registry: self.registry.clone(),
+                no_mitm: self.no_mitm.clone(),
             })
             .await
             .map_err(to_api(kinds::ENGINE_START))?;

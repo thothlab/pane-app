@@ -24,7 +24,7 @@ use pane_ipc::{
     CollectionUpsertArgs, ExportOneResult, FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs,
     RuleBulkScope, RuleCollectionDto, RuleConditionDto, RuleDto, RuleHeaderDto, RuleParamDto,
     RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs,
-    RulesSetEnabledBulkArgs, RulesSetEnabledBulkResult, SaveFilterArgs, SessionDto,
+    RulesSetEnabledBulkArgs, RulesSetEnabledBulkResult, SaveFilterArgs, SessionDto, TlsHealthDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -423,6 +423,45 @@ impl Storage {
         Ok(id.and_then(|s| Uuid::parse_str(&s).ok()))
     }
 
+    /// Is the device trusting our CA at all, in the session running right now?
+    ///
+    /// Some hosts tunnelling is normal — release builds and pinned apps have
+    /// always done that. The state worth warning about is *nothing* decrypting
+    /// while several hosts tunnel, which is what a CA that was never installed
+    /// (or was installed on a different machine, since each Pane install has
+    /// its own root) looks like from here.
+    ///
+    /// Both halves are scoped to the current session, and the decrypted count
+    /// is scoped to `https` — plain-HTTP captures need no trust at all, so
+    /// counting them would mask exactly the case this is meant to catch.
+    pub fn tls_health(&self) -> Result<TlsHealthDto> {
+        let Some(session_id) = self.current_session_id()? else {
+            return Ok(TlsHealthDto {
+                tunneled_hosts: 0,
+                decrypted_https: 0,
+            });
+        };
+        let conn = self.conn.lock();
+        let sid = session_id.to_string();
+        let tunneled_hosts: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT server_host) FROM capture
+             WHERE session_id=?1 AND error_kind='tunneled'",
+            params![sid],
+            |r| r.get(0),
+        )?;
+        let decrypted_https: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM capture
+             WHERE session_id=?1 AND scheme='https' AND error_kind IS NULL
+               AND state IN ('completed', 'patched', 'stubbed')",
+            params![sid],
+            |r| r.get(0),
+        )?;
+        Ok(TlsHealthDto {
+            tunneled_hosts: tunneled_hosts.max(0) as u32,
+            decrypted_https: decrypted_https.max(0) as u32,
+        })
+    }
+
     // ---------- Captures ----------
 
     /// Does capture `id` match `filter`?
@@ -488,7 +527,7 @@ impl Storage {
         let sql = format!(
             "SELECT id, session_id, started_at, ended_at, client_addr, server_host, server_port,
                     scheme, http_version, method, url_path, status, req_body_id, res_body_id,
-                    total_bytes, duration_ms, state, error_kind, device_id,
+                    total_bytes, duration_ms, state, error_kind, error_detail, device_id,
                     matched_rule_id, matched_rule_name
              FROM (
                SELECT * FROM capture
@@ -513,7 +552,7 @@ impl Storage {
         let mut stmt = conn.prepare(
             "SELECT id, session_id, started_at, ended_at, client_addr, server_host, server_port,
                     scheme, http_version, method, url_path, status, req_body_id, res_body_id,
-                    total_bytes, duration_ms, state, error_kind, device_id,
+                    total_bytes, duration_ms, state, error_kind, error_detail, device_id,
                     matched_rule_id, matched_rule_name
              FROM capture WHERE id=?1",
         )?;
@@ -571,9 +610,10 @@ impl Storage {
             duration_ms: r.get::<_, Option<i64>>(15)?.map(|v| v as u64),
             state: r.get(16)?,
             error_kind: r.get(17)?,
-            device_id: r.get(18)?,
-            matched_rule_id: r.get(19)?,
-            matched_rule_name: r.get(20)?,
+            error_detail: r.get(18)?,
+            device_id: r.get(19)?,
+            matched_rule_id: r.get(20)?,
+            matched_rule_name: r.get(21)?,
             req_headers: None,
             res_headers: None,
         })

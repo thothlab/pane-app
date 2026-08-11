@@ -1,7 +1,7 @@
 use super::{CmdResult, CoreState};
 use pane_ipc::{
     CaptureBodyDto, CaptureDto, ClearArgs, ClearResult, ExportOneArgs, ExportOneResult,
-    GetBodyArgs, ListCapturesArgs,
+    GetBodyArgs, ListCapturesArgs, TlsHealthDto,
 };
 use uuid::Uuid;
 
@@ -26,6 +26,13 @@ pub async fn get_body(state: CoreState<'_>, args: GetBodyArgs) -> CmdResult<Capt
 #[tauri::command]
 pub async fn clear(state: CoreState<'_>, args: ClearArgs) -> CmdResult<ClearResult> {
     state.captures_clear(args.older_than).await
+}
+
+/// Feeds the "the device doesn't trust our CA" banner. Cheap enough to call on
+/// every capture batch: two indexed counts over the current session.
+#[tauri::command]
+pub async fn captures_tls_health(state: CoreState<'_>) -> CmdResult<TlsHealthDto> {
+    state.captures_tls_health().await
 }
 
 #[tauri::command]

@@ -75,6 +75,9 @@ pub fn run() {
             commands::logcat::logcat_clear,
             commands::logcat::logcat_export,
             // ca
+            commands::passthrough::tunneled_hosts_list,
+            commands::passthrough::tunneled_hosts_reset,
+            commands::passthrough::tunneled_host_forget,
             commands::ca::current,
             commands::ca::rotate,
             commands::ca::export,
@@ -94,6 +97,7 @@ pub fn run() {
             commands::captures::clear,
             commands::captures::export_one,
             commands::captures::captures_export_write,
+            commands::captures::captures_tls_health,
             // replay
             commands::replay::send,
             // filters

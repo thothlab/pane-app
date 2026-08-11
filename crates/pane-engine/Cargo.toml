@@ -16,3 +16,5 @@ uuid.workspace = true
 time.workspace = true
 parking_lot.workspace = true
 pane-ca.workspace = true
+pane-ipc.workspace = true
+pane-pinning.workspace = true

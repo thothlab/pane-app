@@ -16,11 +16,30 @@ impl Core {
             .map_err(to_api(kinds::TOOLING_MISSING))
     }
 
+    /// Pairing (and its UI twin, Re-sync) re-pushes the CA and rebuilds the
+    /// tunnel, so any earlier "this host won't accept our certificate" verdict
+    /// was reached against a setup that no longer exists. Clearing here is what
+    /// makes Re-sync mean something: before, a user who fixed CA trust on the
+    /// phone still saw every host tunnelled until they thought to restart the
+    /// proxy.
+    fn clear_tunnelled_after_pairing(&self) {
+        let forgotten = self.no_mitm.reset();
+        if forgotten > 0 {
+            tracing::info!(
+                hosts = forgotten,
+                "device paired/re-synced; cleared tunnelled-host set"
+            );
+        }
+    }
+
     pub async fn device_add_ios(&self, serial: &str) -> CoreResult<DeviceDto> {
-        self.devices
+        let device = self
+            .devices
             .add_ios_usb(serial, self.ca.material())
             .await
-            .map_err(to_api(kinds::IOS_ADD_FAILED))
+            .map_err(to_api(kinds::IOS_ADD_FAILED))?;
+        self.clear_tunnelled_after_pairing();
+        Ok(device)
     }
 
     pub async fn device_add_android(&self, serial: &str) -> CoreResult<DeviceDto> {
@@ -35,10 +54,13 @@ impl Core {
                  device would point at a dead 127.0.0.1:8888 and lose internet.",
             ));
         }
-        self.devices
+        let device = self
+            .devices
             .add_android_usb(serial, self.ca.material())
             .await
-            .map_err(to_api(kinds::ANDROID_ADD_FAILED))
+            .map_err(to_api(kinds::ANDROID_ADD_FAILED))?;
+        self.clear_tunnelled_after_pairing();
+        Ok(device)
     }
 
     pub async fn device_remove(&self, id: Uuid) -> CoreResult<RemoveDeviceResult> {

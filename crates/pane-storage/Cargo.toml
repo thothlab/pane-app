@@ -27,3 +27,4 @@ pane-ipc.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+directories.workspace = true

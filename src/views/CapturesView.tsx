@@ -10,6 +10,7 @@ import type {
   RuleCollectionDto,
   RuleDto,
   RuleUpsertArgs,
+  TlsHealthDto,
 } from "@/ipc/types";
 import {
   setRulesEditing,
@@ -501,10 +502,37 @@ const CapturesView: Component = () => {
     refreshTimer = setTimeout(() => void refresh(force), 200);
   };
 
+  // "Is anything decrypting at all?" Each Pane install has its own root CA, so
+  // a phone that was set up against another machine trusts none of ours: every
+  // host fails its handshake and quietly falls back to a tunnel. That reads in
+  // the list as "all my requests turned into CONNECT" with nothing to click on,
+  // which is exactly the confusion this banner exists to end. Polled on the
+  // same tick as the list rather than on a capture event, because the signal is
+  // about the *absence* of decrypted traffic.
+  const [tlsHealth, setTlsHealth] = createSignal<TlsHealthDto | null>(null);
+  const [caBannerDismissed, setCaBannerDismissed] = createSignal(false);
+
+  const refreshTlsHealth = async () => {
+    try {
+      setTlsHealth(await api.captures.tlsHealth());
+    } catch {
+      // Diagnostics must never take the list down with them.
+    }
+  };
+
+  // Several hosts tunnelled and not one HTTPS request decrypted. Some
+  // tunnelling is normal (release builds, pinned apps) — none decrypting is
+  // not, and the threshold keeps a single pinned SDK from crying wolf.
+  const caUntrusted = createMemo(() => {
+    const h = tlsHealth();
+    return !!h && h.tunneled_hosts >= 3 && h.decrypted_https === 0;
+  });
+
   onMount(() => {
     // Initial load always goes through — even if the user had Follow
     // off from a previous session, they need something to look at.
     void refresh(true);
+    void refreshTlsHealth();
     const off = listenToCaptures(() => debouncedRefresh());
     // `listenToCaptures` already pushes on every completed capture, so this
     // interval is only a safety net for a dropped event — it does not need to
@@ -512,9 +540,11 @@ const CapturesView: Component = () => {
     // of the event stream, which is load the backend has to answer even when
     // nothing changed.
     const t = setInterval(refresh, 10_000);
+    const th = setInterval(() => void refreshTlsHealth(), 5000);
     onCleanup(() => {
       off();
       clearInterval(t);
+      clearInterval(th);
     });
   });
 
@@ -1103,7 +1133,31 @@ const CapturesView: Component = () => {
   };
 
   return (
-    <div class="h-full grid grid-rows-[auto_1fr] grid-cols-1">
+    // Three rows, not two: the banner occupies a permanent slot that collapses
+    // to zero height when hidden. A conditionally-rendered child would shift
+    // the toolbar and list between grid rows and hand the toolbar the 1fr.
+    <div class="h-full grid grid-rows-[auto_auto_1fr] grid-cols-1">
+      <div>
+      <Show when={caUntrusted() && !caBannerDismissed()}>
+        <div class="flex items-start gap-2 px-3 py-2 border-b border-border bg-warn/10 text-warn text-sm">
+          <ShieldAlert size={14} class="mt-0.5 shrink-0" />
+          <div class="flex-1 min-w-0">
+            <div class="font-medium">{t()("captures.ca_untrusted_title")}</div>
+            <div class="text-fg-muted mt-0.5">
+              {tr("captures.ca_untrusted_body", {
+                hosts: tlsHealth()!.tunneled_hosts,
+              })}
+            </div>
+          </div>
+          <button
+            class="text-xs px-2 py-1 rounded border border-warn/40 hover:bg-warn/20 shrink-0"
+            onClick={() => setCaBannerDismissed(true)}
+          >
+            {t()("captures.ca_untrusted_dismiss")}
+          </button>
+        </div>
+      </Show>
+      </div>
       <div class="flex items-center gap-2 px-3 py-2 border-b border-border bg-bg-subtle">
         <Search size={14} class="text-fg-muted shrink-0" />
         <div class="flex-1 relative flex items-center">

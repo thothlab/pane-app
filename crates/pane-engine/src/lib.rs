@@ -13,8 +13,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
+mod passthrough;
 mod registry;
-pub use registry::{DevicePortRegistry, PROXY_PORT_POOL};
+pub use passthrough::{IoFailure, NoMitmSet, TunnelReason};
+pub use registry::{DevicePortRegistry, PortAssignment, PROXY_PORT_POOL};
 
 pub struct EngineConfig {
     pub listen: SocketAddr,
@@ -35,6 +37,11 @@ pub struct EngineConfig {
     /// pool (8888 + the spares) and uses this to resolve which device a given
     /// connection's local port belongs to, so captures can be attributed.
     pub registry: DevicePortRegistry,
+    /// Hosts to tunnel instead of decrypting. Owned by the app rather than by
+    /// the engine so it survives long enough to be inspected and cleared from
+    /// the UI; `proxy.start` resets it, which keeps the historical "restart
+    /// the proxy and it forgets everything" behaviour intact.
+    pub no_mitm: NoMitmSet,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

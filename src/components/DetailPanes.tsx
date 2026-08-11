@@ -151,6 +151,9 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
               <Row k="HTTP">{full()!.http_version}</Row>
               <Row k={t()("detail.state")}>{full()!.state}</Row>
               <Row k={t()("detail.error")}>{full()!.error_kind ?? "—"}</Row>
+              <Show when={full()!.error_detail}>
+                <Row k={t()("detail.error_detail")}>{full()!.error_detail}</Row>
+              </Show>
               <Row k={t()("detail.started")}>{full()!.started_at}</Row>
               <Row k={t()("detail.duration")}>{full()!.duration_ms ?? "—"} ms</Row>
               <Row k={t()("detail.size")}>{full()!.total_bytes} B</Row>

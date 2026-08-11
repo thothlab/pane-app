@@ -21,6 +21,8 @@ import type {
   RuleDto,
   RuleUpsertArgs,
   SessionDto,
+  TlsHealthDto,
+  TunneledHostsDto,
 } from "./types";
 
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -71,6 +73,14 @@ export const api = {
     androidToolingStatus: () =>
       call<AndroidToolingStatusDto>("android_tooling_status"),
   },
+  // Hosts the proxy passes through without decrypting. `reset` returns how
+  // many learned hosts were dropped; seeded patterns are never dropped.
+  passthrough: {
+    list: () => call<TunneledHostsDto>("tunneled_hosts_list"),
+    reset: () => call<number>("tunneled_hosts_reset"),
+    forget: (host: string) =>
+      call<boolean>("tunneled_host_forget", { args: { host } }),
+  },
   captures: {
     list: (filter?: string, limit = 500, before?: string) =>
       call<CaptureDto[]>("captures_list", { args: { filter, limit, before } }),
@@ -83,6 +93,9 @@ export const api = {
       call<{ text: string; mime: string }>("export_one", { args: { id, format } }),
     exportWrite: (path: string, content: string) =>
       call<number>("captures_export_write", { path, content }),
+    // Drives the "device doesn't trust the CA" banner: how much of this
+    // session tunnelled vs how much actually decrypted.
+    tlsHealth: () => call<TlsHealthDto>("captures_tls_health"),
   },
   replay: {
     send: (request: RequestSpec, sourceId?: string) =>

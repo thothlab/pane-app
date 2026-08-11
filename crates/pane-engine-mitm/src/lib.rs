@@ -18,7 +18,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use pane_engine::{
-    DevicePortRegistry, EngineConfig, EngineEvent, EngineHandle, ProxyEngine, PROXY_PORT_POOL,
+    DevicePortRegistry, EngineConfig, EngineEvent, EngineHandle, NoMitmSet, ProxyEngine,
+    PROXY_PORT_POOL,
 };
 use pane_storage::Storage;
 use tokio::net::TcpListener;
@@ -26,10 +27,10 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
+mod handshake;
 mod heartbeat;
 mod leaf;
 mod pac;
-mod passthrough;
 mod patch;
 mod proxy_loop;
 mod rules;
@@ -91,11 +92,18 @@ impl ProxyEngine for MitmEngine {
         // Shutdown: the external handle exposes an mpsc (one `()` = stop). We
         // fan that single signal out to every accept loop via a broadcast — an
         // mpsc receiver can't be cloned across N loops.
-        // Hosts we won't decrypt. Shared by every accept loop so a lesson
-        // learned on one device's port applies to all of them — the client
-        // rejecting our cert is a property of the host, not of the port it
-        // happened to arrive on.
-        let no_mitm = passthrough::NoMitmSet::new();
+        // Hosts we won't decrypt, owned by the app and handed in via config.
+        // Shared by every accept loop: a rejection seen on one device's port
+        // applies to all of them, because the client's verdict is about the
+        // certificate, not about the port it happened to arrive on.
+        //
+        // Note the limit of that reasoning — the set is keyed by host, while
+        // trust is really a property of the (app, host) pair. One pinned app
+        // therefore stops us decrypting a host for every other app on the
+        // device. We can't see which app opened a connection, so the mitigation
+        // is recoverability rather than precision: `proxy.start` resets this,
+        // as do CA rotation and re-pairing, and Settings lists and clears it.
+        let no_mitm = cfg.no_mitm.clone();
 
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         let (stop_tx, _stop_rx0) = broadcast::channel::<()>(1);
@@ -205,7 +213,7 @@ fn spawn_accept_loop(
     events: broadcast::Sender<EngineEvent>,
     tls_acceptor: TlsAcceptor,
     mut stop_rx: broadcast::Receiver<()>,
-    no_mitm: passthrough::NoMitmSet,
+    no_mitm: NoMitmSet,
 ) {
     tokio::spawn(async move {
         loop {
