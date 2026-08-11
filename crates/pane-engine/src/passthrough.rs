@@ -22,18 +22,24 @@
 //!    `app_pin` — see `pane_pinning::is_app_pinned` for why the `system_pin`
 //!    and `ct_required` classes are deliberately excluded. Seeded matches are
 //!    patterns, not entries: they can't be forgotten, only listed.
-//! 2. **Learned** at runtime, and *only* on evidence that the client rejected
-//!    our certificate:
-//!    - a TLS alert naming the certificate (`certificate_unknown`,
-//!      `bad_certificate`, `unknown_ca`, …) — conclusive, learned at once;
-//!    - `IO_STRIKES_TO_LEARN` transport failures inside `STRIKE_WINDOW` — a
-//!      pinner that RSTs without bothering to send an alert. Bounded by the
-//!      window so three cable-pulls spread over an hour never add up to a
-//!      verdict.
+//! 2. **Learned** at runtime, and *only* from a TLS alert naming the
+//!    certificate (`certificate_unknown`, `bad_certificate`, `unknown_ca`, …).
+//!    That is the client stating a verdict, and it will state the same one
+//!    next time.
 //!
-//!    A plain I/O error on its own teaches nothing. It used to: every
-//!    `accept()` error was read as "the client rejected our leaf", so one
-//!    yanked USB cable could silently tunnel a host for the rest of the run.
+//!    Transport failures teach nothing at all. Two earlier revisions of this
+//!    got it wrong in the same direction: first every `accept()` error was
+//!    read as "the client rejected our leaf", so one yanked USB cable tunnelled
+//!    a host for the rest of the run; then a counter allowed it after three
+//!    failures in thirty seconds, which an app retrying through a
+//!    re-establishing `adb reverse` clears in about a second. Both made the
+//!    host sticky exactly when the link was flaky, which is when the user is
+//!    least able to tell a broken tunnel from a broken certificate.
+//!
+//!    The price of dropping it: a client that pins and closes the socket
+//!    without sending an alert never gets tunnelled, so its requests keep
+//!    failing. That is a visible, recoverable failure, unlike silently
+//!    tunnelling traffic the user came here to read.
 //!
 //! The learned half carries an unavoidable cost: the ClientHello of the failed
 //! handshake is already consumed by the time we know it failed, so that first
@@ -54,43 +60,23 @@ use std::sync::Arc;
 
 use pane_ipc::{TunneledHostDto, TunneledHostsDto};
 use parking_lot::Mutex;
-use time::{Duration, OffsetDateTime};
-
-/// Transport failures within `STRIKE_WINDOW` before we conclude the client is
-/// rejecting our certificate without saying so. Three is a retry burst; one or
-/// two are a flaky cable.
-const IO_STRIKES_TO_LEARN: u8 = 3;
-
-/// How long a strike stays relevant. Long enough to cover a client's retry
-/// burst, short enough that unrelated failures never accumulate into a verdict.
-const STRIKE_WINDOW: Duration = Duration::seconds(30);
+use time::OffsetDateTime;
 
 /// Why a host is being tunnelled. Persisted into the capture row and surfaced
 /// in the UI so "why is everything CONNECT" has an answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TunnelReason {
-    /// The client sent a TLS alert about our certificate. Conclusive.
+    /// The client sent a TLS alert about our certificate. Conclusive, and the
+    /// only way a host is ever learned.
     CertRejected,
-    /// Repeated transport failures in a short window, with no alert. Inferred.
-    RepeatedFailure,
 }
 
 impl TunnelReason {
     pub fn as_str(&self) -> &'static str {
         match self {
             TunnelReason::CertRejected => "cert_rejected",
-            TunnelReason::RepeatedFailure => "repeated_failure",
         }
     }
-}
-
-/// What `note_io_failure` decided about this connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IoFailure {
-    /// Counted, but not enough to conclude anything yet.
-    Noted { strikes: u8 },
-    /// This failure crossed the threshold; the host is now tunnelled.
-    Learned,
 }
 
 #[derive(Debug, Clone)]
@@ -100,16 +86,9 @@ struct LearnedHost {
     detail: String,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Strikes {
-    count: u8,
-    last: OffsetDateTime,
-}
-
 #[derive(Default)]
 struct Inner {
     learned: HashMap<String, LearnedHost>,
-    strikes: HashMap<String, Strikes>,
 }
 
 /// Shared, cheaply cloneable set of hosts to tunnel rather than decrypt.
@@ -161,7 +140,6 @@ impl NoMitmSet {
     pub fn learn_rejected(&self, host: &str, detail: &str) -> bool {
         let key = norm(host);
         let mut inner = self.inner.lock();
-        inner.strikes.remove(&key);
         inner
             .learned
             .insert(
@@ -175,53 +153,10 @@ impl NoMitmSet {
             .is_none()
     }
 
-    /// Record a handshake that died on transport, with no alert to explain it.
-    ///
-    /// Strikes expire: a failure more than `STRIKE_WINDOW` after the previous
-    /// one starts the count over, so only a genuine burst — which is what a
-    /// pinning client's retries look like — ever reaches a verdict.
-    pub fn note_io_failure(&self, host: &str, detail: &str) -> IoFailure {
-        let key = norm(host);
-        let now = OffsetDateTime::now_utc();
-        let mut inner = self.inner.lock();
-
-        if inner.learned.contains_key(&key) {
-            return IoFailure::Learned;
-        }
-
-        let count = match inner.strikes.get(&key) {
-            Some(prev) if now - prev.last <= STRIKE_WINDOW => prev.count.saturating_add(1),
-            _ => 1,
-        };
-
-        if count < IO_STRIKES_TO_LEARN {
-            inner.strikes.insert(key, Strikes { count, last: now });
-            return IoFailure::Noted { strikes: count };
-        }
-
-        inner.strikes.remove(&key);
-        inner.learned.insert(
-            key,
-            LearnedHost {
-                learned_at: now,
-                reason: TunnelReason::RepeatedFailure,
-                detail: detail.to_string(),
-            },
-        );
-        IoFailure::Learned
-    }
-
-    /// A handshake completed for this host, so whatever the earlier transport
-    /// failures were, they weren't the client refusing our leaf.
-    pub fn note_handshake_ok(&self, host: &str) {
-        self.inner.lock().strikes.remove(&norm(host));
-    }
-
     /// Forget everything learned this run. Returns how many hosts were
     /// dropped. Seeded patterns are unaffected — they aren't learned state.
     pub fn reset(&self) -> usize {
         let mut inner = self.inner.lock();
-        inner.strikes.clear();
         let n = inner.learned.len();
         inner.learned.clear();
         n
@@ -229,10 +164,8 @@ impl NoMitmSet {
 
     /// Drop one learned host, so the next connection to it is decrypted again.
     pub fn forget(&self, host: &str) -> bool {
-        let key = norm(host);
         let mut inner = self.inner.lock();
-        inner.strikes.remove(&key);
-        inner.learned.remove(&key).is_some()
+        inner.learned.remove(&norm(host)).is_some()
     }
 
     /// Everything currently being tunnelled, for the Settings panel: what was
@@ -312,65 +245,20 @@ mod tests {
     }
 
     #[test]
-    fn a_single_io_failure_teaches_nothing() {
-        // The whole point of the strike counter: one yanked cable must not
-        // tunnel a host that was decrypting perfectly a second ago.
+    fn transport_failures_never_learn_a_host() {
+        // The bug this replaces: a counter tunnelled a host after three
+        // transport failures in thirty seconds. An app retrying while the
+        // `adb reverse` is being re-established clears that in about a second,
+        // so the host went sticky during every reconnect — and the only way
+        // out the user found was deleting the device and pairing it again.
         let s = NoMitmSet::new();
-        assert_eq!(
-            s.note_io_failure("api.example.com", "connection reset"),
-            IoFailure::Noted { strikes: 1 }
-        );
-        assert!(!s.should_tunnel("api.example.com"));
-    }
-
-    #[test]
-    fn a_burst_of_io_failures_is_treated_as_rejection() {
-        let s = NoMitmSet::new();
-        for expected in 1..IO_STRIKES_TO_LEARN {
-            assert_eq!(
-                s.note_io_failure("api.example.com", "reset"),
-                IoFailure::Noted { strikes: expected }
+        for _ in 0..50 {
+            assert!(
+                !s.should_tunnel("api.example.com"),
+                "no number of dead sockets is a verdict on the certificate"
             );
         }
-        assert_eq!(
-            s.note_io_failure("api.example.com", "reset"),
-            IoFailure::Learned
-        );
-        assert!(s.should_tunnel("api.example.com"));
-    }
-
-    #[test]
-    fn a_successful_handshake_clears_accumulated_strikes() {
-        let s = NoMitmSet::new();
-        s.note_io_failure("api.example.com", "reset");
-        s.note_io_failure("api.example.com", "reset");
-        s.note_handshake_ok("api.example.com");
-        // Back to a clean slate: the next failure is strike one, not three.
-        assert_eq!(
-            s.note_io_failure("api.example.com", "reset"),
-            IoFailure::Noted { strikes: 1 }
-        );
-        assert!(!s.should_tunnel("api.example.com"));
-    }
-
-    #[test]
-    fn stale_strikes_expire_instead_of_accumulating() {
-        // Three cable-pulls an hour apart are three unrelated accidents, not
-        // evidence about the certificate.
-        let s = NoMitmSet::new();
-        let stale = OffsetDateTime::now_utc() - STRIKE_WINDOW - Duration::seconds(1);
-        s.inner.lock().strikes.insert(
-            "api.example.com".into(),
-            Strikes {
-                count: IO_STRIKES_TO_LEARN - 1,
-                last: stale,
-            },
-        );
-        assert_eq!(
-            s.note_io_failure("api.example.com", "reset"),
-            IoFailure::Noted { strikes: 1 }
-        );
-        assert!(!s.should_tunnel("api.example.com"));
+        assert_eq!(s.list().learned.len(), 0);
     }
 
     #[test]
@@ -411,13 +299,10 @@ mod tests {
     fn list_reports_hosts_with_their_reason() {
         let s = NoMitmSet::new();
         s.learn_rejected("b.example.com", "alert: unknown_ca");
-        for _ in 0..IO_STRIKES_TO_LEARN {
-            s.note_io_failure("a.example.com", "reset");
-        }
+        s.learn_rejected("a.example.com", "alert: bad_certificate");
         let listed = s.list();
         assert_eq!(listed.learned.len(), 2);
         assert_eq!(listed.learned[0].host, "a.example.com");
-        assert_eq!(listed.learned[0].reason, "repeated_failure");
         assert_eq!(listed.learned[1].host, "b.example.com");
         assert_eq!(listed.learned[1].reason, "cert_rejected");
         assert_eq!(listed.learned[1].detail, "alert: unknown_ca");

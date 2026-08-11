@@ -11,9 +11,8 @@
 //!
 //! Treating the second as the first is what let a single cable-pull silently
 //! stop Pane decrypting a host for the rest of the run. So we classify, and
-//! only a real alert is taken as proof; transport failures merely accumulate
-//! (see `NoMitmSet::note_io_failure`), which still catches the pinning clients
-//! that RST without the courtesy of an alert.
+//! only a real alert is taken as proof — transport failures are logged and
+//! otherwise ignored, however many of them arrive.
 
 use rustls::AlertDescription;
 
