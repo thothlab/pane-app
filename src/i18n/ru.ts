@@ -532,6 +532,7 @@ const ru: Dict = {
     tunneled_reason_cert: "клиент отверг сертификат",
     tunneled_reason_repeated: "несколько обрывов подряд",
     tunneled_seeded: "Всегда туннелируются",
+    tunneled_forget_group: "Забыть все хосты этого домена",
     privacy_section: "Приватность",
     privacy_body:
       "Pane не собирает никакой телеметрии. Данные не покидают вашу машину пока вы явно их не экспортируете. Crash-репорты остаются в logs/ рядом с папкой данных.",

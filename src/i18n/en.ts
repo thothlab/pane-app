@@ -533,6 +533,7 @@ const en = {
     tunneled_reason_cert: "client rejected the certificate",
     tunneled_reason_repeated: "repeated connection failures",
     tunneled_seeded: "Always tunnelled",
+    tunneled_forget_group: "Forget every host in this domain",
     privacy_section: "Privacy",
     privacy_body:
       "Pane collects zero telemetry. No data leaves your machine unless you explicitly export it. Crash reports stay in logs/ next to the data dir.",
