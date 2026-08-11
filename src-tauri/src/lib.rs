@@ -261,6 +261,24 @@ pub fn run() {
 /// Logcat is the exception: its events are scoped to the matching
 /// `logcat-{serial}` window rather than broadcast, so the main window never
 /// sees the firehose — the behaviour the old inline callback had.
+/// Bus topic → Tauri event name.
+///
+/// Tauri 2 validates event names against `[A-Za-z0-9-/:_]` and rejects
+/// anything else — a dot included. Bus topics are dotted (`capture.started`),
+/// so `app.emit` returned `Err` for every one of them and the webview received
+/// nothing at all. Nobody noticed because the call site discarded the result
+/// and a background poll re-queried the list on a timer, which looked like
+/// slow-but-working updates. The logcat branch below never hit this: it emits
+/// `logcat://appended`, which is already legal.
+///
+/// Same shape here, so the two conventions match: first `.` becomes `://`.
+fn webview_topic(bus_topic: &str) -> String {
+    match bus_topic.split_once('.') {
+        Some((head, tail)) => format!("{head}://{tail}"),
+        None => bus_topic.to_string(),
+    }
+}
+
 fn forward_to_webview(app: &tauri::AppHandle, ev: &pane_core::CoreEvent) {
     use tauri::{Emitter, Manager};
 
@@ -285,7 +303,14 @@ fn forward_to_webview(app: &tauri::AppHandle, ev: &pane_core::CoreEvent) {
             }
         }
         _ => {
-            let _ = app.emit(&ev.topic, ev.payload.clone());
+            let topic = webview_topic(&ev.topic);
+            // The result used to be discarded, which hid this bug completely:
+            // every capture event had been failing to reach the webview since
+            // the Tauri 2 upgrade, and the list only ever updated because a
+            // timer re-queried the database behind it.
+            if let Err(e) = app.emit(&topic, ev.payload.clone()) {
+                tracing::warn!(topic = %topic, error = %e, "webview emit failed");
+            }
         }
     }
 }
@@ -417,4 +442,33 @@ fn log_file_appender() -> Option<tracing_appender::non_blocking::NonBlocking> {
     let (nb, guard) = tracing_appender::non_blocking(file_appender);
     Box::leak(Box::new(guard));
     Some(nb)
+}
+
+#[cfg(test)]
+mod webview_topic_tests {
+    use super::webview_topic;
+
+    #[test]
+    fn dotted_bus_topics_become_legal_event_names() {
+        assert_eq!(webview_topic("capture.started"), "capture://started");
+        assert_eq!(webview_topic("capture.completed"), "capture://completed");
+        assert_eq!(
+            webview_topic("proxy.status_changed"),
+            "proxy://status_changed"
+        );
+        assert_eq!(webview_topic("pinning.detected"), "pinning://detected");
+    }
+
+    #[test]
+    fn an_already_legal_topic_is_left_alone() {
+        assert_eq!(webview_topic("logcat"), "logcat");
+    }
+
+    #[test]
+    fn only_the_first_dot_is_rewritten() {
+        // Tauri allows ':' and '/', so a tail dot would still be rejected —
+        // but no bus topic has one, and turning every dot into a separator
+        // would mangle names rather than fix them.
+        assert_eq!(webview_topic("a.b.c"), "a://b.c");
+    }
 }

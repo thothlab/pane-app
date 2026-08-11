@@ -27,7 +27,7 @@ export function useEvent<T>(topic: string, initial: T | null = null) {
  */
 export function listenToCaptures(onChanged: (id: string) => void) {
   const offs: UnlistenFn[] = [];
-  for (const topic of ["capture.started", "capture.completed"]) {
+  for (const topic of ["capture://started", "capture://completed"]) {
     listen<{ id: string }>(topic, (e) => onChanged(e.payload.id)).then((fn) =>
       offs.push(fn),
     );
