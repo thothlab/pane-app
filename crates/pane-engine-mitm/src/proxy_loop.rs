@@ -113,9 +113,24 @@ pub async fn handle(
         let why = if pane_pinning::is_app_pinned(&host) {
             Some("seeded: host is in the bundled app-pinning list".to_string())
         } else {
-            let fp = crate::client_hello::peek_fingerprint(&stream).await;
-            client_fp = fp.as_str().to_string();
-            no_mitm.why_tunnel(&client_fp, &host)
+            let peeked = crate::client_hello::peek_client(&stream).await;
+            client_fp = peeked.fingerprint.as_str().to_string();
+            // A client that offers only h2 can never be answered: we parse
+            // HTTP/1.1 and our ALPN says so, and rustls closes the handshake
+            // with no_application_protocol. Before the peek this was invisible
+            // until it had already cost the request — and since it is not a
+            // verdict on the certificate, nothing learned from it and the
+            // client stayed broken forever (nine dead handshakes in a row
+            // against broker.sistema-capital.com). Tunnel it instead: we
+            // cannot read it either way, and this way it works.
+            if !peeked.can_negotiate_http11() {
+                Some(format!(
+                    "client speaks only {} — Pane decrypts HTTP/1.1",
+                    peeked.alpn.join(", ")
+                ))
+            } else {
+                no_mitm.why_tunnel(&client_fp, &host)
+            }
         };
         if let Some(why) = why {
             return tunnel(stream, host, port, cap_id, started_at, storage, events, why).await;
