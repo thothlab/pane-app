@@ -494,13 +494,31 @@ const CapturesView: Component = () => {
     }
   }
 
-  let refreshTimer: ReturnType<typeof setTimeout>;
-  // `force` controls whether the refresh ignores the Follow-off gate.
-  // Filter input passes true (user expects results immediately), the
-  // backend `listenToCaptures` event passes false (let the gate decide).
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingForce = false;
+  // Throttle, not debounce. This used to `clearTimeout` and re-arm on every
+  // call, which means that under a steady stream of capture events — exactly
+  // when the user is watching traffic — the timer was reset before it could
+  // ever fire, and the list only updated once the device went quiet for 200 ms.
+  // The background poll hid it by re-querying on its own schedule; switching
+  // the poll off left the list looking frozen.
+  //
+  // Keeping the already-armed timer instead guarantees one refresh per window
+  // however dense the stream is.
+  //
+  // `force` controls whether the refresh ignores the Follow-off gate. Filter
+  // changes pass true (the user expects results immediately), capture events
+  // pass false (let the gate decide) — and a forced call that lands while an
+  // unforced one is pending must not be downgraded.
   const debouncedRefresh = (force = false) => {
-    clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => void refresh(force), 200);
+    pendingForce = pendingForce || force;
+    if (refreshTimer !== undefined) return;
+    refreshTimer = setTimeout(() => {
+      refreshTimer = undefined;
+      const f = pendingForce;
+      pendingForce = false;
+      void refresh(f);
+    }, 200);
   };
 
   // "Is anything decrypting at all?" Each Pane install has its own root CA, so
