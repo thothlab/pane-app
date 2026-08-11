@@ -1651,7 +1651,7 @@ const CapturesView: Component = () => {
                           <Show when={isColVisible("status")}>
                             <div
                               class={`px-2 truncate ${statusColor(c().status, c().error_kind)}`}
-                              title={errorHint(c().error_kind)}
+                              title={statusTitle(c().error_kind, c().error_detail)}
                             >
                               {c().error_kind === "pinning" ? (
                                 <Lock size={12} />
@@ -1807,6 +1807,19 @@ function rowColor(status: number | null, errorKind: string | null): string {
   if (errorKind) return "text-danger";
   if (status !== null && status >= 500) return "text-danger";
   return "";
+}
+
+// Tooltip for the status cell: the localized explanation of the bucket, plus
+// the raw evidence behind it. Without the second half, "why is this CONNECT"
+// needed a click into the detail pane — and the answer (a TLS alert vs a dead
+// socket) is exactly what tells a broken certificate from a broken tunnel.
+function statusTitle(
+  errorKind: string | null,
+  errorDetail: string | null,
+): string | undefined {
+  const hint = errorHint(errorKind);
+  if (!errorDetail) return hint;
+  return hint ? `${hint}\n\n${errorDetail}` : errorDetail;
 }
 
 function errorHint(errorKind: string | null): string | undefined {
