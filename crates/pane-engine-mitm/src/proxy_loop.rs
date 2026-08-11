@@ -105,13 +105,7 @@ pub async fn handle(
         }
 
         let tls_stream = match tls_acceptor.accept(stream).await {
-            Ok(s) => {
-                // Proof this client accepts our leaf, so whatever transport
-                // failures we counted against this host earlier weren't a
-                // verdict on the certificate. Start the count over.
-                no_mitm.note_handshake_ok(&host);
-                s
-            }
+            Ok(s) => s,
             Err(e) => {
                 // Why the handshake died decides whether we learn from it. An
                 // alert about our certificate is a verdict and will repeat; a
@@ -120,17 +114,15 @@ pub async fn handle(
                 // and can't be replayed.
                 let detail = e.to_string();
                 let verdict = crate::handshake::classify(&e);
+                // Only an alert about the certificate is a verdict. A dead
+                // socket is an accident — and it is the *expected* state while
+                // the device's `adb reverse` is coming back up, which is when
+                // a wrong conclusion here does the most damage.
                 let learned = match verdict {
                     crate::handshake::HandshakeFailure::CertRejected(alert) => {
                         no_mitm.learn_rejected(&host, &format!("alert: {alert}"))
                     }
-                    // Not evidence on its own. Counted, and only a burst of
-                    // them inside the strike window reaches a verdict — that
-                    // is how we still catch pinning clients that just RST.
-                    _ => matches!(
-                        no_mitm.note_io_failure(&host, &detail),
-                        pane_engine::IoFailure::Learned
-                    ),
+                    _ => false,
                 };
                 // Logged on every failure, with the classification: "why is
                 // everything CONNECT on that machine" has to be answerable

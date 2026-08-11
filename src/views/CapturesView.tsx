@@ -513,6 +513,12 @@ const CapturesView: Component = () => {
   const [caBannerDismissed, setCaBannerDismissed] = createSignal(false);
 
   const refreshTlsHealth = async () => {
+    // Once anything in this session has decrypted, the banner's condition can
+    // never become true again — the count only grows — so stop asking. This
+    // matters because the query is a scan over the session's captures and it
+    // shares the write path's connection with the proxy.
+    const seen = tlsHealth();
+    if (seen && seen.decrypted_https > 0) return;
     try {
       setTlsHealth(await api.captures.tlsHealth());
     } catch {
@@ -540,7 +546,10 @@ const CapturesView: Component = () => {
     // of the event stream, which is load the backend has to answer even when
     // nothing changed.
     const t = setInterval(refresh, 10_000);
-    const th = setInterval(() => void refreshTlsHealth(), 5000);
+    // A "did anything decrypt at all" answer doesn't change second to second,
+    // and at 5 s this was the most frequent backend call in the view — more
+    // frequent than the list itself.
+    const th = setInterval(() => void refreshTlsHealth(), 30_000);
     onCleanup(() => {
       off();
       clearInterval(t);
@@ -577,7 +586,24 @@ const CapturesView: Component = () => {
   // same pass. (When tailing, the captures() effect above re-anchors to the
   // bottom instead, so we skip.)
   let anchorTopOnNextResult = false;
-  createEffect(on(filter, () => { anchorTopOnNextResult = true; }, { defer: true }));
+  // The filter drives the list, wherever it was changed from. Refreshing at
+  // each call site meant only the ones that remembered actually re-queried:
+  // typing did, but a saved-filter chip in the sidebar (`Layout.tsx`, which
+  // just calls `setFilter`), the × button and Escape did not. Those relied on
+  // the background poll to catch up — invisible while it ran every 1.5 s,
+  // glaring once it moved to 10 s, and never at all with Tail off, since a
+  // non-forced refresh is gated on auto-follow. `force` is the point: a filter
+  // change is the user asking a question, so it outranks the tailing gate.
+  createEffect(
+    on(
+      filter,
+      () => {
+        anchorTopOnNextResult = true;
+        debouncedRefresh(true);
+      },
+      { defer: true },
+    ),
+  );
   createEffect(() => {
     void captures();
     if (!anchorTopOnNextResult) return;
