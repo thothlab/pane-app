@@ -27,6 +27,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
+mod client_hello;
 mod handshake;
 mod heartbeat;
 mod leaf;

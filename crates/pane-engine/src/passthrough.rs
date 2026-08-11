@@ -86,9 +86,20 @@ struct LearnedHost {
     detail: String,
 }
 
+/// Keyed by the client's TLS fingerprint as well as the host: trust is a
+/// property of the client, and a phone runs several against one API. Keyed by
+/// host alone, one SDK rejecting our CA switched decryption off for the app
+/// being debugged — observed on a real device as a completed POST and a
+/// `certificate_unknown` alert to the same host in the same second.
+type Key = (String, String);
+
 #[derive(Default)]
 struct Inner {
-    learned: HashMap<String, LearnedHost>,
+    learned: HashMap<Key, LearnedHost>,
+}
+
+fn key(client: &str, host: &str) -> Key {
+    (client.to_string(), norm(host))
 }
 
 /// Shared, cheaply cloneable set of hosts to tunnel rather than decrypt.
@@ -107,11 +118,11 @@ impl NoMitmSet {
     /// The seeded half is evaluated per call rather than expanded into the set
     /// up front, because the hint list is pattern-based (`*.facebook.com`) and
     /// matching is cheaper than enumerating.
-    pub fn should_tunnel(&self, host: &str) -> bool {
+    pub fn should_tunnel(&self, client: &str, host: &str) -> bool {
         if pane_pinning::is_app_pinned(host) {
             return true;
         }
-        self.inner.lock().learned.contains_key(&norm(host))
+        self.inner.lock().learned.contains_key(&key(client, host))
     }
 
     /// Why `host` is being tunnelled, phrased for the capture row's error
@@ -120,11 +131,11 @@ impl NoMitmSet {
     /// Without this a tunnelled row says only "passed through", and the user
     /// has no way to tell a host we were told to skip from one that rejected
     /// our certificate ten minutes ago.
-    pub fn why_tunnel(&self, host: &str) -> Option<String> {
+    pub fn why_tunnel(&self, client: &str, host: &str) -> Option<String> {
         if pane_pinning::is_app_pinned(host) {
             return Some("seeded: host is in the bundled app-pinning list".into());
         }
-        self.inner.lock().learned.get(&norm(host)).map(|l| {
+        self.inner.lock().learned.get(&key(client, host)).map(|l| {
             let detail = if l.detail.is_empty() {
                 String::new()
             } else {
@@ -137,13 +148,12 @@ impl NoMitmSet {
     /// Record that `host` sent a TLS alert rejecting our certificate. Returns
     /// `true` if this is new information, so the caller can log the transition
     /// once rather than on every failed connection.
-    pub fn learn_rejected(&self, host: &str, detail: &str) -> bool {
-        let key = norm(host);
+    pub fn learn_rejected(&self, client: &str, host: &str, detail: &str) -> bool {
         let mut inner = self.inner.lock();
         inner
             .learned
             .insert(
-                key,
+                key(client, host),
                 LearnedHost {
                     learned_at: OffsetDateTime::now_utc(),
                     reason: TunnelReason::CertRejected,
@@ -162,24 +172,48 @@ impl NoMitmSet {
         n
     }
 
-    /// Drop one learned host, so the next connection to it is decrypted again.
+    /// Drop a host, for every client that rejected it — the UI lists hosts, and
+    /// "try this one again" means all of them.
     pub fn forget(&self, host: &str) -> bool {
+        let wanted = norm(host);
         let mut inner = self.inner.lock();
-        inner.learned.remove(&norm(host)).is_some()
+        let before = inner.learned.len();
+        inner.learned.retain(|(_, h), _| *h != wanted);
+        inner.learned.len() != before
     }
 
     /// Everything currently being tunnelled, for the Settings panel: what was
     /// learned (and why), plus the seeded patterns that can't be forgotten.
     pub fn list(&self) -> TunneledHostsDto {
         let inner = self.inner.lock();
-        let mut learned: Vec<TunneledHostDto> = inner
-            .learned
-            .iter()
-            .map(|(host, l)| TunneledHostDto {
-                host: host.clone(),
+        // One row per host even though the set is keyed per client: the panel
+        // answers "what is not being decrypted", and a hostname is what the
+        // user recognises. Where several clients rejected the same host the
+        // count says so, because that is exactly the case where some other app
+        // may still be decrypting it.
+        let mut by_host: HashMap<&str, (&LearnedHost, usize)> = HashMap::new();
+        for ((_, host), learned) in inner.learned.iter() {
+            by_host
+                .entry(host.as_str())
+                .and_modify(|(existing, n)| {
+                    *n += 1;
+                    if learned.learned_at < existing.learned_at {
+                        *existing = learned;
+                    }
+                })
+                .or_insert((learned, 1));
+        }
+        let mut learned: Vec<TunneledHostDto> = by_host
+            .into_iter()
+            .map(|(host, (l, clients))| TunneledHostDto {
+                host: host.to_string(),
                 learned_at: l.learned_at.to_string(),
                 reason: l.reason.as_str().to_string(),
-                detail: l.detail.clone(),
+                detail: if clients > 1 {
+                    format!("{} ({clients} clients)", l.detail)
+                } else {
+                    l.detail.clone()
+                },
             })
             .collect();
         learned.sort_by(|a, b| a.host.cmp(&b.host));
@@ -204,35 +238,39 @@ fn norm(host: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Two different TLS stacks, as `client_hello` would fingerprint them.
+    const A: &str = "aaaaaaaaaaaaaaaa";
+    const B: &str = "bbbbbbbbbbbbbbbb";
+
     #[test]
     fn app_pinned_hosts_are_tunnelled_without_being_learned() {
         let s = NoMitmSet::new();
-        assert!(s.should_tunnel("graph.facebook.com"));
+        assert!(s.should_tunnel(A, "graph.facebook.com"));
         // Seeding is evaluated by pattern match, not by pre-inserting hosts:
         // learn reporting `true` proves the host wasn't in the learned set.
-        assert!(s.learn_rejected("graph.facebook.com", ""));
+        assert!(s.learn_rejected(A, "graph.facebook.com", ""));
     }
 
     #[test]
     fn ordinary_hosts_are_decrypted_until_the_client_rejects_the_cert() {
         let s = NoMitmSet::new();
-        assert!(!s.should_tunnel("api.example.com"));
-        assert!(s.learn_rejected("api.example.com", "alert: certificate_unknown"));
-        assert!(s.should_tunnel("api.example.com"));
+        assert!(!s.should_tunnel(A, "api.example.com"));
+        assert!(s.learn_rejected(A, "api.example.com", "alert: certificate_unknown"));
+        assert!(s.should_tunnel(A, "api.example.com"));
     }
 
     #[test]
     fn learn_reports_only_the_first_sighting() {
         let s = NoMitmSet::new();
-        assert!(s.learn_rejected("api.example.com", ""));
-        assert!(!s.learn_rejected("api.example.com", ""));
+        assert!(s.learn_rejected(A, "api.example.com", ""));
+        assert!(!s.learn_rejected(A, "api.example.com", ""));
     }
 
     #[test]
     fn learned_matching_is_case_insensitive() {
         let s = NoMitmSet::new();
-        s.learn_rejected("API.Example.com", "");
-        assert!(s.should_tunnel("api.example.com"));
+        s.learn_rejected(A, "API.Example.com", "");
+        assert!(s.should_tunnel(A, "api.example.com"));
     }
 
     #[test]
@@ -240,8 +278,51 @@ mod tests {
         // Regression guard: these decrypt fine for ordinary apps, so seeding
         // them would silently stop showing traffic that works today.
         let s = NoMitmSet::new();
-        assert!(!s.should_tunnel("www.googleapis.com"));
-        assert!(!s.should_tunnel("fonts.gstatic.com"));
+        assert!(!s.should_tunnel(A, "www.googleapis.com"));
+        assert!(!s.should_tunnel(A, "fonts.gstatic.com"));
+    }
+
+    #[test]
+    fn one_client_rejecting_leaves_the_others_decrypting() {
+        // The bug this keying exists for: on a real device a debug build
+        // completed POST /key-guard/api/v1/publicKey against
+        // api.dbo-dengi.online while another client on the same phone answered
+        // certificate_unknown for that host in the same second. Keyed by host,
+        // the second one silenced the first.
+        let s = NoMitmSet::new();
+        s.learn_rejected(B, "api.dbo-dengi.online", "alert: certificate_unknown");
+        assert!(
+            s.should_tunnel(B, "api.dbo-dengi.online"),
+            "the rejecting client is tunnelled"
+        );
+        assert!(
+            !s.should_tunnel(A, "api.dbo-dengi.online"),
+            "everyone else keeps being decrypted"
+        );
+    }
+
+    #[test]
+    fn forget_clears_a_host_for_every_client() {
+        let s = NoMitmSet::new();
+        s.learn_rejected(A, "api.example.com", "");
+        s.learn_rejected(B, "api.example.com", "");
+        assert!(s.forget("api.example.com"));
+        assert!(!s.should_tunnel(A, "api.example.com"));
+        assert!(!s.should_tunnel(B, "api.example.com"));
+        assert!(!s.forget("api.example.com"), "second forget is a no-op");
+    }
+
+    #[test]
+    fn the_panel_shows_one_row_per_host_and_counts_the_clients() {
+        let s = NoMitmSet::new();
+        s.learn_rejected(A, "api.example.com", "alert: unknown_ca");
+        s.learn_rejected(B, "api.example.com", "alert: certificate_unknown");
+        s.learn_rejected(A, "other.example.com", "alert: unknown_ca");
+        let listed = s.list();
+        assert_eq!(listed.learned.len(), 2);
+        assert_eq!(listed.learned[0].host, "api.example.com");
+        assert!(listed.learned[0].detail.contains("2 clients"));
+        assert!(!listed.learned[1].detail.contains("clients"));
     }
 
     #[test]
@@ -254,7 +335,7 @@ mod tests {
         let s = NoMitmSet::new();
         for _ in 0..50 {
             assert!(
-                !s.should_tunnel("api.example.com"),
+                !s.should_tunnel(A, "api.example.com"),
                 "no number of dead sockets is a verdict on the certificate"
             );
         }
@@ -264,42 +345,45 @@ mod tests {
     #[test]
     fn why_tunnel_distinguishes_seeded_from_learned() {
         let s = NoMitmSet::new();
-        assert_eq!(s.why_tunnel("api.example.com"), None);
-        s.learn_rejected("api.example.com", "alert: unknown_ca");
+        assert_eq!(s.why_tunnel(A, "api.example.com"), None);
+        s.learn_rejected(A, "api.example.com", "alert: unknown_ca");
         assert_eq!(
-            s.why_tunnel("api.example.com").as_deref(),
+            s.why_tunnel(A, "api.example.com").as_deref(),
             Some("learned: cert_rejected (alert: unknown_ca)")
         );
         assert!(s
-            .why_tunnel("graph.facebook.com")
+            .why_tunnel(A, "graph.facebook.com")
             .is_some_and(|w| w.starts_with("seeded:")));
     }
 
     #[test]
     fn reset_forgets_learned_hosts_but_not_seeded_patterns() {
         let s = NoMitmSet::new();
-        s.learn_rejected("api.example.com", "");
+        s.learn_rejected(A, "api.example.com", "");
         assert_eq!(s.reset(), 1);
-        assert!(!s.should_tunnel("api.example.com"));
-        assert!(s.should_tunnel("graph.facebook.com"), "seed survives reset");
+        assert!(!s.should_tunnel(A, "api.example.com"));
+        assert!(
+            s.should_tunnel(A, "graph.facebook.com"),
+            "seed survives reset"
+        );
     }
 
     #[test]
     fn forget_drops_a_single_host() {
         let s = NoMitmSet::new();
-        s.learn_rejected("a.example.com", "");
-        s.learn_rejected("b.example.com", "");
+        s.learn_rejected(A, "a.example.com", "");
+        s.learn_rejected(A, "b.example.com", "");
         assert!(s.forget("a.example.com"));
         assert!(!s.forget("a.example.com"), "second forget is a no-op");
-        assert!(!s.should_tunnel("a.example.com"));
-        assert!(s.should_tunnel("b.example.com"));
+        assert!(!s.should_tunnel(A, "a.example.com"));
+        assert!(s.should_tunnel(A, "b.example.com"));
     }
 
     #[test]
     fn list_reports_hosts_with_their_reason() {
         let s = NoMitmSet::new();
-        s.learn_rejected("b.example.com", "alert: unknown_ca");
-        s.learn_rejected("a.example.com", "alert: bad_certificate");
+        s.learn_rejected(A, "b.example.com", "alert: unknown_ca");
+        s.learn_rejected(A, "a.example.com", "alert: bad_certificate");
         let listed = s.list();
         assert_eq!(listed.learned.len(), 2);
         assert_eq!(listed.learned[0].host, "a.example.com");

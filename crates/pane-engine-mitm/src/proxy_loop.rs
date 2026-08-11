@@ -65,6 +65,12 @@ pub async fn handle(
             None => (target.clone(), 443),
         };
 
+        // Filled in by the peek below; `unknown` covers clients whose
+        // ClientHello we couldn't read, which then share one bucket per host.
+        let mut client_fp = crate::client_hello::ClientFingerprint::unknown()
+            .as_str()
+            .to_string();
+
         emit_started(&events, cap_id, &host, &method, "/");
         insert_capture_opening(
             &storage,
@@ -97,10 +103,21 @@ pub async fn handle(
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             .await?;
 
-        // Hosts we already know we can't decrypt never get a handshake
-        // attempted — the client talks to the real server through us and keeps
-        // working. See `passthrough` for what lands here and why.
-        if let Some(why) = no_mitm.why_tunnel(&host) {
+        // Who is calling, not just where. `peek_fingerprint` copies the
+        // ClientHello without consuming it, so whichever way this goes the
+        // stream is still intact — the TLS acceptor gets its handshake, or
+        // `tunnel` splices the bytes through untouched.
+        //
+        // Seeded hosts skip the peek: the answer is the same for every client,
+        // and waiting for a ClientHello we won't read is pure latency.
+        let why = if pane_pinning::is_app_pinned(&host) {
+            Some("seeded: host is in the bundled app-pinning list".to_string())
+        } else {
+            let fp = crate::client_hello::peek_fingerprint(&stream).await;
+            client_fp = fp.as_str().to_string();
+            no_mitm.why_tunnel(&client_fp, &host)
+        };
+        if let Some(why) = why {
             return tunnel(stream, host, port, cap_id, started_at, storage, events, why).await;
         }
 
@@ -120,7 +137,7 @@ pub async fn handle(
                 // a wrong conclusion here does the most damage.
                 let learned = match verdict {
                     crate::handshake::HandshakeFailure::CertRejected(alert) => {
-                        no_mitm.learn_rejected(&host, &format!("alert: {alert}"))
+                        no_mitm.learn_rejected(&client_fp, &host, &format!("alert: {alert}"))
                     }
                     _ => false,
                 };
@@ -130,6 +147,7 @@ pub async fn handle(
                 // learned host left a trace.
                 tracing::debug!(
                     host = %host,
+                    client = %client_fp,
                     verdict = verdict.as_str(),
                     learned,
                     error = %detail,
@@ -138,8 +156,10 @@ pub async fn handle(
                 if learned {
                     tracing::info!(
                         host = %host,
+                        client = %client_fp,
                         verdict = verdict.as_str(),
-                        "client won't accept our certificate; tunnelling this host from now on"
+                        "this client won't accept our certificate; tunnelling it for this host \
+                         from now on (other clients keep being decrypted)"
                     );
                 }
                 mark_error(&storage, cap_id, "tls_handshake", &detail)?;
