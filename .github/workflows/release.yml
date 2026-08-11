@@ -109,7 +109,11 @@ jobs:
       # time, which would break `make tauri-dev` for anyone who has not
       # cross-built the CLI first. Users get it via `make cli-install` or the
       # release asset below.
+      # Unix only: the CLI talks to the app over the control socket, which has
+      # no Windows implementation (see ControlServer::bind). Building it there
+      # would ship a binary whose every command reports "no running instance".
       - name: Build the pane CLI
+        if: runner.os != 'Windows'
         run: cargo build --release --locked -p pane-cli --target ${{ matrix.platform.rust }}
 
       - name: Build + sign Tauri bundle
@@ -146,22 +150,16 @@ jobs:
       # and `gh release upload` against a tag with no release exits 1 with
       # "release not found".
       - name: Attach the pane CLI to the release
+        if: runner.os != 'Windows'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          SRC=target/${{ matrix.platform.rust }}/release/pane-cli
-          DEST=pane-cli-${{ matrix.platform.target }}
-          # Windows builds land as pane-cli.exe; keep the suffix on the asset
-          # so it stays runnable after download.
-          if [ -f "$SRC.exe" ]; then
-            SRC="$SRC.exe"
-            DEST="$DEST.exe"
-          fi
-          cp "$SRC" "$DEST"
-          gh release upload "$TAG" "$DEST" --clobber
+          cp target/${{ matrix.platform.rust }}/release/pane-cli \
+             pane-cli-${{ matrix.platform.target }}
+          gh release upload "$TAG" pane-cli-${{ matrix.platform.target }} --clobber
 
   # Combine the per-platform `*.json` updater manifests that
   # tauri-action emits into one `latest.json`, then mark the release

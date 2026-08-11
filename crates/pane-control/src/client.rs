@@ -2,14 +2,20 @@
 
 use std::path::Path;
 
+#[cfg(unix)]
 use anyhow::{anyhow, Context, Result};
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+#[cfg(unix)]
 use tokio::net::UnixStream;
 
+#[cfg(unix)]
 use crate::discovery::Discovery;
+#[cfg(unix)]
 use crate::protocol::{EventFrame, Request, Response, SubscribeArgs};
 
 /// A connection to a running instance.
+#[cfg(unix)]
 pub struct Client {
     writer: BufWriter<tokio::net::unix::OwnedWriteHalf>,
     reader: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
@@ -32,6 +38,7 @@ pub enum ConnectError {
     Other(#[from] anyhow::Error),
 }
 
+#[cfg(unix)]
 impl Client {
     /// Connect to the instance owning `data_dir`, if there is one.
     ///
@@ -148,6 +155,26 @@ impl Client {
 }
 
 /// Is an instance listening for `data_dir`?
+#[cfg(unix)]
 pub async fn is_running(data_dir: &Path) -> bool {
     Client::connect(data_dir).await.is_ok()
+}
+
+/// Placeholder for platforms with no control transport — see
+/// [`crate::server::ControlServer::bind`]. Uninhabited, so the only reachable
+/// outcome is [`ConnectError::NotRunning`]: nothing can be listening when
+/// nothing can bind.
+#[cfg(not(unix))]
+pub struct Client(std::convert::Infallible);
+
+#[cfg(not(unix))]
+impl Client {
+    pub async fn connect(_data_dir: &Path) -> Result<Self, ConnectError> {
+        Err(ConnectError::NotRunning)
+    }
+}
+
+#[cfg(not(unix))]
+pub async fn is_running(_data_dir: &Path) -> bool {
+    false
 }

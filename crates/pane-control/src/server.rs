@@ -36,6 +36,7 @@ impl ControlServer {
     /// `control.json` is written exactly once, already complete — a second
     /// write would be a window in which a reader sees an instance with no
     /// endpoint.
+    #[cfg(unix)]
     pub async fn bind(
         core: Arc<Core>,
         kind: InstanceKind,
@@ -82,6 +83,24 @@ impl ControlServer {
         });
 
         Ok((Self { data_dir }, ServeHandle(handle)))
+    }
+
+    /// No control endpoint on this platform; the caller treats the error as
+    /// "run without one" and the app still starts.
+    ///
+    /// Windows would use `tokio::net::windows::named_pipe` here. Deliberately
+    /// not written blind: CI lints and tests Rust on ubuntu only, so a
+    /// Windows-only path would never be compiled, let alone run, before a
+    /// release. Failing here rather than at compile time is what lets the
+    /// desktop app keep building for Windows — only the CLI and MCP surface is
+    /// missing there.
+    #[cfg(not(unix))]
+    pub async fn bind(
+        _core: Arc<Core>,
+        _kind: InstanceKind,
+        _http: Option<crate::HttpEndpoint>,
+    ) -> Result<(Self, ServeHandle)> {
+        anyhow::bail!("the control endpoint is not implemented on this platform yet")
     }
 
     /// Remove the socket and metadata on clean shutdown.
@@ -148,14 +167,7 @@ fn bind_endpoint(path: &Path) -> Result<tokio::net::UnixListener> {
     Ok(listener)
 }
 
-#[cfg(not(unix))]
-fn bind_endpoint(_path: &Path) -> Result<tokio::net::UnixListener> {
-    // Windows would use tokio::net::windows::named_pipe here. Deliberately not
-    // written blind: CI lints and tests Rust on ubuntu only, so a Windows-only
-    // path would never be compiled, let alone run, before release.
-    anyhow::bail!("the control endpoint is not implemented on this platform yet")
-}
-
+#[cfg(unix)]
 async fn serve_connection(core: Arc<Core>, stream: tokio::net::UnixStream) -> Result<()> {
     let (read_half, mut write_half) = stream.into_split();
     let (tx, mut rx) = mpsc::channel::<String>(WRITE_QUEUE);
