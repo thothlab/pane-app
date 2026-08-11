@@ -12,6 +12,13 @@ import {
 } from "@/stores/font-scale";
 import { t, tr, locale, setLocale, LOCALES } from "@/i18n";
 import { groupByBaseDomain } from "@/lib/host-grouping";
+import {
+  capturesPoll,
+  setCapturesPollEnabled,
+  setCapturesPollSeconds,
+  MIN_POLL_SECONDS,
+  MAX_POLL_SECONDS,
+} from "@/stores/captures-poll";
 
 // Theme button labels are looked up via i18n in the JSX. Statically
 // listed key names keep the i18n key set discoverable by grep and let
@@ -347,6 +354,45 @@ const SettingsView: Component = () => {
             {t()("settings.tunneled_seeded")}: {tunneled()!.seeded.join(", ")}
           </p>
         </Show>
+      </section>
+
+      <section class="space-y-3">
+        <h2 class="text-sm font-semibold uppercase tracking-wide text-fg-subtle">
+          {t()("settings.poll_section")}
+        </h2>
+        <p class="text-sm text-fg-subtle">{t()("settings.poll_body")}</p>
+        <div class="flex items-center gap-3 flex-wrap">
+          <label class="inline-flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={capturesPoll().enabled}
+              onChange={(e) => setCapturesPollEnabled(e.currentTarget.checked)}
+            />
+            {t()("settings.poll_enabled")}
+          </label>
+          <label class="inline-flex items-center gap-2 text-sm">
+            <span class={capturesPoll().enabled ? "" : "text-fg-muted"}>
+              {t()("settings.poll_interval")}
+            </span>
+            <input
+              type="number"
+              class="w-20 px-2 py-1 rounded border border-border bg-bg-subtle text-sm disabled:opacity-40"
+              min={MIN_POLL_SECONDS}
+              max={MAX_POLL_SECONDS}
+              step="1"
+              disabled={!capturesPoll().enabled}
+              value={capturesPoll().seconds}
+              // Commit on change, not on input: typing "30" passes through "3",
+              // and re-arming the timer on every keystroke is both pointless
+              // and briefly wrong.
+              onChange={(e) => setCapturesPollSeconds(Number(e.currentTarget.value))}
+            />
+            <span class={capturesPoll().enabled ? "text-fg-muted" : "text-fg-muted/50"}>
+              {t()("settings.poll_seconds")}
+            </span>
+          </label>
+        </div>
+        <p class="text-xs text-fg-muted">{t()("settings.poll_hint")}</p>
       </section>
 
       <section class="space-y-3">

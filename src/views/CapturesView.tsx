@@ -12,6 +12,7 @@ import type {
   RuleUpsertArgs,
   TlsHealthDto,
 } from "@/ipc/types";
+import { capturesPoll } from "@/stores/captures-poll";
 import {
   setRulesEditing,
   rulesCollapsed,
@@ -540,21 +541,29 @@ const CapturesView: Component = () => {
     void refresh(true);
     void refreshTlsHealth();
     const off = listenToCaptures(() => debouncedRefresh());
-    // `listenToCaptures` already pushes on every completed capture, so this
-    // interval is only a safety net for a dropped event — it does not need to
-    // be fast. At 1.5 s it was firing ~40 IPC calls a minute per window on top
-    // of the event stream, which is load the backend has to answer even when
-    // nothing changed.
-    const t = setInterval(refresh, 10_000);
     // A "did anything decrypt at all" answer doesn't change second to second,
     // and at 5 s this was the most frequent backend call in the view — more
     // frequent than the list itself.
     const th = setInterval(() => void refreshTlsHealth(), 30_000);
     onCleanup(() => {
       off();
-      clearInterval(t);
       clearInterval(th);
     });
+  });
+
+  // Safety-net poll, rebuilt whenever the setting changes.
+  //
+  // `listenToCaptures` already pushes on every completed capture, so this only
+  // recovers from a dropped event. It is configurable because one interval
+  // can't serve both users of this window: an unattended Maestro run wants it
+  // slow or off (every tick is load on the backend the run is driving), while
+  // someone watching traffic by hand wants it to keep up. See
+  // `stores/captures-poll`.
+  createEffect(() => {
+    const { enabled, seconds } = capturesPoll();
+    if (!enabled) return;
+    const t = setInterval(refresh, seconds * 1000);
+    onCleanup(() => clearInterval(t));
   });
 
   // Stable virtualizer instance. The earlier `createMemo(() =>
