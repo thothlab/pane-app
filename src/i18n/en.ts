@@ -536,12 +536,12 @@ const en = {
     tunneled_forget_group: "Forget every host in this domain",
     poll_section: "Captures list refresh",
     poll_body:
-      "The list is event-driven: every completed capture pushes itself. This poll only exists to recover from a dropped event.",
-    poll_enabled: "Poll periodically",
+      "Off — the list updates from capture events, as requests arrive. On — it refreshes on the interval and nothing else.",
+    poll_enabled: "Refresh on a timer",
     poll_interval: "Every",
     poll_seconds: "s",
     poll_hint:
-      "During an automated run (Maestro on an emulator) nobody is watching the window, and every poll is load on the same backend the run is driving — slow or off is right there. When you're watching traffic by hand, 1-2 seconds is.",
+      "Off by default — that way every request shows up as it happens. Turn it on for an automated run: nobody is watching the window, and dense traffic otherwise means several re-queries a second against the same backend the run is driving.",
     privacy_section: "Privacy",
     privacy_body:
       "Pane collects zero telemetry. No data leaves your machine unless you explicitly export it. Crash reports stay in logs/ next to the data dir.",
