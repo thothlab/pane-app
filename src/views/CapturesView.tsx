@@ -558,7 +558,16 @@ const CapturesView: Component = () => {
     // off from a previous session, they need something to look at.
     void refresh(true);
     void refreshTlsHealth();
-    const off = listenToCaptures(() => debouncedRefresh());
+    const off = listenToCaptures(() => {
+      // When the timer is on it owns the cadence: letting events through too
+      // would mean the interval changes nothing, which is how the setting read
+      // to the user. Off means events drive the list and it updates as traffic
+      // arrives; on means the list refreshes on the interval and nothing else,
+      // which is what an unattended run wants — one query every N seconds
+      // instead of one per burst of captures.
+      if (capturesPoll().enabled) return;
+      debouncedRefresh();
+    });
     // A "did anything decrypt at all" answer doesn't change second to second,
     // and at 5 s this was the most frequent backend call in the view — more
     // frequent than the list itself.
