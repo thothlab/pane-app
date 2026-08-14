@@ -2,7 +2,7 @@ import { type Component, createSignal, createMemo, createEffect, createResource,
 import { useNavigate } from "@solidjs/router";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 import { save } from "@tauri-apps/plugin-dialog";
-import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ShieldOff, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown, X, CheckSquare, Download } from "lucide-solid";
+import { Search, Trash2, AlertTriangle, Lock, ShieldAlert, ShieldOff, ArrowDownToLine, Copy, Pin, Star, FolderPlus, Shuffle, ChevronDown, X, CheckSquare, Upload } from "lucide-solid";
 import { api } from "@/ipc/client";
 import { listenToCaptures } from "@/ipc/events";
 import type {
@@ -1627,7 +1627,7 @@ const CapturesView: Component = () => {
             disabled={selectedVisible().length === 0 || busy()}
             title={t()("captures.export_selected_title")}
           >
-            <Download size={12} /> {t()("captures.export_selected")}
+            <Upload size={12} /> {t()("captures.export_selected")}
           </button>
         </Show>
         <button

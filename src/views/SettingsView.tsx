@@ -1,5 +1,5 @@
 import { type Component, createMemo, createResource, createSignal, For, Show } from "solid-js";
-import { RefreshCw, Download, ChevronRight, X } from "lucide-solid";
+import { RefreshCw, Upload, ChevronRight, X } from "lucide-solid";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
@@ -229,16 +229,16 @@ const SettingsView: Component = () => {
         </Show>
         <div class="flex flex-wrap gap-2">
           <button class="text-xs px-3 py-1.5 rounded border border-border hover:bg-bg-muted inline-flex items-center gap-1" onClick={() => exportCa("pem")}>
-            <Download size={12} /> {t()("settings.ca_export_pem")}
+            <Upload size={12} /> {t()("settings.ca_export_pem")}
           </button>
           <button class="text-xs px-3 py-1.5 rounded border border-border hover:bg-bg-muted inline-flex items-center gap-1" onClick={() => exportCa("der")}>
-            <Download size={12} /> {t()("settings.ca_export_der")}
+            <Upload size={12} /> {t()("settings.ca_export_der")}
           </button>
           <button class="text-xs px-3 py-1.5 rounded border border-border hover:bg-bg-muted inline-flex items-center gap-1" onClick={() => exportCa("qr")}>
-            <Download size={12} /> {t()("settings.ca_export_qr")}
+            <Upload size={12} /> {t()("settings.ca_export_qr")}
           </button>
           <button class="text-xs px-3 py-1.5 rounded border border-border hover:bg-bg-muted inline-flex items-center gap-1" onClick={() => exportCa("mobileconfig")}>
-            <Download size={12} /> {t()("settings.ca_export_mobileconfig")}
+            <Upload size={12} /> {t()("settings.ca_export_mobileconfig")}
           </button>
           <button
             class="text-xs px-3 py-1.5 rounded bg-warn/15 text-warn hover:bg-warn/25 inline-flex items-center gap-1"

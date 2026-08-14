@@ -19,7 +19,7 @@ import {
   ArrowDown,
   Braces,
   Copy,
-  Download,
+  Upload,
   Filter as FilterIcon,
   Pause,
   Pencil,
@@ -1646,7 +1646,7 @@ const LogcatView: Component = () => {
           title={t()("logcat.export_title")}
           disabled={visible().length === 0}
         >
-          <Download size={12} />
+          <Upload size={12} />
           {t()("logcat.export")}
         </button>
         <button

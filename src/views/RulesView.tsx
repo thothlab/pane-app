@@ -652,7 +652,7 @@ const RulesView: Component = () => {
             onClick={importFile}
             title={t()("rules.import_title")}
           >
-            <Upload size={14} /> {t()("rules.import")}
+            <Download size={14} /> {t()("rules.import")}
           </button>
           <button
             class="inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-border hover:bg-bg-muted disabled:opacity-40"
@@ -660,7 +660,7 @@ const RulesView: Component = () => {
             disabled={rules().length === 0 && collections().length === 0}
             title={t()("rules.export_all_title")}
           >
-            <Download size={14} /> {t()("rules.export_all")}
+            <Upload size={14} /> {t()("rules.export_all")}
           </button>
           <button
             class="inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-border hover:bg-bg-muted"
@@ -1081,7 +1081,7 @@ const CollectionSection: Component<{
               title={t()("rules.export_collection_title")}
               onClick={p.onExportCollection}
             >
-              <Download size={12} />
+              <Upload size={12} />
             </button>
             <button
               class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted"
@@ -1305,7 +1305,7 @@ const RuleRow: Component<{
           title={t()("rules.export_rule_title")}
           onClick={p.onExport}
         >
-          <Download size={12} />
+          <Upload size={12} />
         </button>
         <button
           class="text-xs px-2 py-1 rounded hover:bg-danger/10 text-danger"
