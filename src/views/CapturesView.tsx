@@ -1103,24 +1103,49 @@ const CapturesView: Component = () => {
     }
   };
 
-  const addToNewCollection = async () => {
+  // ── "New collection…" name dialog ─────────────────────────────────
+  // The menu entry used to create a collection named "From captures"
+  // outright, so every use of it piled into one collection the user
+  // never named. It now asks. Prefilled with that same default name and
+  // pre-selected, so the old behaviour is still one Enter away.
+  //
+  // A real dialog, not `prompt()`: Tauri 2's WKWebView disables native
+  // browser dialogs and `prompt()` silently does nothing — the exact bug
+  // "+ New collection" shipped with once already.
+  const [newCollectionFor, setNewCollectionFor] = createSignal<string[] | null>(
+    null,
+  );
+  const [newCollectionName, setNewCollectionName] = createSignal("");
+
+  const addToNewCollection = () => {
     const pos = addMenuPos();
     if (!pos || busy()) return;
-    const captureIds = pos.captureIds;
-    setBusy(true);
+    // Read the ids out before closing — the dialog outlives the menu.
+    setNewCollectionFor(pos.captureIds);
+    setNewCollectionName(tr("captures.add_to_rules_default_collection"));
     closeAddMenu();
-    if (captureIds.length > 1) {
-      setAddToast(
-        tr("captures.add_to_rules_working", { count: String(captureIds.length) }),
-      );
-    }
+  };
+
+  const cancelNewCollection = () => {
+    if (busy()) return;
+    setNewCollectionFor(null);
+  };
+
+  const confirmNewCollection = async () => {
+    const captureIds = newCollectionFor();
+    const name = newCollectionName().trim();
+    if (!captureIds || !name || busy()) return;
+    setBusy(true);
     try {
       const created = await api.collections.upsert({
-        name: tr("captures.add_to_rules_default_collection"),
+        name,
         enabled: true,
         priority: 0,
       });
       const res = await addRulesFor(captureIds, created.id);
+      // Only close on success — a failed create keeps the typed name on
+      // screen instead of making the user retype it.
+      setNewCollectionFor(null);
       finishAdd(res, created.name);
     } catch (e: unknown) {
       // Only the collection creation can throw here — per-rule failures
@@ -1942,6 +1967,85 @@ const CapturesView: Component = () => {
             </span>
           </button>
         </div>
+      </Show>
+
+      {/* "New collection…" name dialog. Modal rather than a popover: it
+          owns the keyboard until the user answers, and the name is the
+          only thing on screen worth reading at that moment. Enter
+          creates, Escape / backdrop / Cancel aborts without creating
+          anything. */}
+      <Show when={newCollectionFor()}>
+        {(ids) => (
+          <div
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+            onMouseDown={cancelNewCollection}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") cancelNewCollection();
+            }}
+          >
+            <form
+              class="bg-bg border border-border rounded-lg p-4 shadow-xl w-80 mx-4 space-y-3"
+              onMouseDown={(e) => e.stopPropagation()}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void confirmNewCollection();
+              }}
+            >
+              <div class="flex items-center gap-2 text-sm font-medium">
+                <FolderPlus size={14} class="text-accent shrink-0" />
+                {t()("captures.new_collection_title")}
+              </div>
+              <input
+                type="text"
+                // Focus AND select: the field is prefilled with the old
+                // default name, so a user who wants their own name types
+                // over it and a user who wants the default presses Enter.
+                ref={(el) =>
+                  setTimeout(() => {
+                    el?.focus();
+                    el?.select();
+                  }, 0)
+                }
+                class="w-full px-2 py-1.5 rounded bg-bg-muted text-sm outline-none focus:ring-1 focus:ring-accent"
+                aria-label={t()("captures.new_collection_name_label")}
+                placeholder={t()("captures.new_collection_name_label")}
+                value={newCollectionName()}
+                onInput={(e) => setNewCollectionName(e.currentTarget.value)}
+                disabled={busy()}
+                maxlength={120}
+                // macOS text substitution turns quotes into «» inside
+                // inputs; a collection name is matched by substring in
+                // the CLI, so keep it exactly as typed.
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck={false}
+              />
+              <div class="text-fg-muted text-[11px]">
+                {tr("captures.new_collection_hint", {
+                  count: String(ids().length),
+                })}
+              </div>
+              <div class="flex justify-end gap-2">
+                <button
+                  type="button"
+                  class="text-sm px-3 py-1.5 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-50"
+                  disabled={busy()}
+                  onClick={cancelNewCollection}
+                >
+                  {t()("captures.cancel")}
+                </button>
+                <button
+                  type="submit"
+                  class="text-sm px-3 py-1.5 rounded bg-accent text-white hover:opacity-90 disabled:opacity-50"
+                  disabled={busy() || !newCollectionName().trim()}
+                >
+                  {t()("captures.new_collection_create")}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
       </Show>
 
       {/* Add-to-Rules confirmation toast. Bottom-right of the view,
