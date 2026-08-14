@@ -1,4 +1,4 @@
-.PHONY: help install dev build test lint typecheck format clean tauri-dev tauri-build docs-dev docs-build web-run cli cli-install
+.PHONY: help install dev build test lint typecheck format clean tauri-dev tauri-build docs-dev docs-build web-run cli cli-install healthcheck-install
 
 help:
 	@echo "Pane — common dev commands:"
@@ -61,6 +61,14 @@ docs-build:
 
 web-run: docs-build
 	$(MAKE) -C apps/web run
+
+# The daily liveness check runs under launchd, and macOS TCC denies a launchd
+# agent any access to ~/Documents — so the script cannot execute from the repo
+# checkout. Install a copy outside it and re-run this after editing the script.
+healthcheck-install:
+	mkdir -p $(HOME)/.local/bin
+	install -m 755 scripts/pane-web-healthcheck.sh $(HOME)/.local/bin/pane-web-healthcheck.sh
+	@echo "installed -> ~/.local/bin/pane-web-healthcheck.sh (launchd agent: com.pane.healthcheck)"
 
 clean:
 	cargo clean
