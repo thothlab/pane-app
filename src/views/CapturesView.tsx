@@ -32,6 +32,7 @@ import { filters, refreshFilters, saveFilter } from "@/stores/saved-filters";
 import HelpButton from "@/components/HelpButton";
 import { writeClipboard } from "@/lib/clipboard";
 import { withTimeout } from "@/lib/async";
+import { uniqueRuleName } from "@/lib/rule-names";
 import { t, tr } from "@/i18n";
 
 const FILTER_PALETTE = [
@@ -659,18 +660,31 @@ const CapturesView: Component = () => {
   // pre-filled from the capture (method + host + path + captured
   // response) — same shape the manual rule editor produces, so the
   // user can refine it in the Rules view if needed.
+  //
+  // The menu acts on a SET of captures, not one row: right-clicking a
+  // row that is part of the current multi-selection targets the whole
+  // selection (Copy and every Add-to-Rules entry), which is what the
+  // checkboxes imply. Right-clicking a row OUTSIDE the selection
+  // targets just that row and leaves the selection alone — same rule
+  // Finder/Charles use, and right-click never mutated the selection
+  // here either. The ids are snapshotted at open time so the 1.5s list
+  // refresh can't make the menu act on a different set than the count
+  // in its label promised.
   const [addMenuPos, setAddMenuPos] = createSignal<
-    { x: number; y: number; captureId: string } | null
+    { x: number; y: number; captureIds: string[] } | null
   >(null);
   const [addCollections, setAddCollections] = createSignal<RuleCollectionDto[]>([]);
-  const [addBusy, setAddBusy] = createSignal(false);
+  const [busy, setBusy] = createSignal(false);
   const [addToast, setAddToast] = createSignal<string | null>(null);
   let addMenuRef: HTMLDivElement | undefined;
 
   const openAddMenu = async (e: MouseEvent, captureId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setAddMenuPos({ x: e.clientX, y: e.clientY, captureId });
+    const captureIds = selectedIds().has(captureId)
+      ? selectedVisible().map((c) => c.id)
+      : [captureId];
+    setAddMenuPos({ x: e.clientX, y: e.clientY, captureIds });
     // Refresh collections on each open — cheap call, and the user
     // may have created/renamed collections in the Rules tab since
     // we last looked.
@@ -682,6 +696,14 @@ const CapturesView: Component = () => {
   };
 
   const closeAddMenu = () => setAddMenuPos(null);
+
+  /** How many captures the open menu acts on — drives its labels. */
+  const addMenuTargetCount = createMemo(
+    () => addMenuPos()?.captureIds.length ?? 0,
+  );
+  // `addMenuShowsCount` also belongs here by topic, but it reads the
+  // selection signals — see the multi-select section below, where it is
+  // declared once those exist.
 
   // After the menu renders (and re-renders when collections finish
   // loading), check if it spills past the viewport bottom/right and
@@ -701,7 +723,8 @@ const CapturesView: Component = () => {
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const margin = 8;
-      let { x, y, captureId } = pos;
+      const { captureIds } = pos;
+      let { x, y } = pos;
       let changed = false;
       if (r.bottom > vh - margin) {
         y = Math.max(margin, vh - r.height - margin);
@@ -711,7 +734,7 @@ const CapturesView: Component = () => {
         x = Math.max(margin, vw - r.width - margin);
         changed = true;
       }
-      if (changed) setAddMenuPos({ x, y, captureId });
+      if (changed) setAddMenuPos({ x, y, captureIds });
     });
   });
 
@@ -804,29 +827,60 @@ const CapturesView: Component = () => {
     return c?.name ?? tr("captures.add_to_rules_ungrouped");
   };
 
-  // Shared post-success path: navigate state so the Rules tab opens
-  // the editor for this rule, expand the target collection (otherwise
-  // the editor would render inside a collapsed section and the user
-  // wouldn't see it), and show a toast that names BOTH the rule and
-  // its destination collection so it's unambiguous where it landed.
-  const finishAdd = (rule: RuleDto, targetCollectionLabel: string) => {
-    setRulesEditing({
-      kind: "rule",
-      collectionId: rule.collection_id,
-      id: rule.id,
-    });
-    const sectionKey = rule.collection_id ?? "__ungrouped__";
+  // Shared post-add path: expand the target collection (otherwise a
+  // freshly added rule sits inside a collapsed section and the user
+  // wouldn't see it) and toast what landed where.
+  //
+  // One rule added cleanly → also open the Rules editor on it, as
+  // before. A batch does NOT: picking whichever rule happened to be
+  // last and opening its editor reads as a bug, so the batch just
+  // reports the count and leaves the user in the Captures view.
+  const finishAdd = (
+    res: { rules: RuleDto[]; failed: number; lastError: string | null },
+    targetCollectionLabel: string,
+  ) => {
+    const { rules, failed, lastError } = res;
+    if (rules.length === 0) {
+      // Nothing landed. `lastError` is set whenever a capture was
+      // actually attempted, so a null here means an empty batch —
+      // nothing happened and there is nothing to report.
+      if (lastError) {
+        alert(tr("captures.add_to_rules_failed", { message: lastError }));
+      }
+      return;
+    }
+    const first = rules[0];
+    const sectionKey = first.collection_id ?? "__ungrouped__";
     if (rulesCollapsed()[sectionKey]) {
       setRulesCollapsed({ ...rulesCollapsed(), [sectionKey]: false });
     }
-    setAddToast(
-      tr("captures.add_to_rules_done", {
-        name: rule.name,
-        collection: targetCollectionLabel,
-      }),
-    );
-    setTimeout(() => setAddToast(null), 3000);
-    closeAddMenu();
+    if (rules.length === 1 && failed === 0) {
+      setRulesEditing({
+        kind: "rule",
+        collectionId: first.collection_id,
+        id: first.id,
+      });
+      setAddToast(
+        tr("captures.add_to_rules_done", {
+          name: first.name,
+          collection: targetCollectionLabel,
+        }),
+      );
+    } else {
+      setAddToast(
+        failed > 0
+          ? tr("captures.add_to_rules_batch_partial", {
+              count: String(rules.length),
+              failed: String(failed),
+              collection: targetCollectionLabel,
+            })
+          : tr("captures.add_to_rules_batch_done", {
+              count: String(rules.length),
+              collection: targetCollectionLabel,
+            }),
+      );
+    }
+    setTimeout(() => setAddToast(null), failed > 0 ? 5000 : 3000);
   };
 
   // ── Copy as OkHttp-style dump ─────────────────────────────────────
@@ -918,29 +972,57 @@ const CapturesView: Component = () => {
 
   /// A copy is four round trips to the backend (capture, both bodies, the
   /// clipboard write). If any of them is slow the user got no feedback at all:
-  /// the menu stayed open, the button's `disabled={addBusy()}` guard was never
+  /// the menu stayed open, the button's `disabled={busy()}` guard was never
   /// armed because this function never set it, and clicking again queued a
-  /// second full chain. Close the menu on click, hold `addBusy` for the whole
+  /// second full chain. Close the menu on click, hold `busy` for the whole
   /// chain, and never wait forever without saying so.
+  ///
+  /// The timeout scales with the batch: N captures are N of those chains
+  /// run back to back, so a fixed 15s would abort a large multi-select
+  /// that was making perfectly good progress. It is capped, though —
+  /// `withTimeout` reports rather than cancels, so an unbounded deadline
+  /// on a "select all" over the 500-row tail would leave the user staring
+  /// at "Copying…" with every button disabled and no way out but a
+  /// restart. Two minutes is past any healthy batch.
   const COPY_TIMEOUT_MS = 15_000;
+  const COPY_TIMEOUT_CAP_MS = 120_000;
 
-  const copyDump = async (captureId: string) => {
-    if (addBusy()) return;
-    setAddBusy(true);
+  // One path for both entry points — the toolbar's "Copy" over the
+  // checked rows and the context menu's "Copy" over its target set —
+  // so a 1-row copy and an N-row copy can't drift apart.
+  const copyDump = async (captureIds: string[]) => {
+    if (captureIds.length === 0 || busy()) return;
+    setBusy(true);
     closeAddMenu();
     setAddToast(tr("captures.copy_dump_working"));
     try {
-      const text = await withTimeout(
+      const { text, ok, lastError } = await withTimeout(
         (async () => {
-          const t = await buildHttpDump(captureId);
-          await writeClipboard(t);
-          return t;
+          const dump = await buildSelectedDump(captureIds);
+          if (dump.ok > 0) await writeClipboard(dump.text);
+          return dump;
         })(),
-        COPY_TIMEOUT_MS,
+        Math.min(COPY_TIMEOUT_MS * captureIds.length, COPY_TIMEOUT_CAP_MS),
         tr("captures.copy_dump_timeout"),
       );
+      if (ok === 0) {
+        // Every row failed. A single-row copy has one concrete error
+        // worth showing; a batch just reports that nothing survived.
+        setAddToast(
+          lastError
+            ? tr("captures.copy_dump_failed", { message: lastError })
+            : tr("captures.copy_selected_none"),
+        );
+        setTimeout(() => setAddToast(null), 3500);
+        return;
+      }
       setAddToast(
-        tr("captures.copy_dump_done", { bytes: String(text.length) }),
+        captureIds.length === 1
+          ? tr("captures.copy_dump_done", { bytes: String(text.length) })
+          : tr("captures.copy_selected_done", {
+              count: String(ok),
+              bytes: String(text.length),
+            }),
       );
       setTimeout(() => setAddToast(null), 2500);
     } catch (e: unknown) {
@@ -951,55 +1033,105 @@ const CapturesView: Component = () => {
       );
       setTimeout(() => setAddToast(null), 3500);
     } finally {
-      setAddBusy(false);
+      setBusy(false);
     }
+  };
+
+  // Create one rule per capture, sequentially. Deliberately does NOT
+  // consult `busy()`: the callers own that flag. An earlier version had
+  // the guard inside and `addToNewCollection` recursed into it, which
+  // short-circuited and silently left an empty collection with no rule.
+  //
+  // Per-row try/catch so one dead id (row cleared mid-batch) can't sink
+  // the rest — the same policy `buildSelectedDump` uses.
+  const addRulesFor = async (
+    captureIds: string[],
+    collectionId: string | null,
+  ): Promise<{ rules: RuleDto[]; failed: number; lastError: string | null }> => {
+    const rules: RuleDto[] = [];
+    let failed = 0;
+    let lastError: string | null = null;
+    // Rule names carry a minute-precision timestamp, so several captures
+    // of the same polling endpoint inside one minute would land as N
+    // identically-named rules — which is exactly the case that makes a
+    // user multi-select in the first place. Suffix the duplicates so the
+    // Rules list stays readable. (The backend keys on a fresh uuid, so
+    // they were always distinct rows, just indistinguishable on screen.)
+    const usedNames = new Set<string>();
+    for (const id of captureIds) {
+      try {
+        const args = await buildRuleFromCapture(id, collectionId);
+        args.name = uniqueRuleName(args.name, usedNames);
+        rules.push(await api.rules.upsert(args));
+      } catch (e: unknown) {
+        failed += 1;
+        lastError = (e as { message?: string })?.message ?? String(e);
+      }
+    }
+    return { rules, failed, lastError };
   };
 
   const addToCollection = async (collectionId: string | null) => {
     const pos = addMenuPos();
-    if (!pos || addBusy()) return;
-    setAddBusy(true);
+    if (!pos || busy()) return;
+    // Read the target ids out before closing the menu — `addMenuPos()`
+    // is null from here on.
+    const captureIds = pos.captureIds;
+    const label = collectionLabel(collectionId);
+    setBusy(true);
+    closeAddMenu();
+    if (captureIds.length > 1) {
+      setAddToast(
+        tr("captures.add_to_rules_working", { count: String(captureIds.length) }),
+      );
+    }
     try {
-      const label = collectionLabel(collectionId);
-      const args = await buildRuleFromCapture(pos.captureId, collectionId);
-      const rule = await api.rules.upsert(args);
-      finishAdd(rule, label);
+      const res = await addRulesFor(captureIds, collectionId);
+      finishAdd(res, label);
     } catch (e: unknown) {
+      // Per-rule failures are folded into the result; this only fires if
+      // the post-add navigation itself blows up. Same guard as
+      // `addToNewCollection` — an unhandled rejection here would leave
+      // the user with no message at all.
       alert(
         tr("captures.add_to_rules_failed", {
           message: (e as { message?: string })?.message ?? String(e),
         }),
       );
     } finally {
-      setAddBusy(false);
+      setBusy(false);
     }
   };
 
   const addToNewCollection = async () => {
     const pos = addMenuPos();
-    if (!pos || addBusy()) return;
-    setAddBusy(true);
+    if (!pos || busy()) return;
+    const captureIds = pos.captureIds;
+    setBusy(true);
+    closeAddMenu();
+    if (captureIds.length > 1) {
+      setAddToast(
+        tr("captures.add_to_rules_working", { count: String(captureIds.length) }),
+      );
+    }
     try {
       const created = await api.collections.upsert({
         name: tr("captures.add_to_rules_default_collection"),
         enabled: true,
         priority: 0,
       });
-      // Inline the rule creation here rather than recursing into
-      // `addToCollection`. The recursive call short-circuited on its
-      // own `addBusy()` guard, silently leaving an empty collection
-      // and no rule — exactly the symptom users reported.
-      const args = await buildRuleFromCapture(pos.captureId, created.id);
-      const rule = await api.rules.upsert(args);
-      finishAdd(rule, created.name);
+      const res = await addRulesFor(captureIds, created.id);
+      finishAdd(res, created.name);
     } catch (e: unknown) {
+      // Only the collection creation can throw here — per-rule failures
+      // are folded into the result and reported by `finishAdd`.
       alert(
         tr("captures.add_to_rules_failed", {
           message: (e as { message?: string })?.message ?? String(e),
         }),
       );
     } finally {
-      setAddBusy(false);
+      setBusy(false);
     }
   };
 
@@ -1051,7 +1183,6 @@ const CapturesView: Component = () => {
   const SEL_COL_WIDTH = 34;
   const [selectionMode, setSelectionMode] = createSignal(false);
   const [selectedIds, setSelectedIds] = createSignal<Set<string>>(new Set());
-  const [selBusy, setSelBusy] = createSignal(false);
 
   // Both the header and every row read THIS memo for their grid columns,
   // and both gate the leading checkbox cell on the SAME selectionMode()
@@ -1069,6 +1200,23 @@ const CapturesView: Component = () => {
   });
   const someVisibleSelected = createMemo(
     () => selectedVisible().length > 0 && !allVisibleSelected(),
+  );
+
+  // Spell the count out in the Add-to-Rules menu labels whenever there is
+  // any chance of ambiguity. Not just for N > 1: right-clicking an
+  // UNCHECKED row while three others are checked acts on that one row, and
+  // a bare "Copy" there would read as "copy the three I ticked" — the
+  // mirror image of the bug this menu is fixing. Whenever the checkboxes
+  // are on screen, the menu states its target count.
+  //
+  // Declared HERE, not up with the rest of the menu code: `createMemo`
+  // runs its computation immediately on creation, so a memo placed above
+  // `selectionMode`/`selectedIds` touches those `const`s inside their
+  // temporal dead zone and throws during component setup — killing the
+  // whole view, and with it the update queue. A memo may only be created
+  // after every signal it reads.
+  const addMenuShowsCount = createMemo(
+    () => addMenuTargetCount() > 1 || (selectionMode() && selectedIds().size > 0),
   );
 
   // `indeterminate` is a DOM property, not an attribute — drive it via a
@@ -1108,58 +1256,45 @@ const CapturesView: Component = () => {
     });
   };
 
-  // Concatenate the checked rows into one dump. Per-row failures (a row
+  // Concatenate the given captures into one dump. Per-row failures (a row
   // cleared mid-export) are skipped so one dead id can't sink the batch;
-  // `ok` reports how many actually made it in.
+  // `ok` reports how many actually made it in, `lastError` carries a
+  // message for the single-row case where there is something concrete to
+  // show the user.
   const DUMP_SEPARATOR = `\n\n${"=".repeat(72)}\n\n`;
   const buildSelectedDump = async (
-    rows: CaptureDto[],
-  ): Promise<{ text: string; ok: number }> => {
+    captureIds: string[],
+  ): Promise<{
+    text: string;
+    ok: number;
+    failed: number;
+    lastError: string | null;
+  }> => {
     const dumps: string[] = [];
-    for (const c of rows) {
+    let failed = 0;
+    let lastError: string | null = null;
+    for (const id of captureIds) {
       try {
-        dumps.push(await buildHttpDump(c.id));
-      } catch {
+        dumps.push(await buildHttpDump(id));
+      } catch (e: unknown) {
         /* row gone (e.g. cleared) — skip it, keep the rest */
+        failed += 1;
+        lastError = (e as { message?: string })?.message ?? String(e);
       }
     }
-    return { text: dumps.join(DUMP_SEPARATOR), ok: dumps.length };
+    return {
+      text: dumps.join(DUMP_SEPARATOR),
+      ok: dumps.length,
+      failed,
+      lastError,
+    };
   };
 
-  const copySelected = async () => {
-    const rows = selectedVisible();
-    if (rows.length === 0 || selBusy()) return;
-    setSelBusy(true);
-    try {
-      const { text, ok } = await buildSelectedDump(rows);
-      if (ok === 0) {
-        setAddToast(tr("captures.copy_selected_none"));
-        setTimeout(() => setAddToast(null), 3500);
-        return;
-      }
-      await writeClipboard(text);
-      setAddToast(
-        tr("captures.copy_selected_done", {
-          count: String(ok),
-          bytes: String(text.length),
-        }),
-      );
-      setTimeout(() => setAddToast(null), 2500);
-    } catch (e: unknown) {
-      setAddToast(
-        tr("captures.copy_selected_failed", {
-          message: (e as { message?: string })?.message ?? String(e),
-        }),
-      );
-      setTimeout(() => setAddToast(null), 3500);
-    } finally {
-      setSelBusy(false);
-    }
-  };
+  const copySelected = () => copyDump(selectedVisible().map((c) => c.id));
 
   const exportSelected = async () => {
     const rows = selectedVisible();
-    if (rows.length === 0 || selBusy()) return;
+    if (rows.length === 0 || busy()) return;
     // Ask for the path first (before the expensive dump build) so a
     // cancelled dialog costs nothing.
     const path = await save({
@@ -1169,9 +1304,9 @@ const CapturesView: Component = () => {
       ],
     });
     if (!path) return;
-    setSelBusy(true);
+    setBusy(true);
     try {
-      const { text, ok } = await buildSelectedDump(rows);
+      const { text, ok } = await buildSelectedDump(rows.map((c) => c.id));
       if (ok === 0) {
         setAddToast(tr("captures.export_selected_none"));
         setTimeout(() => setAddToast(null), 3500);
@@ -1190,7 +1325,7 @@ const CapturesView: Component = () => {
       );
       setTimeout(() => setAddToast(null), 3500);
     } finally {
-      setSelBusy(false);
+      setBusy(false);
     }
   };
 
@@ -1456,7 +1591,7 @@ const CapturesView: Component = () => {
           <button
             class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-40 disabled:hover:bg-transparent"
             onClick={() => void copySelected()}
-            disabled={selectedVisible().length === 0 || selBusy()}
+            disabled={selectedVisible().length === 0 || busy()}
             title={t()("captures.copy_selected_title")}
           >
             <Copy size={12} /> {t()("captures.copy_selected")}
@@ -1464,7 +1599,7 @@ const CapturesView: Component = () => {
           <button
             class="text-xs px-2 py-1 rounded hover:bg-bg-muted inline-flex items-center gap-1 disabled:opacity-40 disabled:hover:bg-transparent"
             onClick={() => void exportSelected()}
-            disabled={selectedVisible().length === 0 || selBusy()}
+            disabled={selectedVisible().length === 0 || busy()}
             title={t()("captures.export_selected_title")}
           >
             <Download size={12} /> {t()("captures.export_selected")}
@@ -1747,16 +1882,26 @@ const CapturesView: Component = () => {
           <button
             type="button"
             class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
-            disabled={addBusy()}
+            disabled={busy()}
             title={t()("captures.copy_dump_title")}
-            onClick={() => void copyDump(addMenuPos()!.captureId)}
+            onClick={() => void copyDump(addMenuPos()!.captureIds)}
           >
             <Copy size={12} class="text-fg-muted shrink-0" />
-            <span class="truncate flex-1">{t()("captures.copy_dump")}</span>
+            <span class="truncate flex-1">
+              {addMenuShowsCount()
+                ? tr("captures.copy_dump_n", {
+                    count: String(addMenuTargetCount()),
+                  })
+                : t()("captures.copy_dump")}
+            </span>
           </button>
           <div class="border-t border-border my-1" />
           <div class="px-3 py-1 text-fg-muted uppercase tracking-wide text-[10px]">
-            {t()("captures.add_to_rules_title")}
+            {addMenuShowsCount()
+              ? tr("captures.add_to_rules_title_n", {
+                  count: String(addMenuTargetCount()),
+                })
+              : t()("captures.add_to_rules_title")}
           </div>
           <Show when={addCollections().length > 0}>
             <For each={addCollections()}>
@@ -1764,7 +1909,7 @@ const CapturesView: Component = () => {
                 <button
                   type="button"
                   class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
-                  disabled={addBusy()}
+                  disabled={busy()}
                   onClick={() => void addToCollection(c.id)}
                 >
                   <Shuffle size={12} class="text-accent shrink-0" />
@@ -1776,7 +1921,7 @@ const CapturesView: Component = () => {
           <button
             type="button"
             class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
-            disabled={addBusy()}
+            disabled={busy()}
             onClick={() => void addToCollection(null)}
           >
             <Shuffle size={12} class="text-fg-muted shrink-0" />
@@ -1788,8 +1933,8 @@ const CapturesView: Component = () => {
           <button
             type="button"
             class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
-            disabled={addBusy()}
-            onClick={() => void addToNewCollection()}
+            disabled={busy()}
+            onClick={addToNewCollection}
           >
             <FolderPlus size={12} class="text-accent shrink-0" />
             <span class="truncate flex-1">

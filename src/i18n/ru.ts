@@ -79,12 +79,18 @@ const ru: Dict = {
   },
   captures: {
     add_to_rules_title: "Добавить в правила",
+    add_to_rules_title_n: "Добавить в правила ({{count}})",
     add_to_rules_ungrouped: "Без коллекции",
     add_to_rules_new_collection: "Новая коллекция…",
     add_to_rules_default_collection: "Из захваченных",
     add_to_rules_done: "Правило «{{name}}» добавлено в «{{collection}}»",
+    add_to_rules_working: "Добавляю правила ({{count}})…",
+    add_to_rules_batch_done: "Добавлено правил: {{count}} -> «{{collection}}»",
+    add_to_rules_batch_partial:
+      "Добавлено правил: {{count}}, не удалось: {{failed}} -> «{{collection}}»",
     add_to_rules_failed: "Не удалось добавить: {{message}}",
     copy_dump: "Копировать",
+    copy_dump_n: "Копировать ({{count}})",
     copy_dump_title:
       "Скопировать в буфер обмена полный запрос + ответ (заголовки и тела) в формате OkHttp-логгера",
     copy_dump_working: "Копирую…",

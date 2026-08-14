@@ -82,12 +82,18 @@ const en = {
   },
   captures: {
     add_to_rules_title: "Add to rules",
+    add_to_rules_title_n: "Add {{count}} to rules",
     add_to_rules_ungrouped: "Ungrouped",
     add_to_rules_new_collection: "New collection…",
     add_to_rules_default_collection: "From captures",
     add_to_rules_done: "Added rule \"{{name}}\" to \"{{collection}}\"",
+    add_to_rules_working: "Adding {{count}} rules…",
+    add_to_rules_batch_done: "Added {{count}} rules to \"{{collection}}\"",
+    add_to_rules_batch_partial:
+      "Added {{count}} rules to \"{{collection}}\", {{failed}} failed",
     add_to_rules_failed: "Failed to add: {{message}}",
     copy_dump: "Copy",
+    copy_dump_n: "Copy ({{count}})",
     copy_dump_title:
       "Copy the full request + response (headers and bodies) to the clipboard in OkHttp-logger format",
     copy_dump_working: "Copying…",
