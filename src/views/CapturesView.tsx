@@ -678,19 +678,29 @@ const CapturesView: Component = () => {
   const [addToast, setAddToast] = createSignal<string | null>(null);
   let addMenuRef: HTMLDivElement | undefined;
 
+  // One-shot permission for the clamp effect below to reposition the
+  // menu. Armed here (and again when the collections arrive and change
+  // its height), consumed by the effect. Without it the effect reads and
+  // writes the same signal and can never converge — see there.
+  let clampPending = false;
+
   const openAddMenu = async (e: MouseEvent, captureId: string) => {
     e.preventDefault();
     e.stopPropagation();
     const captureIds = selectedIds().has(captureId)
       ? selectedVisible().map((c) => c.id)
       : [captureId];
+    clampPending = true;
     setAddMenuPos({ x: e.clientX, y: e.clientY, captureIds });
     // Refresh collections on each open — cheap call, and the user
     // may have created/renamed collections in the Rules tab since
     // we last looked.
     try {
-      setAddCollections(await api.collections.list());
+      const list = await api.collections.list();
+      clampPending = true;
+      setAddCollections(list);
     } catch {
+      clampPending = true;
       setAddCollections([]);
     }
   };
@@ -711,30 +721,51 @@ const CapturesView: Component = () => {
   // the captures list used to push the menu below the window so
   // its items got clipped — measure the actual rect post-layout
   // and reposition rather than guessing a height upfront.
+  //
+  // This effect reads `addMenuPos` and writes it back, so it is a
+  // feedback loop and needs a hard stop. Two of them, because the
+  // obvious one is not enough:
+  //
+  //  1. `clampPending` — the clamp runs at most once per arm (menu
+  //     opened, collections arrived). A microtask that writes the
+  //     signal therefore cannot schedule another measurement.
+  //  2. Compare NUMBERS, not object identity. Solid diffs with `===`,
+  //     and a fresh `{x, y, captureIds}` never equals the old one, so
+  //     re-writing the same coordinates still re-ran the effect.
+  //
+  // Both were missing, and the failure mode was not a slow menu: a menu
+  // taller than `vh - 2 * margin` clamps to `y = margin`, which leaves
+  // `r.bottom > vh - margin` true forever. Effect → microtask → effect
+  // then spins inside the MICROTASK queue, which the engine drains
+  // without ever returning to the event loop — the renderer's main
+  // thread is pinned for good. Every click in the app dies (menu items,
+  // toolbar, sidebar, the lot) while wheel-scrolling the captures list
+  // keeps working, because composited scrolling does not need the main
+  // thread. Reachable with a right-click near the window bottom once the
+  // menu is tall enough: ~15+ rule collections, or fewer at a larger
+  // font scale or in a short window.
   createEffect(() => {
     const pos = addMenuPos();
     // Track collections so we re-clamp once the async list arrives
     // and grows the menu.
     void addCollections();
-    if (!pos) return;
+    if (!pos || !clampPending) return;
     queueMicrotask(() => {
       if (!addMenuRef) return;
+      // Consume the arm BEFORE writing: whatever this measurement
+      // decides is final until the menu is reopened.
+      clampPending = false;
       const r = addMenuRef.getBoundingClientRect();
       const vw = window.innerWidth;
       const vh = window.innerHeight;
       const margin = 8;
       const { captureIds } = pos;
       let { x, y } = pos;
-      let changed = false;
-      if (r.bottom > vh - margin) {
-        y = Math.max(margin, vh - r.height - margin);
-        changed = true;
+      if (r.bottom > vh - margin) y = Math.max(margin, vh - r.height - margin);
+      if (r.right > vw - margin) x = Math.max(margin, vw - r.width - margin);
+      if (Math.abs(x - pos.x) >= 1 || Math.abs(y - pos.y) >= 1) {
+        setAddMenuPos({ x, y, captureIds });
       }
-      if (r.right > vw - margin) {
-        x = Math.max(margin, vw - r.width - margin);
-        changed = true;
-      }
-      if (changed) setAddMenuPos({ x, y, captureIds });
     });
   });
 
@@ -1893,7 +1924,15 @@ const CapturesView: Component = () => {
           Escape close it; menu items dispatch directly. */}
       <Show when={addMenuPos()}>
         <div
-          ref={(el) => (addMenuRef = el)}
+          // Cleared on unmount: Solid leaves a plain `ref` variable
+          // pointing at the detached node after the menu closes, and the
+          // clamp effect above measures through it. A detached node's
+          // getBoundingClientRect() is all zeros, which reads as "fits
+          // fine" — a silently wrong measurement rather than a crash.
+          ref={(el) => {
+            addMenuRef = el;
+            onCleanup(() => (addMenuRef = undefined));
+          }}
           class="fixed z-50 bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs select-none"
           style={{
             left: `${addMenuPos()!.x}px`,
