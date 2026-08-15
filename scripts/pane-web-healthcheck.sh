@@ -14,6 +14,11 @@
 #      on the port at all. `autossh -M 0` has no monitoring channel of its
 #      own and only notices a process that exits — which never happened.
 #
+# One `launchctl kickstart -k` is not always enough to clear the half-open
+# state (seen 2026-08-15: a flapping network kept re-landing the fresh
+# session in the same half-bound state). The tunnel repair below retries a
+# few times, rechecking the public URL between attempts, before giving up.
+#
 # So a check that only pings the public URL would tell us "down" without
 # saying which link broke, and a check that only looks at local processes
 # would have reported everything healthy through the whole outage. This
@@ -58,6 +63,7 @@ LOCAL_URL=${PANE_HC_LOCAL_URL:-http://127.0.0.1:8744/docs/}
 CONTAINER=${PANE_HC_CONTAINER:-pane-web}
 COMPOSE_FILE=${PANE_HC_COMPOSE:-}
 TUNNEL_LABEL=${PANE_HC_TUNNEL_LABEL:-com.pane.tunnel}
+TUNNEL_RETRIES=${PANE_HC_TUNNEL_RETRIES:-5}
 TG_TARGET=${PANE_HC_TG_TARGET:-}
 OPENCLAW=${PANE_HC_OPENCLAW:-$HOME/.local/bin/openclaw}
 LOG=${PANE_HC_LOG:-$HOME/Library/Logs/pane-web-healthcheck.log}
@@ -141,16 +147,19 @@ fi
 # port and blaming the wrong thing.
 if [ "$local_code" = "200" ]; then
   code=$(http_code "$URL")
-  if [ "$code" != "200" ]; then
-    log "local ok but public -> $code, restarting tunnel $TUNNEL_LABEL"
+  attempt=0
+  while [ "$code" != "200" ] && [ "$attempt" -lt "$TUNNEL_RETRIES" ]; do
+    attempt=$((attempt + 1))
+    log "local ok but public -> $code, restarting tunnel $TUNNEL_LABEL (попытка $attempt/$TUNNEL_RETRIES)"
     if launchctl kickstart -k "gui/$(id -u)/$TUNNEL_LABEL" >>"$LOG" 2>&1; then
-      actions+=("туннель перезапущен")
+      actions+=("туннель перезапущен (попытка $attempt)")
     else
-      actions+=("НЕ УДАЛОСЬ перезапустить туннель")
+      actions+=("НЕ УДАЛОСЬ перезапустить туннель (попытка $attempt)")
       log "launchctl kickstart failed"
     fi
     sleep "$SETTLE_SECONDS"
-  fi
+    code=$(http_code "$URL")
+  done
 fi
 
 code=$(http_code "$URL")
