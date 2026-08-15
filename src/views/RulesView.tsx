@@ -22,6 +22,7 @@ import {
   FilePlus,
   Minus,
   AlertTriangle,
+  Search,
 } from "lucide-solid";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readClipboard } from "@/lib/clipboard";
@@ -29,6 +30,11 @@ import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import JsonEditor from "@/components/JsonEditor";
 import { t, tr } from "@/i18n";
+import {
+  matchesCollectionName,
+  matchesRuleFilter,
+  parseFilterTerms,
+} from "@/lib/rules-filter";
 import {
   applyImport,
   buildCollectionExport,
@@ -43,6 +49,8 @@ import {
   setRulesCollapsed,
   rulesEditing,
   setRulesEditing,
+  rulesFilter,
+  setRulesFilter,
   type RulesEditing,
   ruleDraftKey,
   loadRuleDraft,
@@ -147,6 +155,7 @@ const RulesView: Component = () => {
   >(null);
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [renamingName, setRenamingName] = createSignal("");
+  let filterInput: HTMLInputElement | undefined;
 
   // Drag state. `dragOverKey` highlights the section currently under the
   // pointer; UNGROUPED_KEY is used for the Ungrouped section.
@@ -191,6 +200,61 @@ const RulesView: Component = () => {
     }
     return map;
   });
+
+  // ── Library filter ────────────────────────────────────────────────
+  // Matching itself lives in `lib/rules-filter` (pure, unit-tested);
+  // what stays here is only the reactive plumbing around it.
+  const filterTerms = createMemo(() => parseFilterTerms(rulesFilter()));
+  const filterActive = createMemo(() => filterTerms().length > 0);
+
+  const collectionNameOf = (id: string | null): string =>
+    id === null
+      ? t()("rules.ungrouped")
+      : collections().find((c) => c.id === id)?.name ?? "";
+
+  const matchesFilter = (r: RuleDto): boolean =>
+    matchesRuleFilter(r, collectionNameOf(r.collection_id), filterTerms());
+
+  // Rendering-only view. `rulesByCollection` above stays UNFILTERED on
+  // purpose: reorderRule renumbers a section to a dense 0..N-1 from it,
+  // and doing that over a filtered subset would rewrite the precedence
+  // of rules the user cannot see. Drag is disabled while filtering for
+  // the same reason.
+  const visibleRulesByCollection = createMemo(() => {
+    if (!filterActive()) return rulesByCollection();
+    const map = new Map<string, RuleDto[]>();
+    for (const [k, list] of rulesByCollection()) {
+      const kept = list.filter(matchesFilter);
+      if (kept.length > 0) map.set(k, kept);
+    }
+    return map;
+  });
+
+  const visibleRules = createMemo(() =>
+    filterActive() ? rules().filter(matchesFilter) : rules(),
+  );
+
+  // A collection survives the filter if it still holds matching rules,
+  // or if its own name matches — an empty group whose name you just
+  // typed should be on screen, not missing.
+  const visibleCollections = createMemo(() => {
+    if (!filterActive()) return collections();
+    return collections().filter(
+      (c) =>
+        (visibleRulesByCollection().get(c.id) ?? []).length > 0 ||
+        matchesCollectionName(c.name, filterTerms()),
+    );
+  });
+
+  const ungroupedVisible = createMemo(
+    () =>
+      !filterActive() ||
+      (visibleRulesByCollection().get(UNGROUPED_KEY) ?? []).length > 0,
+  );
+
+  const noFilterMatches = createMemo(
+    () => filterActive() && visibleRules().length === 0 && visibleCollections().length === 0,
+  );
 
   const openCreateForm = (cb?: (id: string) => void) => {
     setCreatingCallback(() => cb ?? null);
@@ -289,6 +353,40 @@ const RulesView: Component = () => {
     await api.rules.setEnabledBulk(targetEnabled, { kind: "all" });
     await refresh();
   };
+
+  // With a filter on, the bulk checkboxes act on WHAT IS ON SCREEN.
+  //
+  // They have to: the backend's bulk selector speaks all / ungrouped /
+  // collection and has no "these ids" variant, so the unfiltered path
+  // would tick rules the user cannot see while the count next to the
+  // box reports the filtered number. That is the same trap the captures
+  // context menu had — a control whose label describes one set and
+  // whose action hits another.
+  //
+  // Fanning out per rule is fine here: a filtered subset is small by
+  // construction, which is the entire reason someone filtered.
+  const setEnabledFor = async (list: RuleDto[], targetEnabled: boolean) => {
+    const changed = list.filter((r) => r.enabled !== targetEnabled);
+    if (changed.length === 0) return;
+    await Promise.all(
+      changed.map((r) => api.rules.setEnabled(r.id, targetEnabled)),
+    );
+    await refresh();
+  };
+
+  const toggleAllVisible = (targetEnabled: boolean) =>
+    filterActive()
+      ? setEnabledFor(visibleRules(), targetEnabled)
+      : toggleAllRules(targetEnabled);
+
+  const toggleSectionVisible = (
+    collectionId: string | null,
+    list: RuleDto[],
+    targetEnabled: boolean,
+  ) =>
+    filterActive()
+      ? setEnabledFor(list, targetEnabled)
+      : toggleCollection(collectionId, list, targetEnabled);
 
   const moveRule = async (r: RuleDto, collectionId: string | null) => {
     if (r.collection_id === collectionId) return;
@@ -600,7 +698,7 @@ const RulesView: Component = () => {
   };
 
   return (
-    <div class="h-full grid grid-rows-[auto_1fr]">
+    <div class="h-full grid grid-rows-[auto_auto_1fr]">
       <header class="border-b border-border bg-bg-subtle px-4 py-3 flex items-center gap-3">
         <Shuffle size={16} class="text-accent" />
         <div>
@@ -609,42 +707,6 @@ const RulesView: Component = () => {
             <HelpButton path="/rules/" title={t()("rules.help_title")} />
           </div>
         </div>
-
-        {/*
-          Master checkbox over the whole library. Same tri-state reading as the
-          per-collection one, one level up: all ticked → clears everything,
-          otherwise → ticks everything. One call, not one per rule.
-
-          It earns its place in the header because resetting to a known state
-          is the single most common thing done here — before a run you want
-          everything off, then exactly one collection on. Without it that was
-          a click per rule.
-        */}
-        <Show when={rules().length > 0}>
-          <div class="flex items-center gap-2 pl-2">
-            <Checkbox
-              state={
-                rules().every((r) => r.enabled)
-                  ? "on"
-                  : rules().every((r) => !r.enabled)
-                  ? "off"
-                  : "mixed"
-              }
-              title={
-                rules().every((r) => r.enabled)
-                  ? t()("rules.uncheck_all_title")
-                  : t()("rules.check_all_title")
-              }
-              onClick={() => void toggleAllRules(!rules().every((r) => r.enabled))}
-            />
-            <span class="text-xs text-fg-muted">
-              {t()("rules.enabled_count", {
-                on: String(rules().filter((r) => r.enabled).length),
-                total: String(rules().length),
-              })}
-            </span>
-          </div>
-        </Show>
 
         <div class="ml-auto flex items-center gap-2">
           <button
@@ -670,6 +732,100 @@ const RulesView: Component = () => {
           </button>
         </div>
       </header>
+
+      {/* Filter bar. Same anatomy as the captures one (icon, borderless
+          input, × that only appears when there is something to clear,
+          Escape clears) minus the save-filter star: a rules filter is a
+          way to find a row, not a view worth naming and keeping. */}
+      {/* px-4, not px-3: the header above and the section list below both
+          inset by 16px (`px-4` / `p-4`), so the magnifier's left edge and
+          the "Select all" right edge line up with the collection boxes'
+          borders instead of hanging 4px outside them. */}
+      <div class="flex items-center gap-2 px-4 py-2 border-b border-border bg-bg-subtle">
+        <Search size={14} class="text-fg-muted shrink-0" />
+        <div class="flex-1 relative flex items-center">
+          <input {...NO_AC}
+            ref={(el) => (filterInput = el)}
+            class="w-full bg-transparent outline-none text-sm placeholder:text-fg-muted pr-8"
+            placeholder={t()("rules.filter_placeholder")}
+            title={t()("rules.filter_help")}
+            value={rulesFilter()}
+            onInput={(e) => setRulesFilter(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && rulesFilter()) {
+                e.preventDefault();
+                setRulesFilter("");
+              }
+            }}
+          />
+          {/* Same construction as the captures × — an `inset-y-0` wrapper
+              that centres the button against the input, painted over the
+              text on the row's own background, rather than a bare
+              `absolute right-0` whose vertical placement falls back to
+              the static position. `.trim()` so a field holding only
+              spaces still offers the clear. */}
+          <Show when={rulesFilter().trim()}>
+            <div class="absolute right-0 inset-y-0 flex items-center bg-bg-subtle">
+              <button
+                type="button"
+                class="text-fg-muted hover:text-fg p-1 rounded hover:bg-bg-muted"
+                title={t()("rules.clear_filter_title")}
+                aria-label={t()("rules.clear_filter")}
+                onClick={() => {
+                  setRulesFilter("");
+                  filterInput?.focus();
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </Show>
+        </div>
+        {/*
+          Master checkbox over the library. Same tri-state reading as the
+          per-collection one, one level up: all ticked → clears everything,
+          otherwise → ticks everything.
+
+          It sits at the end of the filter row, not up in the title bar,
+          because the two belong to one thought: the filter picks a set,
+          this ticks that set. Reads and writes `visibleRules` for the
+          same reason — the box and the count next to it must never
+          describe different sets (see setEnabledFor). With no filter on,
+          "visible" and "the whole library" are the same thing.
+        */}
+        <Show when={visibleRules().length > 0}>
+          <div class="flex items-center gap-2 shrink-0 pl-1">
+            <Checkbox
+              state={
+                visibleRules().every((r) => r.enabled)
+                  ? "on"
+                  : visibleRules().every((r) => !r.enabled)
+                  ? "off"
+                  : "mixed"
+              }
+              title={
+                visibleRules().every((r) => r.enabled)
+                  ? t()("rules.uncheck_all_title")
+                  : t()("rules.check_all_title")
+              }
+              onClick={() =>
+                void toggleAllVisible(!visibleRules().every((r) => r.enabled))
+              }
+            />
+            {/* Clickable, like a real <label>: a caption sitting next to a
+                checkbox is a click target whether or not we wire it up,
+                and one that ignores clicks just reads as broken. */}
+            <span
+              class="text-xs text-fg-muted cursor-pointer select-none"
+              onClick={() =>
+                void toggleAllVisible(!visibleRules().every((r) => r.enabled))
+              }
+            >
+              {t()("rules.select_all")}
+            </span>
+          </div>
+        </Show>
+      </div>
 
       <div class="overflow-auto p-4 space-y-4">
         <Show when={loadError()}>
@@ -720,12 +876,17 @@ const RulesView: Component = () => {
             </button>
           </div>
         </Show>
-        <For each={collections()}>
+        <For each={visibleCollections()}>
           {(c) => (
             <CollectionSection
               collection={c}
-              rules={rulesByCollection().get(c.id) ?? []}
-              collapsed={isCollapsed(c.id)}
+              rules={visibleRulesByCollection().get(c.id) ?? []}
+              // A filter forces every surviving section open: matches
+              // hidden behind a collapsed header are matches the user
+              // asked for and cannot see. Collapse state itself is left
+              // untouched, so clearing the filter restores it.
+              collapsed={filterActive() ? false : isCollapsed(c.id)}
+              dragDisabled={filterActive()}
               onToggleCollapsed={() => toggleSection(c.id)}
               onRename={() => startRename(c)}
               onDelete={() => deleteCollection(c)}
@@ -737,7 +898,9 @@ const RulesView: Component = () => {
               onReorderRule={reorderRule}
               onReorderCollection={reorderCollection}
               onToggleRule={toggleRule}
-              onToggleCollection={(en) => toggleCollection(c.id, rulesByCollection().get(c.id) ?? [], en)}
+              onToggleCollection={(en) =>
+                toggleSectionVisible(c.id, visibleRulesByCollection().get(c.id) ?? [], en)
+              }
               onDeleteRule={removeRule}
               editing={editing()}
               onSaved={onRuleSaved}
@@ -763,10 +926,12 @@ const RulesView: Component = () => {
           )}
         </For>
 
+        <Show when={ungroupedVisible()}>
         <CollectionSection
           collection={null}
-          rules={rulesByCollection().get(UNGROUPED_KEY) ?? []}
-          collapsed={isCollapsed(UNGROUPED_KEY)}
+          rules={visibleRulesByCollection().get(UNGROUPED_KEY) ?? []}
+          collapsed={filterActive() ? false : isCollapsed(UNGROUPED_KEY)}
+          dragDisabled={filterActive()}
           onToggleCollapsed={() => toggleSection(UNGROUPED_KEY)}
           onExportRule={exportRule}
           onAddRule={() => startNewRule(null)}
@@ -775,7 +940,13 @@ const RulesView: Component = () => {
           onReorderRule={reorderRule}
           onReorderCollection={reorderCollection}
           onToggleRule={toggleRule}
-          onToggleCollection={(en) => toggleCollection(null, rulesByCollection().get(UNGROUPED_KEY) ?? [], en)}
+          onToggleCollection={(en) =>
+            toggleSectionVisible(
+              null,
+              visibleRulesByCollection().get(UNGROUPED_KEY) ?? [],
+              en,
+            )
+          }
           onDeleteRule={removeRule}
           editing={editing()}
           onSaved={onRuleSaved}
@@ -798,10 +969,29 @@ const RulesView: Component = () => {
           onDragLeaveSection={onDragLeaveSection}
           onDropOnSection={(rid) => onDropOnSection(UNGROUPED_KEY, rid)}
         />
+        </Show>
 
         <Show when={!loading() && rules().length === 0 && collections().length === 0}>
           <div class="text-center text-fg-muted text-sm py-12">
             {t()("rules.empty_state")}
+          </div>
+        </Show>
+
+        {/* Distinct from the empty library above: the library HAS rules,
+            this query just matches none of them. Says so, and offers the
+            way out rather than leaving a blank pane. */}
+        <Show when={noFilterMatches()}>
+          <div class="text-center text-fg-muted text-sm py-12 space-y-2">
+            <div>{t()("rules.filter_no_matches", { query: rulesFilter().trim() })}</div>
+            <button
+              class="text-sm px-3 py-1.5 rounded border border-border hover:bg-bg-muted"
+              onClick={() => {
+                setRulesFilter("");
+                filterInput?.focus();
+              }}
+            >
+              {t()("rules.clear_filter")}
+            </button>
           </div>
         </Show>
       </div>
@@ -846,6 +1036,10 @@ const CollectionSection: Component<{
   collection: RuleCollectionDto | null;
   rules: RuleDto[];
   collapsed: boolean;
+  /** True while a filter is narrowing the list. Reordering is priority
+   *  renumbering over a whole section, so it is meaningless — and
+   *  destructive to the hidden rules' precedence — on a partial view. */
+  dragDisabled?: boolean;
   onToggleCollapsed: () => void;
   onRename?: () => void;
   onDelete?: () => void;
@@ -974,7 +1168,7 @@ const CollectionSection: Component<{
         ref={headerEl}
         class={`flex items-center gap-2 px-3 py-2 ${isBeingDragged() ? "opacity-40" : ""}`}
       >
-        <Show when={!isUngrouped()}>
+        <Show when={!isUngrouped() && !p.dragDisabled}>
           <div
             draggable={true}
             class="cursor-grab active:cursor-grabbing text-fg-muted hover:text-fg shrink-0"
@@ -1128,6 +1322,7 @@ const CollectionSection: Component<{
                 fallback={
                   <RuleRow
                     rule={rule}
+                    dragDisabled={p.dragDisabled}
                     isDragging={p.draggingRuleId === rule.id}
                     onToggle={() => p.onToggleRule(rule)}
                     onEdit={() => p.onEditRule(rule)}
@@ -1187,6 +1382,8 @@ const EditorErrorBoundary: Component<{ onClose: () => void; children: any }> = (
 
 const RuleRow: Component<{
   rule: RuleDto;
+  /** See CollectionSection.dragDisabled — off while a filter is active. */
+  dragDisabled?: boolean;
   isDragging: boolean;
   onToggle: () => void;
   onEdit: () => void;
@@ -1214,7 +1411,7 @@ const RuleRow: Component<{
   };
   return (
     <div
-      draggable={true}
+      draggable={!p.dragDisabled}
       onDragStart={(e) => {
         if (e.dataTransfer) {
           e.dataTransfer.effectAllowed = "move";

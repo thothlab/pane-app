@@ -88,6 +88,23 @@ export function setRulesEditing(next: RulesEditing): void {
   setRulesEditingRaw(next);
 }
 
+// ── Library filter ─────────────────────────────────────────────────
+//
+// Free-text narrowing of the rules list. Module-level like the two
+// above, so switching to Captures and back doesn't throw away what was
+// typed — but deliberately NOT persisted to localStorage.
+//
+// That asymmetry is the point. A hidden rule still fires: the engine
+// matches on the rule's own `enabled` flag and knows nothing about
+// what the UI is showing. A filter that survived a restart would mean
+// opening Pane to a library that looks half-empty, with no memory of
+// having filtered it — "my rules are gone" for the visible ones and
+// "why did this mock answer" for the hidden ones. Session-scoped, so
+// every launch starts by showing everything.
+const [rulesFilter, setRulesFilter] = createSignal("");
+
+export { rulesFilter, setRulesFilter };
+
 createEffect(() => {
   if (typeof localStorage === "undefined") return;
   try {
