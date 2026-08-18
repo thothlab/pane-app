@@ -296,6 +296,19 @@ const en = {
     check_all_title: "Enable every rule",
     uncheck_all_title: "Disable every rule",
     select_all: "Select all",
+    // Per-device planes. With a device picked, the checkboxes mean "live on
+    // THAT device" and write a per-device change, so the header has to say
+    // which plane is being edited — a mode you cannot see is a mode you edit
+    // by accident.
+    device_all: "All devices",
+    device_this_mac: "This Mac",
+    device_plane_title: "Choose which device this list is read and edited as",
+    device_banner:
+        "Showing what runs on {name}. Checkboxes change this device only; rules marked ALL run everywhere.",
+    device_ios_note: "iOS shares the host proxy port and cannot be scoped separately",
+    badge_scoped: "{count} dev",
+    badge_scoped_title:
+        "Pinned to {count} device(s). A device paired later will not get this rule — use Enable on the All devices plane to make it global again.",
     copy_suffix: " - copy",
     export_failed: "Export failed: {{message}}",
     import_invalid: "This file isn't a Pane rules export: {{message}}",

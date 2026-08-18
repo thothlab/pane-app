@@ -173,7 +173,12 @@ pub enum CapturesCmd {
 #[derive(Subcommand, Debug)]
 pub enum RulesCmd {
     /// List rules.
-    Ls,
+    Ls {
+        /// Report each rule's state as this device sees it, instead of the raw
+        /// flag. Name substring, serial or id.
+        #[arg(long)]
+        device: Option<String>,
+    },
     /// One rule.
     Get { selector: String },
     /// Enable rules: one by name substring or id, or a whole scope.
@@ -193,6 +198,10 @@ pub enum RulesCmd {
         /// Every rule that belongs to no collection.
         #[arg(long, conflicts_with_all = ["selector", "collection", "all"])]
         ungrouped: bool,
+        /// Make these rules live on ONE device only, leaving every other
+        /// device's scenario alone. Name substring, serial or id.
+        #[arg(long)]
+        device: Option<String>,
     },
     /// Disable rules: one by name substring or id, or a whole scope.
     Disable {
@@ -207,6 +216,10 @@ pub enum RulesCmd {
         /// Every rule that belongs to no collection.
         #[arg(long, conflicts_with_all = ["selector", "collection", "all"])]
         ungrouped: bool,
+        /// Switch these rules off for ONE device only, leaving every other
+        /// device's scenario alone. Name substring, serial or id.
+        #[arg(long)]
+        device: Option<String>,
     },
     /// Delete a rule.
     Rm {
@@ -239,6 +252,9 @@ pub enum RulesCmd {
         /// Create it switched off.
         #[arg(long)]
         disabled: bool,
+        /// Create it live on ONE device only. Name substring, serial or id.
+        #[arg(long)]
+        device: Option<String>,
     },
     /// Derive a rule from a real capture, reusing its matchers.
     FromCapture {
@@ -274,12 +290,29 @@ pub enum CollectionsCmd {
     ///
     /// A collection groups the rules for one scenario, so this switches the
     /// whole scenario in a single call instead of toggling each rule.
-    Enable { selector: String },
+    Enable {
+        selector: String,
+        /// Apply to ONE device only.
+        #[arg(long)]
+        device: Option<String>,
+    },
     /// Disable a collection by name substring or id.
-    Disable { selector: String },
+    Disable {
+        selector: String,
+        /// Apply to ONE device only.
+        #[arg(long)]
+        device: Option<String>,
+    },
     /// Disable every collection except this one — the usual way to move from
     /// one scenario to the next without leaving the previous rules live.
-    Only { selector: String },
+    Only {
+        selector: String,
+        /// Switch only THIS device to the scenario. Every other device keeps
+        /// what it was running, which is how two phones run two scenarios at
+        /// once.
+        #[arg(long)]
+        device: Option<String>,
+    },
     /// Delete a collection.
     ///
     /// Its rules survive by default and move to Ungrouped, which is what the

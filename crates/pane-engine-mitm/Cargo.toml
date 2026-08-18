@@ -34,3 +34,8 @@ sha2.workspace = true
 [dev-dependencies]
 tempfile = "3"
 rustls-pemfile.workspace = true
+# Rule fixtures for the device-scope e2e test: it builds real rules through
+# `Storage::upsert_rule` rather than hand-rolling INSERTs, so the test breaks
+# if the rule shape changes under it.
+pane-ipc.workspace = true
+base64.workspace = true

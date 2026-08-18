@@ -152,27 +152,27 @@ pub fn tools() -> Vec<Value> {
         tool("pane_captures_clear", "Delete every capture. Use between scenarios so assertions cannot match a previous run.", json!({}), vec![]),
         tool(
             "pane_collections_list",
-            "Rule collections and how many rules each holds. A collection groups the rules for one scenario, so listing these is usually the right first step before switching scenarios. Note: whether a rule fires depends on the rule's own enabled flag, not on the collection.",
+            "Rule collections and how many rules each holds. A collection groups the rules for one scenario, so listing these is usually the right first step before switching scenarios. Note: whether a rule fires depends on the rule's own enabled flag and its device scope — never on the collection, which is grouping and ordering only.",
             json!({}),
             vec![],
         ),
         tool(
             "pane_collection_set_enabled",
-            "Enable or disable every rule in a collection, by name substring or id. This ticks the rules themselves — there is no separate collection switch.",
-            json!({ "selector": { "type": "string" }, "enabled": { "type": "boolean" } }),
+            "Enable or disable every rule in a collection, by name substring or id. This ticks the rules themselves — there is no separate collection switch. Without `device` it applies everywhere; with `device` it changes only what that device sees.",
+            json!({ "selector": { "type": "string" }, "enabled": { "type": "boolean" }, "device": { "type": "string", "description": "Apply to ONE device only — name substring, serial or id. Omit to apply to every device. Other devices keep whatever scenario they were running, which is how several phones run different scenarios at once." } }),
             vec!["selector", "enabled"],
         ),
         tool(
             "pane_collection_only",
-            "Switch to exactly one scenario: disables every rule in the library, then enables the rules of this collection. The usual way to move between scenarios without leaving the previous one's rules live and shadowing it.",
-            json!({ "selector": { "type": "string" } }),
+            "Switch to exactly one scenario: disables every rule in the library, then enables the rules of this collection. The usual way to move between scenarios without leaving the previous one's rules live and shadowing it. With `device` it switches only that device and leaves every other device untouched — note that scoping to a device pins the affected rules to a named set, so a device paired afterwards will not inherit them; `pane_rules_set_enabled_bulk` with scope 'all' and no device undoes that.",
+            json!({ "selector": { "type": "string" }, "device": { "type": "string", "description": "Apply to ONE device only — name substring, serial or id. Omit to apply to every device. Other devices keep whatever scenario they were running, which is how several phones run different scenarios at once." } }),
             vec!["selector"],
         ),
-        tool("pane_rules_list", "All mock rules with their enabled state, matchers and response status. Use it to find the selector for pane_rule_set_enabled.", json!({}), vec![]),
+        tool("pane_rules_list", "All mock rules with their enabled state, matchers and response status. Use it to find the selector for pane_rule_set_enabled. Each rule also reports `enabled_scope` ('all' or 'set') and `devices` — with 'set', the rule is live only on the device ids listed there.", json!({}), vec![]),
         tool(
             "pane_rule_set_enabled",
-            "Enable or disable a rule by name substring or id. Lets one compact rule set cover many scenarios instead of encoding the variant into every request body.",
-            json!({ "selector": { "type": "string" }, "enabled": { "type": "boolean" } }),
+            "Enable or disable a rule by name substring or id. Lets one compact rule set cover many scenarios instead of encoding the variant into every request body. Pass `device` to change only what one device sees.",
+            json!({ "selector": { "type": "string" }, "enabled": { "type": "boolean" }, "device": { "type": "string", "description": "Apply to ONE device only — name substring, serial or id. Omit to apply to every device. Other devices keep whatever scenario they were running, which is how several phones run different scenarios at once." } }),
             vec!["selector", "enabled"],
         ),
         tool(
@@ -181,7 +181,8 @@ pub fn tools() -> Vec<Value> {
             json!({
                 "enabled": { "type": "boolean" },
                 "scope": { "type": "string", "enum": ["all", "collection", "ungrouped"] },
-                "collection": { "type": "string", "description": "Collection name substring or id. Required when scope is 'collection'." }
+                "collection": { "type": "string", "description": "Collection name substring or id. Required when scope is 'collection'." },
+                "device": { "type": "string", "description": "Apply to ONE device only — name substring, serial or id. Omit to apply to every device. Other devices keep whatever scenario they were running, which is how several phones run different scenarios at once." }
             }),
             vec!["enabled", "scope"],
         ),
@@ -200,11 +201,12 @@ pub fn tools() -> Vec<Value> {
                 "method": { "type": "string" },
                 "status": { "type": "integer" },
                 "body": { "type": "string" },
-                "name": { "type": "string" }
+                "name": { "type": "string" },
+                "device": { "type": "string", "description": "Apply to ONE device only — name substring, serial or id. Omit to apply to every device. Other devices keep whatever scenario they were running, which is how several phones run different scenarios at once." }
             }),
             vec!["host"],
         ),
-        tool("pane_devices_list", "Devices already paired with Pane, with their state and whether the CA is installed. Traffic only flows through Pane for devices listed here.", json!({}), vec![]),
+        tool("pane_devices_list", "Devices already paired with Pane, with their state and whether the CA is installed. Traffic only flows through Pane for devices listed here. The `device` argument on the rule tools takes any of these display names, serials or ids. iOS devices share the host proxy port and are not attributed individually, so a rule cannot be scoped to one — they only ever see rules scoped to all devices.", json!({}), vec![]),
         tool("pane_devices_attached", "Devices plugged in over USB right now that could be paired, whether or not Pane knows them yet. Run before pane_device_add to get the serial.", json!({}), vec![]),
         tool(
             "pane_device_add",
@@ -326,36 +328,52 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
                 .unwrap_or(true);
             let all = s.call("collections.list", Value::Null).await?;
             let id = pick_named(&all, selector, "collection")?;
+            let device = pick_device(&mut s, &args).await?;
             let v = s
                 .call(
                     "rules.set_enabled_bulk",
-                    json!({ "enabled": enabled, "scope": { "kind": "collection", "id": id } }),
+                    json!({
+                        "enabled": enabled,
+                        "scope": { "kind": "collection", "id": id },
+                        "device": device,
+                    }),
                 )
                 .await?;
             let matched = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
             Ok(format!(
-                "{} {matched} rule(s) in collection {id}",
-                if enabled { "enabled" } else { "disabled" }
+                "{} {matched} rule(s) in collection {id}{}{}",
+                if enabled { "enabled" } else { "disabled" },
+                device.as_deref().map(|d| format!(" for device {d}")).unwrap_or_default(),
+                materialized_note(&v)
             ))
         }
         "pane_collection_only" => {
             let selector = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
             let all = s.call("collections.list", Value::Null).await?;
             let id = pick_named(&all, selector, "collection")?;
-            s.call(
-                "rules.set_enabled_bulk",
-                json!({ "enabled": false, "scope": { "kind": "all" } }),
-            )
-            .await?;
+            let device = pick_device(&mut s, &args).await?;
+            let off = s
+                .call(
+                    "rules.set_enabled_bulk",
+                    json!({ "enabled": false, "scope": { "kind": "all" }, "device": device }),
+                )
+                .await?;
             let v = s
                 .call(
                     "rules.set_enabled_bulk",
-                    json!({ "enabled": true, "scope": { "kind": "collection", "id": id } }),
+                    json!({
+                        "enabled": true,
+                        "scope": { "kind": "collection", "id": id },
+                        "device": device,
+                    }),
                 )
                 .await?;
             let on = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
             Ok(format!(
-                "only collection {id} is live — {on} rule(s) enabled, everything else disabled"
+                "only collection {id} is live{} — {on} rule(s) enabled, everything else \
+                 disabled{}",
+                device.as_deref().map(|d| format!(" for device {d}")).unwrap_or_default(),
+                materialized_note(&off)
             ))
         }
         "pane_rules_list" => pretty(s.call("rules.list", Value::Null).await?),
@@ -367,11 +385,19 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
                 .unwrap_or(true);
             let rules = s.call("rules.list", Value::Null).await?;
             let id = pick_named(&rules, selector, "rule")?;
-            s.call("rules.set_enabled", json!({ "id": id, "enabled": enabled }))
-                .await?;
+            let device = pick_device(&mut s, &args).await?;
+            s.call(
+                "rules.set_enabled",
+                json!({ "id": id, "enabled": enabled, "device": device }),
+            )
+            .await?;
             Ok(format!(
-                "{} rule {id}",
-                if enabled { "enabled" } else { "disabled" }
+                "{} rule {id}{}",
+                if enabled { "enabled" } else { "disabled" },
+                device
+                    .as_deref()
+                    .map(|d| format!(" for device {d}"))
+                    .unwrap_or_default()
             ))
         }
         "pane_rules_set_enabled_bulk" => {
@@ -399,17 +425,23 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
                     ))
                 }
             };
+            let device = pick_device(&mut s, &args).await?;
             let v = s
                 .call(
                     "rules.set_enabled_bulk",
-                    json!({ "enabled": enabled, "scope": scope }),
+                    json!({ "enabled": enabled, "scope": scope, "device": device }),
                 )
                 .await?;
             let matched = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
             let changed = v.get("changed").and_then(|x| x.as_u64()).unwrap_or(0);
             Ok(format!(
-                "{} {changed} of {matched} rules",
-                if enabled { "enabled" } else { "disabled" }
+                "{} {changed} of {matched} rules{}{}",
+                if enabled { "enabled" } else { "disabled" },
+                device
+                    .as_deref()
+                    .map(|d| format!(" for device {d}"))
+                    .unwrap_or_default(),
+                materialized_note(&v)
             ))
         }
         "pane_collection_delete" => {
@@ -427,6 +459,10 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
                 use base64::Engine as _;
                 base64::engine::general_purpose::STANDARD.encode(b.as_bytes())
             });
+            // Scoped at creation rather than created-then-narrowed: narrowing a
+            // rule that is live everywhere expands the wildcard across the whole
+            // library, and a brand-new rule should not drag the rest into it.
+            let device = pick_device(&mut s, &args).await?;
             pretty(
                 s.call(
                     "rules.upsert",
@@ -445,6 +481,8 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
                         "res_body_base64": body_b64,
                         "res_body_mime": "application/json",
                         "res_delay_ms": 0,
+                        "enabled_scope": device.as_ref().map(|_| "set"),
+                        "devices": device.as_ref().map(|d| vec![d.clone()]),
                     }),
                 )
                 .await?,
@@ -538,6 +576,75 @@ async fn matching(s: &mut Session, filter: &Option<String>) -> Result<Vec<Value>
     Ok(v.as_array().cloned().unwrap_or_default())
 }
 
+/// Resolve an optional `device` argument to the scope id the engine will see.
+///
+/// Mirrors the CLI's `resolve_device`: matches display name or serial (the same
+/// two fields the captures `device:` filter takes), lets the `__host__` sentinel
+/// through, and refuses iOS — an iOS device shares the host proxy port, so a
+/// rule scoped to it would be accepted and then never fire.
+async fn pick_device(s: &mut Session, args: &Value) -> Result<Option<String>> {
+    let Some(selector) = args.get("device").and_then(|v| v.as_str()) else {
+        return Ok(None);
+    };
+    if selector.is_empty() {
+        return Ok(None);
+    }
+    if selector == pane_storage::SCOPE_HOST {
+        return Ok(Some(selector.to_string()));
+    }
+    let list = s.call("devices.list", Value::Null).await?;
+    let empty = vec![];
+    let sel = selector.to_lowercase();
+    let hits: Vec<&Value> = list
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter(|d| {
+            d["id"]
+                .as_str()
+                .map(|i| i.eq_ignore_ascii_case(selector) || i.to_lowercase().starts_with(&sel))
+                .unwrap_or(false)
+                || ["display_name", "serial"].iter().any(|f| {
+                    d[*f]
+                        .as_str()
+                        .map(|n| n.to_lowercase().contains(&sel))
+                        .unwrap_or(false)
+                })
+        })
+        .collect();
+    let hit = match hits.len() {
+        0 => anyhow::bail!("no device matches `{selector}`"),
+        1 => hits[0],
+        n => anyhow::bail!(
+            "`{selector}` matches {n} devices: {}. Use a longer substring or an id.",
+            hits.iter()
+                .filter_map(|d| d["display_name"].as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    if hit["platform"].as_str() == Some("ios") {
+        anyhow::bail!(
+            "`{selector}` is an iOS device: its traffic shares the host proxy port and is \
+             not attributed per device, so a rule cannot be scoped to it. Leave the rule \
+             global, or scope it to `__host__`."
+        );
+    }
+    Ok(Some(hit["id"].as_str().unwrap_or("").to_string()))
+}
+
+/// Say when rules stopped being on-for-every-device, so an agent that scoped a
+/// scenario knows a device paired later starts with none of it.
+fn materialized_note(v: &Value) -> String {
+    match v.get("materialized").and_then(|x| x.as_u64()).unwrap_or(0) {
+        0 => String::new(),
+        n => format!(
+            " ({n} rule(s) are now pinned to named devices; a device paired later will \
+             not get them — undo with scope 'all' and no device)"
+        ),
+    }
+}
+
 fn pick_named(rules: &Value, selector: &str, what: &str) -> Result<String> {
     let empty = vec![];
     let list = rules.as_array().unwrap_or(&empty);
@@ -617,5 +724,55 @@ mod tests {
         ]);
         assert!(pick_named(&rules, "orders", "rule").is_err());
         assert_eq!(pick_named(&rules, "orders-500", "rule").unwrap(), "1111");
+    }
+
+    /// Every tool that can change what a device sees has to offer the argument,
+    /// or an agent has no way to run two scenarios side by side.
+    #[test]
+    fn the_scenario_tools_all_take_a_device() {
+        let by_name: std::collections::HashMap<String, Value> = tools()
+            .into_iter()
+            .map(|t| (t["name"].as_str().unwrap_or("").to_string(), t))
+            .collect();
+        for name in [
+            "pane_rule_set_enabled",
+            "pane_rules_set_enabled_bulk",
+            "pane_collection_set_enabled",
+            "pane_collection_only",
+            "pane_rule_mock",
+        ] {
+            let t = by_name.get(name).unwrap_or_else(|| panic!("missing {name}"));
+            assert!(
+                t["inputSchema"]["properties"]["device"].is_object(),
+                "{name} must accept a device"
+            );
+            assert!(
+                !t["inputSchema"]["required"]
+                    .as_array()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .any(|r| r.as_str() == Some("device")),
+                "{name}: device must stay optional so the old calls keep working"
+            );
+        }
+    }
+
+    /// These descriptions used to say the enabled flag alone decides. It no
+    /// longer does — there is a device scope as well — and an agent that
+    /// believes the old sentence will conclude its mock is broken when it is
+    /// merely scoped elsewhere. The claim about the *collection* is still true
+    /// and must survive; this guards the pair.
+    #[test]
+    fn no_tool_still_claims_the_flag_alone_decides() {
+        for t in tools() {
+            let d = t["description"].as_str().unwrap_or("");
+            if d.contains("not on the collection") || d.contains("no separate collection switch") {
+                assert!(
+                    d.contains("device scope") || d.contains("device"),
+                    "{} repeats the pre-device claim without mentioning the device scope",
+                    t["name"]
+                );
+            }
+        }
     }
 }

@@ -35,6 +35,7 @@ import {
   matchesRuleFilter,
   parseFilterTerms,
 } from "@/lib/rules-filter";
+import { groupState, isLiveOn, isScoped, SCOPE_HOST } from "@/lib/rule-liveness";
 import {
   applyImport,
   buildCollectionExport,
@@ -51,6 +52,8 @@ import {
   setRulesEditing,
   rulesFilter,
   setRulesFilter,
+  rulesDevice,
+  setRulesDevice,
   type RulesEditing,
   ruleDraftKey,
   loadRuleDraft,
@@ -74,6 +77,7 @@ import type {
   RuleConditionDto,
   RuleConditionOp,
   RuleCollectionDto,
+  DeviceDto,
 } from "@/ipc/types";
 
 const UNGROUPED_KEY = "__ungrouped__";
@@ -134,6 +138,16 @@ type Editing = RulesEditing;
 const RulesView: Component = () => {
   const [rules, setRules] = createSignal<RuleDto[]>([]);
   const [collections, setCollections] = createSignal<RuleCollectionDto[]>([]);
+  // Paired devices, for the plane selector. iOS is listed but not selectable:
+  // its traffic shares the host proxy port and is never attributed to the
+  // device row, so a rule scoped to it would never fire.
+  const [devices, setDevices] = createSignal<DeviceDto[]>([]);
+  // `null` = the global plane, where a checkbox means "on everywhere".
+  const device = rulesDevice;
+  const deviceName = (id: string) =>
+    id === SCOPE_HOST
+      ? t()("rules.device_this_mac")
+      : (devices().find((d) => d.id === id)?.display_name ?? id.slice(0, 8));
   // `editing` and `collapsed` are hoisted into module-level signals
   // (stores/rules-ui) so they survive view remount across nav and
   // app restart. Local aliases keep the call-sites below unchanged.
@@ -169,9 +183,21 @@ const RulesView: Component = () => {
 
   const refresh = async () => {
     try {
-      const [r, c] = await Promise.all([api.rules.list(), api.collections.list()]);
+      const [r, c, d] = await Promise.all([
+        api.rules.list(),
+        api.collections.list(),
+        api.devices.list().catch(() => [] as DeviceDto[]),
+      ]);
       setRules(r);
       setCollections(c);
+      setDevices(d);
+      // A device unpaired while the view was open would leave every checkbox
+      // writing to a phone that is no longer there. Fall back to the global
+      // plane rather than silently doing nothing.
+      const sel = device();
+      if (sel && sel !== SCOPE_HOST && !d.some((x) => x.id === sel)) {
+        setRulesDevice(null);
+      }
       setLoadError(null);
     } catch (e) {
       // Keep the previous list on screen rather than blanking it, and show a
@@ -315,7 +341,7 @@ const RulesView: Component = () => {
   };
 
   const toggleRule = async (r: RuleDto) => {
-    await api.rules.setEnabled(r.id, !r.enabled);
+    await api.rules.setEnabled(r.id, !isLiveOn(r, device()), device());
     await refresh();
   };
 
@@ -337,20 +363,21 @@ const RulesView: Component = () => {
     list: RuleDto[],
     targetEnabled: boolean,
   ) => {
-    if (list.every((r) => r.enabled === targetEnabled)) return;
+    if (list.every((r) => isLiveOn(r, device()) === targetEnabled)) return;
     await api.rules.setEnabledBulk(
       targetEnabled,
       collectionId === null
         ? { kind: "ungrouped" }
         : { kind: "collection", id: collectionId },
+      device(),
     );
     await refresh();
   };
 
   // Tick or untick every rule in the library, in one call.
   const toggleAllRules = async (targetEnabled: boolean) => {
-    if (rules().every((r) => r.enabled === targetEnabled)) return;
-    await api.rules.setEnabledBulk(targetEnabled, { kind: "all" });
+    if (rules().every((r) => isLiveOn(r, device()) === targetEnabled)) return;
+    await api.rules.setEnabledBulk(targetEnabled, { kind: "all" }, device());
     await refresh();
   };
 
@@ -366,10 +393,10 @@ const RulesView: Component = () => {
   // Fanning out per rule is fine here: a filtered subset is small by
   // construction, which is the entire reason someone filtered.
   const setEnabledFor = async (list: RuleDto[], targetEnabled: boolean) => {
-    const changed = list.filter((r) => r.enabled !== targetEnabled);
+    const changed = list.filter((r) => isLiveOn(r, device()) !== targetEnabled);
     if (changed.length === 0) return;
     await Promise.all(
-      changed.map((r) => api.rules.setEnabled(r.id, targetEnabled)),
+      changed.map((r) => api.rules.setEnabled(r.id, targetEnabled, device())),
     );
     await refresh();
   };
@@ -424,6 +451,11 @@ const RulesView: Component = () => {
       collection_id: r.collection_id,
       name: `${r.name || "Unnamed rule"}${t()("rules.copy_suffix")}`,
       enabled: r.enabled,
+      // Carried explicitly: a new row has no scope to inherit, so leaving these
+      // out would make a copy of a rule pinned to one phone go live on all of
+      // them — a silent widening from a button that says "duplicate".
+      enabled_scope: r.enabled_scope,
+      devices: r.devices,
       priority: r.priority,
       mode: r.mode,
       patches: r.patches,
@@ -698,7 +730,17 @@ const RulesView: Component = () => {
   };
 
   return (
-    <div class="h-full grid grid-rows-[auto_auto_1fr]">
+    // The device banner is a row of its own when it is showing, so the row
+    // template has to grow with it — otherwise the list drops out of the `1fr`
+    // row and stops being the scrolling one. Both class strings are spelled out
+    // literally so Tailwind's scanner still finds them.
+    <div
+      class={`h-full grid ${
+        device() !== null
+          ? "grid-rows-[auto_auto_auto_1fr]"
+          : "grid-rows-[auto_auto_1fr]"
+      }`}
+    >
       <header class="border-b border-border bg-bg-subtle px-4 py-3 flex items-center gap-3">
         <Shuffle size={16} class="text-accent" />
         <div>
@@ -707,6 +749,36 @@ const RulesView: Component = () => {
             <HelpButton path="/rules/" title={t()("rules.help_title")} />
           </div>
         </div>
+
+        {/* Device plane. A native <select> is fine here, unlike the captures
+            device menu: that one had to stay in step with a free-text filter
+            string and desynced from it, while this is the only writer of the
+            signal it reads. Only shown when there is more than one plane to
+            choose between, so a one-phone desk sees exactly what it saw
+            before. */}
+        <Show when={devices().length > 0}>
+          <select
+            class="text-sm rounded px-2 py-1 border border-border bg-bg hover:bg-bg-muted"
+            title={t()("rules.device_plane_title")}
+            value={device() ?? ""}
+            onChange={(e) => setRulesDevice(e.currentTarget.value || null)}
+          >
+            <option value="">{t()("rules.device_all")}</option>
+            <option value={SCOPE_HOST}>{t()("rules.device_this_mac")}</option>
+            <For each={devices()}>
+              {(d) => (
+                <option
+                  value={d.id}
+                  disabled={d.platform === "ios"}
+                  title={d.platform === "ios" ? t()("rules.device_ios_note") : undefined}
+                >
+                  {d.display_name}
+                  {d.platform === "ios" ? ` — ${t()("rules.device_ios_note")}` : ""}
+                </option>
+              )}
+            </For>
+          </select>
+        </Show>
 
         <div class="ml-auto flex items-center gap-2">
           <button
@@ -741,6 +813,12 @@ const RulesView: Component = () => {
           inset by 16px (`px-4` / `p-4`), so the magnifier's left edge and
           the "Select all" right edge line up with the collection boxes'
           borders instead of hanging 4px outside them. */}
+      <Show when={device() !== null}>
+        <div class="px-4 py-1.5 text-xs bg-accent/10 border-b border-border text-fg-muted">
+          {tr("rules.device_banner", { name: deviceName(device()!) })}
+        </div>
+      </Show>
+
       <div class="flex items-center gap-2 px-4 py-2 border-b border-border bg-bg-subtle">
         <Search size={14} class="text-fg-muted shrink-0" />
         <div class="flex-1 relative flex items-center">
@@ -796,20 +874,14 @@ const RulesView: Component = () => {
         <Show when={visibleRules().length > 0}>
           <div class="flex items-center gap-2 shrink-0 pl-1">
             <Checkbox
-              state={
-                visibleRules().every((r) => r.enabled)
-                  ? "on"
-                  : visibleRules().every((r) => !r.enabled)
-                  ? "off"
-                  : "mixed"
-              }
+              state={groupState(visibleRules(), device())}
               title={
-                visibleRules().every((r) => r.enabled)
+                groupState(visibleRules(), device()) === "on"
                   ? t()("rules.uncheck_all_title")
                   : t()("rules.check_all_title")
               }
               onClick={() =>
-                void toggleAllVisible(!visibleRules().every((r) => r.enabled))
+                void toggleAllVisible(groupState(visibleRules(), device()) !== "on")
               }
             />
             {/* Clickable, like a real <label>: a caption sitting next to a
@@ -818,7 +890,7 @@ const RulesView: Component = () => {
             <span
               class="text-xs text-fg-muted cursor-pointer select-none"
               onClick={() =>
-                void toggleAllVisible(!visibleRules().every((r) => r.enabled))
+                void toggleAllVisible(groupState(visibleRules(), device()) !== "on")
               }
             >
               {t()("rules.select_all")}
@@ -1219,19 +1291,15 @@ const CollectionSection: Component<{
         */}
         <Show when={p.rules.length > 0}>
           <Checkbox
-            state={
-              p.rules.every((r) => r.enabled)
-                ? "on"
-                : p.rules.every((r) => !r.enabled)
-                ? "off"
-                : "mixed"
-            }
+            state={groupState(p.rules, rulesDevice())}
             title={
-              p.rules.every((r) => r.enabled)
+              groupState(p.rules, rulesDevice()) === "on"
                 ? t()("rules.disable")
                 : t()("rules.enable")
             }
-            onClick={() => p.onToggleCollection(!p.rules.every((r) => r.enabled))}
+            onClick={() =>
+              p.onToggleCollection(groupState(p.rules, rulesDevice()) !== "on")
+            }
           />
         </Show>
 
@@ -1394,7 +1462,11 @@ const RuleRow: Component<{
   onDragEnd: () => void;
   onReorder: (draggedId: string, position: "before" | "after") => void;
 }> = (p) => {
-  const effectivelyOn = () => p.rule.enabled;
+  // Reads the plane the user is looking at: globally when no device is
+  // selected, "live on THIS phone" when one is. Mirrors the engine's own
+  // predicate (see lib/rule-liveness) so the list cannot claim a rule is
+  // running where the proxy would not serve it.
+  const effectivelyOn = () => isLiveOn(p.rule, rulesDevice());
   // Which edge the dragged row would drop against, or null when nothing is
   // hovering this row. Drives the insertion indicator line.
   const [dropEdge, setDropEdge] = createSignal<"before" | "after" | null>(null);
@@ -1467,14 +1539,24 @@ const RuleRow: Component<{
       </Show>
       <div class="mt-0.5">
         <Checkbox
-          state={p.rule.enabled ? "on" : "off"}
-          title={p.rule.enabled ? t()("rules.disable") : t()("rules.enable")}
+          state={effectivelyOn() ? "on" : "off"}
+          title={effectivelyOn() ? t()("rules.disable") : t()("rules.enable")}
           onClick={p.onToggle}
         />
       </div>
       <div class="flex-1 min-w-0">
         <div class="flex items-baseline gap-2">
           <div class="font-medium text-sm truncate">{p.rule.name || t()("rules.unnamed_rule")}</div>
+          <Show when={isScoped(p.rule)}>
+            <span
+              class="shrink-0 text-[10px] uppercase tracking-wide px-1 py-px rounded border border-border text-fg-muted"
+              title={tr("rules.badge_scoped_title", {
+                count: p.rule.devices.length,
+              })}
+            >
+              {tr("rules.badge_scoped", { count: p.rule.devices.length })}
+            </span>
+          </Show>
         </div>
         <div class="text-xs font-mono text-fg-subtle truncate mt-0.5">{summary()}</div>
         <div class="text-xs text-fg-muted mt-0.5">
@@ -1964,7 +2046,7 @@ const RuleEditor: Component<{
     setD(next);
     saveRuleDraft(draftKey, next);
     try {
-      await api.rules.setEnabled(id, checked);
+      await api.rules.setEnabled(id, checked, rulesDevice());
       p.onLiveSync?.(id, checked);
     } catch (e: any) {
       setErr(e?.message ?? String(e));
@@ -1982,6 +2064,14 @@ const RuleEditor: Component<{
         collection_id: draft.collection_id,
         name: draft.name || "Unnamed rule",
         enabled: draft.enabled,
+        // Only ever set for a brand-new rule, and only while a device plane is
+        // selected: the banner above says changes affect that phone alone, and
+        // a rule created there going live on all four would contradict it. On
+        // an existing rule both stay undefined, which means "leave the scope
+        // alone" — otherwise editing a status code would unbind the rule from
+        // its device.
+        enabled_scope: draft.id ? undefined : rulesDevice() ? "set" : undefined,
+        devices: draft.id ? undefined : rulesDevice() ? [rulesDevice()!] : undefined,
         priority: draft.priority,
         mode: draft.mode,
         patches: draft.mode === "patch"

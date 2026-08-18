@@ -24,6 +24,20 @@ Not installed? `cargo build --release -p pane-cli && ./target/release/pane-cli i
     pane collections ls | only <sel>                    # switch a whole scenario at once
     pane collections rm <sel> --yes                     # rules survive, move to Ungrouped
 
+## Two devices, two scenarios, at once
+
+Add `--device <sel>` and the change applies to that device alone — every other
+device keeps running what it was running. That is what lets four phones run four
+scenarios in parallel instead of queueing behind one shared rule library.
+
+    pane devices ls                                     # names/serials to select on
+    pane rules disable --all --device pixel             # this phone's known state
+    pane collections only checkout --device pixel       # …then its scenario
+    pane collections only errors --device emulator-5554 # the other phone, meanwhile
+
+`<sel>` takes a device name substring, serial or id — the same string
+`--filter 'device:…'` takes. `__host__` scopes to this Mac's own traffic.
+
 ## Proving a response came from a mock
 
 `state` alone says *a* mock answered. With a large rule library that is much weaker
@@ -33,16 +47,32 @@ both sides:
     pane captures count --filter 'state:stubbed rule:orders-500'   # must be >= 1
     pane captures count --filter 'host:api.example.com state:completed'  # must be 0
 
+With scenarios split across devices, add `device:` to both — otherwise the other
+phone's traffic answers for this one:
+
+    pane captures count --filter 'device:pixel state:stubbed rule:checkout-ok'  # >= 1
+    pane captures count --filter 'device:pixel rule:orders-500'                 # must be 0
+
 ## Rules
 
-- A rule fires on its own `enabled` flag alone. There is no second switch on the
-  collection — a collection is grouping and ordering only, so a ticked rule is
-  always live and there is never a second place to look.
+- A rule fires on its own `enabled` flag and the devices that flag covers. By
+  default it covers every device, so the flag alone decides. There is still no
+  second switch on the collection — a collection is grouping and ordering only.
+- The device scope lives on the rule and shows in its row (`SCOPE` in
+  `pane rules ls`), so a rule that is ticked and not firing here says why on its
+  own face. That is the line the collection cascade could not hold, and the
+  reason this is a scope rather than another switch.
 - `collections enable|disable|only <sel>` therefore tick and untick the rules
   themselves. `only` = disable everything, then enable that collection.
 - The reliable way into a known state is `pane rules disable --all` followed by
   `pane rules enable --collection <sel>`, rather than trusting whatever the last
-  run left behind.
+  run left behind. Add `--device <sel>` to both for one device's state.
+- Switching a rule off for one device pins it to the devices it stays on for, so
+  a device paired *afterwards* will not get it. The command says so when it
+  happens; `pane rules enable --all` puts the library back to global.
+- Traffic Pane cannot attribute to a device — iOS, which shares the host proxy
+  port — only ever sees rules scoped to all devices. `--device <ios>` is refused
+  rather than silently doing nothing.
 - Bodies truncate to 8 KiB. For large payloads use `--out FILE`, not `--max-bytes 0`.
 - Every `<id>`/`<sel>` takes a unique prefix, or a rule/device name substring.
   Ambiguity is an error listing candidates — it never picks for you.

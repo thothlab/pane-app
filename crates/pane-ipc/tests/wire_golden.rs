@@ -304,6 +304,8 @@ fn rule_dto_shape() {
         id: uuid(),
         name: "orders-500".into(),
         enabled: true,
+        enabled_scope: "set".into(),
+        devices: vec!["c0ffee00-0000-4000-8000-000000000001".into()],
         priority: 0,
         collection_id: Some(uuid()),
         mode: "stub".into(),
@@ -340,7 +342,9 @@ fn rule_dto_shape() {
     assert_eq!(
         shape(&r),
         json!({
-            "id": "string", "name": "string", "enabled": "bool", "priority": "number",
+            "id": "string", "name": "string", "enabled": "bool",
+            "enabled_scope": "string", "devices": ["string"],
+            "priority": "number",
             "collection_id": "string",
             "mode": "string",
             "patches": [{"op": "string", "path": "string", "value": "number"}],

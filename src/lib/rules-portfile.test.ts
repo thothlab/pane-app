@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildRuleExport,
   FORMAT_ID,
   FORMAT_VERSION,
   looksLikeReadableDump,
@@ -7,6 +8,7 @@ import {
   readableDumpToPortFile,
   validatePortFile,
 } from "@/lib/rules-portfile";
+import type { RuleDto } from "@/ipc/types";
 
 // A rules file that came from a fork — same app, but its exporter
 // serialises the backend DTOs directly instead of building a port file.
@@ -243,5 +245,46 @@ describe("validatePortFile", () => {
         rules: [],
       }),
     ).toContain("unknown kind");
+  });
+});
+
+describe("device scoping is not part of a bundle", () => {
+  // A bundle is the rule library, not the per-device wiring: device ids are
+  // rows in one Mac's database, so carrying them would either dangle on the
+  // next machine or bind the rule to whatever device reused the id.
+  it("leaves a pinned rule's device ids behind", async () => {
+    const pinned = {
+      id: "r1",
+      name: "orders-500",
+      enabled: true,
+      enabled_scope: "set",
+      devices: ["11111111-2222-3333-4444-555555555555"],
+      priority: 0,
+      collection_id: null,
+      mode: "stub",
+      patches: [],
+      match_host_glob: "api.example.com",
+      match_method: null,
+      match_path_glob: null,
+      match_params: [],
+      match_req_body: null,
+      match_conditions: [],
+      res_status: 500,
+      res_headers: [],
+      res_body_id: null,
+      res_body_mime: null,
+      res_body_size: 0,
+      res_delay_ms: 0,
+      created_at: "0",
+      updated_at: "0",
+    } as unknown as RuleDto;
+
+    const file = await buildRuleExport(pinned);
+    const json = JSON.stringify(file);
+    expect(json).not.toContain("11111111");
+    expect(json).not.toContain("enabled_scope");
+    // The rule itself still travels — only its wiring to one desk is dropped.
+    expect(file.rules?.[0].name).toBe("orders-500");
+    expect(file.rules?.[0].enabled).toBe(true);
   });
 });

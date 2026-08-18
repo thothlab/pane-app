@@ -183,7 +183,17 @@ pub async fn handle(
             }
         };
 
-        return handle_tls_inner(tls_stream, host, port, cap_id, started_at, storage, events).await;
+        return handle_tls_inner(
+            tls_stream,
+            host,
+            port,
+            cap_id,
+            started_at,
+            storage,
+            events,
+            device_id.as_deref(),
+        )
+        .await;
     }
 
     // Plain HTTP: target is an absolute URL like http://host/path.
@@ -219,12 +229,16 @@ pub async fn handle(
     // Stub/patch hook: short-circuit on stub, remember rule on patch so we
     // can mutate the upstream response below.
     let mut patch_rule: Option<pane_storage::ActiveRule> = None;
-    if let Ok(rules) = storage.list_active_rules() {
+    if let Ok(rules) = storage.list_active_rules(device_id.as_deref()) {
         // Count only. Dumping every rule's id and name here produced ~83 KB
         // per line against a real rule library, on every single request — it
         // was most of a 3.9 GB log file and a steady 480 KB/s of disk writes.
         // Which rule actually matched is recorded on the capture itself.
-        tracing::debug!(count = rules.len(), "active rules loaded for HTTP request");
+        tracing::debug!(
+            count = rules.len(),
+            device = ?device_id,
+            "active rules loaded for HTTP request"
+        );
         let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
             host: &host,
@@ -238,6 +252,7 @@ pub async fn handle(
                 rule_id = %rule.id,
                 rule_name = %rule.name,
                 mode = ?rule.mode,
+                device = ?device_id,
                 host = %host,
                 method = %method,
                 path = %path,
@@ -403,6 +418,7 @@ async fn tunnel(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_tls_inner(
     tls_stream: tokio_rustls::server::TlsStream<TcpStream>,
     host: String,
@@ -411,6 +427,13 @@ async fn handle_tls_inner(
     started_at: OffsetDateTime,
     storage: Arc<Storage>,
     events: broadcast::Sender<EngineEvent>,
+    // Which device this tunnel belongs to, resolved from the local port back in
+    // `handle`. It has to travel down here: the outer CONNECT row is already
+    // stamped with it, and rule matching happens *inside* the TLS stream — so
+    // without this parameter every HTTPS request, which is nearly all real
+    // mobile traffic, would be matched against the unattributed rule set while
+    // the capture row claimed a device.
+    device_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let mut reader = BufReader::new(tls_stream);
 
@@ -446,9 +469,13 @@ async fn handle_tls_inner(
     // Stub/patch hook (TLS): on stub, short-circuit; on patch, remember and
     // fall through to upstream so we can mutate the response below.
     let mut patch_rule: Option<pane_storage::ActiveRule> = None;
-    if let Ok(rules) = storage.list_active_rules() {
+    if let Ok(rules) = storage.list_active_rules(device_id) {
         // See the HTTP path above: the per-rule dump is deliberately gone.
-        tracing::debug!(count = rules.len(), "active rules loaded for HTTPS request");
+        tracing::debug!(
+            count = rules.len(),
+            device = ?device_id,
+            "active rules loaded for HTTPS request"
+        );
         let content_type_lower = content_type_lower(&headers);
         let req = crate::rules::RequestSummary {
             host: &host,
@@ -462,6 +489,7 @@ async fn handle_tls_inner(
                 rule_id = %rule.id,
                 rule_name = %rule.name,
                 mode = ?rule.mode,
+                device = ?device_id,
                 host = %host,
                 method = %method,
                 path = %path,

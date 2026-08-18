@@ -99,6 +99,38 @@ A single click only flips the rules whose current state differs from the target 
 
 The **enabled** checkbox inside an open rule editor behaves the same way — for an already-saved rule the toggle commits immediately and instantly syncs the collapsed-row switch and the collection-header tri-state, without waiting for Save.
 
+## Per-device scenarios
+
+With more than one device paired, a device selector appears in the Rules header.
+It starts on **All devices**, where everything behaves exactly as before and a
+checkbox means "on everywhere".
+
+Pick a specific device and the list is read through its eyes: a checkbox means
+"live on this device" and changes only that one. The second phone keeps running
+its own scenario — which is what lets several runs go in parallel instead of
+queueing behind one shared rule library. While a device is selected a banner
+above the list names it: a mode you cannot see is a mode you edit by accident.
+
+A rule pinned to specific devices is marked in its own row with an `N dev` badge.
+That is deliberate. A cascading switch on the collection was tried and reverted
+because a rule could sit there ticked and silently not fire, with nothing on the
+rule to explain it. The scope lives on the rule and shows in its row, so "why
+didn't my mock fire" still has one place to look.
+
+Worth knowing:
+
+- Switching a rule off for one device writes out the devices it stays on for, so
+  a device paired later will not get it. Enabling it on the All devices plane
+  returns it to global.
+- Duplicating a rule carries its scope: a copy of a rule pinned to one phone does
+  not quietly spread to all of them.
+- iOS is listed but not selectable: its traffic goes through the shared proxy
+  port and is not attributed per device. Such devices only ever see rules enabled
+  for all devices.
+- The device selection does not survive a restart, just like the library filter.
+  Every launch starts on the global plane, so nobody edits the wrong phone from
+  the memory of a previous session.
+
 ## Drag to reorder
 
 Rule and collection order is also **match precedence**: the engine takes the first matching rule (by collection priority first, then rule priority). So you can reorder by dragging:

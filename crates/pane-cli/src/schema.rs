@@ -15,6 +15,11 @@ pub fn schema() -> Value {
             "Set PANE_FORMAT=json once per session for machine-readable output.",
             "Every <selector> accepts a full id, a unique id prefix, or a name substring.",
             "Nothing prompts; destructive commands require --yes.",
+            "A rule is live on a device when it is enabled AND its scope covers that \
+             device. The default scope is every device, so without --device the \
+             enabled flag alone decides. Traffic Pane cannot attribute to a device \
+             (iOS, and this Mac's own traffic unless captured) sees only rules scoped \
+             to all devices.",
         ],
         "exit_codes": {
             "0": "ok",
@@ -132,13 +137,22 @@ fn commands() -> Value {
             false
         ),
         cmd("captures clear", "Delete every capture", &["--yes"], false),
-        cmd("rules ls", "List rules", &[], false),
+        cmd("rules ls", "List rules", &["--device"], false),
         cmd("rules get", "One rule", &[], false),
-        cmd("rules enable", "Enable by name substring or id", &[], false),
+        // The scope flags have been missing here since they were added to the
+        // CLI. `pane schema` calls itself the authoritative contract and both
+        // skills tell agents to trust it over their own text, so an absent flag
+        // is a flag that does not exist as far as they are concerned.
+        cmd(
+            "rules enable",
+            "Enable by name substring or id, or a whole scope",
+            &["--all", "--collection", "--ungrouped", "--device"],
+            false
+        ),
         cmd(
             "rules disable",
-            "Disable by name substring or id",
-            &[],
+            "Disable by name substring or id, or a whole scope",
+            &["--all", "--collection", "--ungrouped", "--device"],
             false
         ),
         cmd("rules rm", "Delete a rule", &["--yes"], false),
@@ -155,7 +169,8 @@ fn commands() -> Value {
                 "--mime",
                 "--delay-ms",
                 "--name",
-                "--disabled"
+                "--disabled",
+                "--device"
             ],
             false
         ),
@@ -186,19 +201,19 @@ fn commands() -> Value {
         cmd(
             "collections enable",
             "Enable a whole collection by name substring or id",
-            &[],
+            &["--device"],
             false
         ),
         cmd(
             "collections disable",
             "Disable a whole collection",
-            &[],
+            &["--device"],
             false
         ),
         cmd(
             "collections only",
             "Enable exactly one collection, disable the rest — the way to switch scenarios",
-            &[],
+            &["--device"],
             false
         ),
         cmd("devices ls", "Paired devices", &[], false),
