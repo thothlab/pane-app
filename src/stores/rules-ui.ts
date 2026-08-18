@@ -105,6 +105,40 @@ const [rulesFilter, setRulesFilter] = createSignal("");
 
 export { rulesFilter, setRulesFilter };
 
+// ── Collapse state while filtering ────────────────────────────────
+//
+// A filter has to force its surviving sections open — a match hidden
+// behind a collapsed header is a match the user asked for and cannot
+// see. But driving that by rendering `collapsed = false` unconditionally
+// made the chevrons dead controls: the click flipped the persisted map
+// and the header re-rendered from the hardcoded `false`, so nothing
+// moved on screen.
+//
+// So a filter gets its own collapse map instead. Default (absent key) is
+// open, which keeps the "matches are visible" property, and a chevron
+// click lands here rather than in the persisted map — the user can fold
+// a section away mid-search without rewriting the collapse state they
+// will get back when the filter is cleared.
+//
+// Reset on every change of the query: the new query has its own matches,
+// and inheriting "collapsed" from the previous one would hide them.
+const [rulesFilterCollapsed, setRulesFilterCollapsedRaw] = createSignal<
+  Record<string, boolean>
+>({});
+
+export function setRulesFilterCollapsed(next: Record<string, boolean>): void {
+  setRulesFilterCollapsedRaw(next);
+}
+
+export { rulesFilterCollapsed };
+
+createEffect(() => {
+  // Reads the query only — writing the map it does NOT read keeps this a
+  // one-way effect instead of a feedback loop.
+  rulesFilter();
+  setRulesFilterCollapsedRaw({});
+});
+
 createEffect(() => {
   if (typeof localStorage === "undefined") return;
   try {

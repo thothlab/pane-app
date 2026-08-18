@@ -23,6 +23,8 @@ import {
   Minus,
   AlertTriangle,
   Search,
+  ChevronsDownUp,
+  ChevronsUpDown,
 } from "lucide-solid";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readClipboard } from "@/lib/clipboard";
@@ -51,6 +53,8 @@ import {
   setRulesEditing,
   rulesFilter,
   setRulesFilter,
+  rulesFilterCollapsed,
+  setRulesFilterCollapsed,
   type RulesEditing,
   ruleDraftKey,
   loadRuleDraft,
@@ -599,19 +603,64 @@ const RulesView: Component = () => {
     setEditing({ kind: "rule", collectionId: saved.collection_id, id: saved.id });
   };
 
-  const isCollapsed = (k: string) => collapsed()[k] === true;
-  const toggleSection = (k: string) => {
-    const next = { ...collapsed(), [k]: !collapsed()[k] };
-    const collapsing = !collapsed()[k];
+  // Which map answers "is this section collapsed" depends on whether a
+  // filter is on — see `rulesFilterCollapsed` for why the two are separate.
+  // Both readers and writers go through this pair so the choice is made in
+  // exactly one place.
+  const collapseMap = () => (filterActive() ? rulesFilterCollapsed() : collapsed());
+  // Resolved eagerly by the caller: the guarded path writes after the user
+  // answers the unsaved-changes prompt, and must land in the map that was
+  // authoritative when they clicked the chevron.
+  const collapseWriter = () =>
+    filterActive() ? setRulesFilterCollapsed : setCollapsed;
+
+  const isCollapsed = (k: string) => collapseMap()[k] === true;
+
+  // Collapsing a section that holds the open, dirty editor hides unsaved
+  // work — route those through the unsaved-changes prompt.
+  const collapseHidesDirtyEditor = (keys: string[]) => {
     const ed = editing();
-    if (collapsing && ed && ruleEditorDirty()) {
-      const inThisSection = k === (ed.collectionId ?? UNGROUPED_KEY);
-      if (inThisSection) {
-        guard(() => setCollapsed(next));
-        return;
-      }
+    if (!ed || !ruleEditorDirty()) return false;
+    return keys.includes(ed.collectionId ?? UNGROUPED_KEY);
+  };
+
+  const toggleSection = (k: string) => {
+    const collapsing = !isCollapsed(k);
+    const next = { ...collapseMap(), [k]: collapsing };
+    const write = collapseWriter();
+    if (collapsing && collapseHidesDirtyEditor([k])) {
+      guard(() => write(next));
+      return;
     }
-    setCollapsed(next);
+    write(next);
+  };
+
+  // Every section currently on screen, in render order. Drives the
+  // fold-everything button below.
+  const sectionKeys = createMemo(() => {
+    const keys = visibleCollections().map((c) => c.id);
+    if (ungroupedVisible()) keys.push(UNGROUPED_KEY);
+    return keys;
+  });
+
+  const allSectionsCollapsed = createMemo(
+    () => sectionKeys().length > 0 && sectionKeys().every(isCollapsed),
+  );
+
+  // One switch for the whole list: everything folded → unfold, otherwise
+  // fold. Same reading as the master checkbox on the filter row, and it
+  // acts on what is on screen for the same reason — with a filter on, the
+  // sections that are not rendered are not the user's current subject.
+  const toggleAllSections = () => {
+    const target = !allSectionsCollapsed();
+    const next = { ...collapseMap() };
+    for (const k of sectionKeys()) next[k] = target;
+    const write = collapseWriter();
+    if (target && collapseHidesDirtyEditor(sectionKeys())) {
+      guard(() => write(next));
+      return;
+    }
+    write(next);
   };
 
   // Drag handlers shared by every CollectionSection.
@@ -793,6 +842,30 @@ const RulesView: Component = () => {
           describe different sets (see setEnabledFor). With no filter on,
           "visible" and "the whole library" are the same thing.
         */}
+        {/* Fold/unfold every section on screen. Lives on the filter row, not
+            in the title bar, for the same reason the master checkbox does:
+            the filter picks the set, these two act on that set. */}
+        <Show when={sectionKeys().length > 0}>
+          <button
+            type="button"
+            class="shrink-0 text-fg-muted hover:text-fg p-1 rounded hover:bg-bg-muted"
+            title={
+              allSectionsCollapsed()
+                ? t()("rules.expand_all_title")
+                : t()("rules.collapse_all_title")
+            }
+            aria-label={
+              allSectionsCollapsed()
+                ? t()("rules.expand_all")
+                : t()("rules.collapse_all")
+            }
+            onClick={toggleAllSections}
+          >
+            <Show when={allSectionsCollapsed()} fallback={<ChevronsDownUp size={14} />}>
+              <ChevronsUpDown size={14} />
+            </Show>
+          </button>
+        </Show>
         <Show when={visibleRules().length > 0}>
           <div class="flex items-center gap-2 shrink-0 pl-1">
             <Checkbox
@@ -881,11 +954,10 @@ const RulesView: Component = () => {
             <CollectionSection
               collection={c}
               rules={visibleRulesByCollection().get(c.id) ?? []}
-              // A filter forces every surviving section open: matches
-              // hidden behind a collapsed header are matches the user
-              // asked for and cannot see. Collapse state itself is left
-              // untouched, so clearing the filter restores it.
-              collapsed={filterActive() ? false : isCollapsed(c.id)}
+              // While a filter is on this reads the filter's own collapse
+              // map, which starts empty (= everything open) and never
+              // touches the persisted one — see `rulesFilterCollapsed`.
+              collapsed={isCollapsed(c.id)}
               dragDisabled={filterActive()}
               onToggleCollapsed={() => toggleSection(c.id)}
               onRename={() => startRename(c)}
@@ -930,7 +1002,7 @@ const RulesView: Component = () => {
         <CollectionSection
           collection={null}
           rules={visibleRulesByCollection().get(UNGROUPED_KEY) ?? []}
-          collapsed={filterActive() ? false : isCollapsed(UNGROUPED_KEY)}
+          collapsed={isCollapsed(UNGROUPED_KEY)}
           dragDisabled={filterActive()}
           onToggleCollapsed={() => toggleSection(UNGROUPED_KEY)}
           onExportRule={exportRule}
