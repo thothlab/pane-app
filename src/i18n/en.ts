@@ -85,6 +85,8 @@ const en = {
     add_to_rules_title_n: "Add {{count}} to rules",
     add_to_rules_ungrouped: "Ungrouped",
     add_to_rules_new_collection: "New collection…",
+    add_to_rules_filter_placeholder: "Filter collections",
+    add_to_rules_filter_no_matches: "No collections match",
     add_to_rules_default_collection: "From captures",
     new_collection_title: "New collection",
     new_collection_name_label: "Collection name",

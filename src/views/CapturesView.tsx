@@ -33,6 +33,7 @@ import HelpButton from "@/components/HelpButton";
 import { writeClipboard } from "@/lib/clipboard";
 import { withTimeout } from "@/lib/async";
 import { uniqueRuleName } from "@/lib/rule-names";
+import { matchesCollectionName, parseFilterTerms } from "@/lib/rules-filter";
 import { t, tr } from "@/i18n";
 
 const FILTER_PALETTE = [
@@ -674,6 +675,17 @@ const CapturesView: Component = () => {
     { x: number; y: number; captureIds: string[] } | null
   >(null);
   const [addCollections, setAddCollections] = createSignal<RuleCollectionDto[]>([]);
+  // Narrows the collection list inside the menu. Same matcher as the Rules
+  // view's own filter (`lib/rules-filter`) so a query typed in one place
+  // means the same thing in the other. Reset on every open: a menu that
+  // remembered the last query would show a short list with no visible
+  // reason, which reads as "my collections are gone".
+  const [addFilter, setAddFilter] = createSignal("");
+  const visibleAddCollections = createMemo(() => {
+    const terms = parseFilterTerms(addFilter());
+    if (terms.length === 0) return addCollections();
+    return addCollections().filter((c) => matchesCollectionName(c.name, terms));
+  });
   const [busy, setBusy] = createSignal(false);
   const [addToast, setAddToast] = createSignal<string | null>(null);
   let addMenuRef: HTMLDivElement | undefined;
@@ -691,6 +703,7 @@ const CapturesView: Component = () => {
       ? selectedVisible().map((c) => c.id)
       : [captureId];
     clampPending = true;
+    setAddFilter("");
     setAddMenuPos({ x: e.clientX, y: e.clientY, captureIds });
     // Refresh collections on each open — cheap call, and the user
     // may have created/renamed collections in the Rules tab since
@@ -1207,7 +1220,19 @@ const CapturesView: Component = () => {
       }
     };
     document.addEventListener("mousedown", onDoc);
-    onCleanup(() => document.removeEventListener("mousedown", onDoc));
+    // Escape closes the Add-to-Rules menu. It always claimed to (see the
+    // popover's comment) but nothing implemented it — and now that the
+    // menu owns a focused text field, a keyboard way out is not optional.
+    // The field itself swallows the first Escape while it has a query to
+    // clear.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && addMenuPos()) closeAddMenu();
+    };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    });
   });
 
   const selected = createMemo(() => captures().find((c) => c.id === selectedId()) ?? null);
@@ -1978,12 +2003,47 @@ const CapturesView: Component = () => {
                 })
               : t()("captures.add_to_rules_title")}
           </div>
+          {/* Filter over the collection list. Focused on open, so a user
+              who knows the name types it instead of hunting the list —
+              the same move the Rules view's filter row supports. Shown
+              whenever there is a list at all rather than past some
+              threshold: a control that appears at an invisible row count
+              reads as a glitch, and it would make the menu's height
+              depend on the library size again. */}
+          <Show when={addCollections().length > 0}>
+            <div class="shrink-0 px-3 py-1 flex items-center gap-2 border-b border-border">
+              <Search size={12} class="text-fg-muted shrink-0" />
+              <input
+                ref={(el) => setTimeout(() => el?.focus(), 0)}
+                type="text"
+                class="w-full bg-transparent outline-none text-xs placeholder:text-fg-muted"
+                placeholder={t()("captures.add_to_rules_filter_placeholder")}
+                aria-label={t()("captures.add_to_rules_filter_placeholder")}
+                value={addFilter()}
+                onInput={(e) => setAddFilter(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  // Escape clears a non-empty query first and only closes the
+                  // menu on the second press — the usual two-step, and it
+                  // keeps the document-level handler as the single closer.
+                  if (e.key === "Escape" && addFilter()) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setAddFilter("");
+                  }
+                }}
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck={false}
+              />
+            </div>
+          </Show>
           {/* `min-h-0` is what lets this shrink inside the flex column —
               without it the outer max-height clips the list instead of
               handing it a scrollbar. */}
-          <Show when={addCollections().length > 0}>
+          <Show when={visibleAddCollections().length > 0}>
             <div class="overflow-y-auto min-h-0" style={{ "max-height": "40vh" }}>
-              <For each={addCollections()}>
+              <For each={visibleAddCollections()}>
                 {(c) => (
                   <button
                     type="button"
@@ -1996,6 +2056,15 @@ const CapturesView: Component = () => {
                   </button>
                 )}
               </For>
+            </div>
+          </Show>
+          {/* The library has collections, this query matches none of them.
+              Says so instead of leaving a gap that reads as "no
+              collections" — Ungrouped and New collection… below stay
+              available either way. */}
+          <Show when={addCollections().length > 0 && visibleAddCollections().length === 0}>
+            <div class="shrink-0 px-3 py-1.5 text-fg-muted italic">
+              {t()("captures.add_to_rules_filter_no_matches")}
             </div>
           </Show>
           <button
