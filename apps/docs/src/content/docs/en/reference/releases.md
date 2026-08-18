@@ -7,7 +7,10 @@ description: Cut a versioned Pane release via tags and the GitHub Actions matrix
 1. Cut a release branch: `git checkout -b release/v0.X.Y`.
 2. Bump versions in `Cargo.toml` (workspace), `package.json`, `src-tauri/tauri.conf.json`.
    All three must agree.
-3. Update `CHANGELOG.md` (to be added on first release).
+3. Update [`CHANGELOG.md`](https://github.com/thothlab/pane-app/blob/main/CHANGELOG.md).
+   That version's section is then copied by hand into the GitHub Release body
+   (`gh release edit v0.X.Y --notes-file …`), because the workflow fills in a
+   generic template.
 4. Open PR, wait for green CI on all three OSes.
 5. Merge into `main`, then tag: `git tag -a v0.X.Y -m "v0.X.Y"`.
 6. Push tag: `git push --tags`. This triggers `.github/workflows/release.yml`,
