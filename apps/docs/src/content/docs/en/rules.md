@@ -87,6 +87,22 @@ Two buttons sit next to the field label:
 
 The **Save** button turns red as soon as the user edits any field (name, host glob, method, status, headers, body, patches, …) and goes back to blue after a successful save. On a save error it stays red so you can see the work hasn't shipped. The flag is local to the current editor instance: rehydrating an in-progress draft from `localStorage` does NOT light Save red, because nothing was typed in this session yet.
 
+## Finding rules: filter, tags, folding
+
+Above the list sits a filter row. Case-insensitive substring; several words are ANDed. It searches the rule name, its collection's name, its tags, and the request the rule intercepts (method, host, path, query params). The response side (status, headers, body) is deliberately out — a short query would otherwise match huge JSON blobs. Escape clears.
+
+**Tags.** A rule and a collection can each carry any number of free-form labels. Rules are tagged in the editor (the **Tags** field under the name), collections from the tag button in their header; the × on a chip removes one. Under the input, the tags already in use across the library are offered as chips — so "smoke", "Smoke" and "smoke-test" don't accumulate as three different labels.
+
+- `tag:name` narrows the search to tags. Useful when the same word appears in names too: `smoke` also finds a rule called "smoke test", `tag:smoke` finds only the labelled ones.
+- Clicking any chip drops `tag:<name>` into the filter.
+- A tag is a single token: spaces and commas in the input separate tags. Otherwise a tag with a space could never be addressed by `tag:`.
+- Matching ignores case, and duplicates collapse.
+- **A collection's tags match its rules too.** Label a group, filter by that tag, and everything inside shows up.
+
+Tags carry no behaviour — the engine never reads them. A tag is never the reason a mock did or didn't fire; only the rule's own checkbox decides that.
+
+**Folding.** The chevron left of a collection name folds it; the button at the right of the filter row folds and unfolds every section at once. While a filter is active, folding is tracked separately: sections start open (otherwise a match would be hidden behind a folded header), you can still fold one by hand, and your usual layout comes back as soon as the filter is cleared.
+
 ## Checkbox toggles
 
 Each rule row has a small checkbox on the left (enabled/disabled, replacing the previous pill switch). The collection header has the same checkbox next to its chevron:
