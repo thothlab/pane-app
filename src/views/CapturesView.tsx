@@ -1918,10 +1918,19 @@ const CapturesView: Component = () => {
         </div>
       </div>
 
-      {/* Add-to-Rules popover. Positioned at the click coordinates;
-          clamped only by the viewport — content is short (~6 lines)
-          and right-clicks near the edge are rare. Outside-click and
-          Escape close it; menu items dispatch directly. */}
+      {/* Add-to-Rules popover. Positioned at the click coordinates and
+          clamped to the viewport by the effect above. Outside-click and
+          Escape close it; menu items dispatch directly.
+
+          Height is capped in two places. The collection list — the only
+          part that grows with the user's library — scrolls inside its own
+          box, so "New collection…" and "Ungrouped" stay on screen no
+          matter how many collections there are; that was the reported
+          bug. The outer `max-height` is the backstop for a short window
+          or a large font scale, and it is also what keeps the clamp
+          solvable: a menu taller than the viewport has no position that
+          fits, which is exactly the shape that used to spin (see the
+          clamp comment). */}
       <Show when={addMenuPos()}>
         <div
           // Cleared on unmount: Solid leaves a plain `ref` variable
@@ -1933,19 +1942,21 @@ const CapturesView: Component = () => {
             addMenuRef = el;
             onCleanup(() => (addMenuRef = undefined));
           }}
-          class="fixed z-50 bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs select-none"
+          class="fixed z-50 bg-bg-subtle border border-border rounded shadow-lg py-1 text-xs select-none flex flex-col"
           style={{
             left: `${addMenuPos()!.x}px`,
             top: `${addMenuPos()!.y}px`,
             "min-width": "220px",
             "max-width": "320px",
+            // 8px margin top and bottom — the same the clamp uses.
+            "max-height": "calc(100vh - 16px)",
           }}
           onMouseDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
           <button
             type="button"
-            class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
+            class="shrink-0 w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
             disabled={busy()}
             title={t()("captures.copy_dump_title")}
             onClick={() => void copyDump(addMenuPos()!.captureIds)}
@@ -1959,32 +1970,37 @@ const CapturesView: Component = () => {
                 : t()("captures.copy_dump")}
             </span>
           </button>
-          <div class="border-t border-border my-1" />
-          <div class="px-3 py-1 text-fg-muted uppercase tracking-wide text-[10px]">
+          <div class="shrink-0 border-t border-border my-1" />
+          <div class="shrink-0 px-3 py-1 text-fg-muted uppercase tracking-wide text-[10px]">
             {addMenuShowsCount()
               ? tr("captures.add_to_rules_title_n", {
                   count: String(addMenuTargetCount()),
                 })
               : t()("captures.add_to_rules_title")}
           </div>
+          {/* `min-h-0` is what lets this shrink inside the flex column —
+              without it the outer max-height clips the list instead of
+              handing it a scrollbar. */}
           <Show when={addCollections().length > 0}>
-            <For each={addCollections()}>
-              {(c) => (
-                <button
-                  type="button"
-                  class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
-                  disabled={busy()}
-                  onClick={() => void addToCollection(c.id)}
-                >
-                  <Shuffle size={12} class="text-accent shrink-0" />
-                  <span class="truncate flex-1">{c.name}</span>
-                </button>
-              )}
-            </For>
+            <div class="overflow-y-auto min-h-0" style={{ "max-height": "40vh" }}>
+              <For each={addCollections()}>
+                {(c) => (
+                  <button
+                    type="button"
+                    class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
+                    disabled={busy()}
+                    onClick={() => void addToCollection(c.id)}
+                  >
+                    <Shuffle size={12} class="text-accent shrink-0" />
+                    <span class="truncate flex-1">{c.name}</span>
+                  </button>
+                )}
+              </For>
+            </div>
           </Show>
           <button
             type="button"
-            class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
+            class="shrink-0 w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
             disabled={busy()}
             onClick={() => void addToCollection(null)}
           >
@@ -1993,10 +2009,10 @@ const CapturesView: Component = () => {
               {t()("captures.add_to_rules_ungrouped")}
             </span>
           </button>
-          <div class="border-t border-border my-1" />
+          <div class="shrink-0 border-t border-border my-1" />
           <button
             type="button"
-            class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
+            class="shrink-0 w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
             disabled={busy()}
             onClick={addToNewCollection}
           >
