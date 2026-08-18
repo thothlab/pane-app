@@ -392,30 +392,56 @@ const RulesView: Component = () => {
       ? setEnabledFor(list, targetEnabled)
       : toggleCollection(collectionId, list, targetEnabled);
 
+  // Every field of an existing rule as upsert args, so a partial edit (move,
+  // duplicate, rename) changes one thing and preserves the rest.
+  //
+  // `res_body_id` is carried over deliberately. The editor's own Save sends
+  // `res_body_id: null` because it always holds the body text and re-uploads
+  // it as base64; a partial edit has no such text, and storage reads
+  // (res_body_id: null, res_body_base64: null) as "this rule has no body" —
+  // which would silently drop the stub's response.
+  const upsertArgsFrom = (
+    r: RuleDto,
+    over: Partial<RuleUpsertArgs>,
+  ): RuleUpsertArgs => ({
+    id: r.id,
+    collection_id: r.collection_id,
+    name: r.name,
+    enabled: r.enabled,
+    priority: r.priority,
+    mode: r.mode,
+    patches: r.patches,
+    match_host_glob: r.match_host_glob,
+    match_method: r.match_method,
+    match_path_glob: r.match_path_glob,
+    match_params: r.match_params,
+    match_req_body: r.match_req_body,
+    match_conditions: r.match_conditions,
+    res_status: r.res_status,
+    res_headers: r.res_headers,
+    res_body_id: r.res_body_id,
+    res_body_base64: null,
+    res_body_mime: r.res_body_mime,
+    res_delay_ms: r.res_delay_ms,
+    ...over,
+  });
+
   const moveRule = async (r: RuleDto, collectionId: string | null) => {
     if (r.collection_id === collectionId) return;
-    await api.rules.upsert({
-      id: r.id,
-      collection_id: collectionId,
-      name: r.name,
-      enabled: r.enabled,
-      priority: r.priority,
-      mode: r.mode,
-      patches: r.patches,
-      match_host_glob: r.match_host_glob,
-      match_method: r.match_method,
-      match_path_glob: r.match_path_glob,
-      match_params: r.match_params,
-      match_req_body: r.match_req_body,
-      match_conditions: r.match_conditions,
-      res_status: r.res_status,
-      res_headers: r.res_headers,
-      res_body_id: r.res_body_id,
-      res_body_base64: null,
-      res_body_mime: r.res_body_mime,
-      res_delay_ms: r.res_delay_ms,
-    });
+    await api.rules.upsert(upsertArgsFrom(r, { collection_id: collectionId }));
     await refresh();
+  };
+
+  // Inline rename from the row (double-click on the name). Patched in place
+  // rather than refreshed for the same reason `onRuleSaved` is: a refresh
+  // replaces every rule object and would remount an editor open elsewhere.
+  const renameRule = async (r: RuleDto, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === r.name) return;
+    const saved = await api.rules.upsert(upsertArgsFrom(r, { name: trimmed }));
+    setRules((prev) =>
+      prev.map((x) => (x.id === saved.id ? Object.assign(x, saved) : x)),
+    );
   };
 
   // Clone a rule in place: same collection, same everything, name suffixed
@@ -424,26 +450,13 @@ const RulesView: Component = () => {
   // re-upload). Keeping the source priority lands the copy right next to
   // the original in the list.
   const duplicateRule = async (r: RuleDto) => {
-    await api.rules.upsert({
-      collection_id: r.collection_id,
-      name: `${r.name || "Unnamed rule"}${t()("rules.copy_suffix")}`,
-      enabled: r.enabled,
-      priority: r.priority,
-      mode: r.mode,
-      patches: r.patches,
-      match_host_glob: r.match_host_glob,
-      match_method: r.match_method,
-      match_path_glob: r.match_path_glob,
-      match_params: r.match_params,
-      match_req_body: r.match_req_body,
-      match_conditions: r.match_conditions,
-      res_status: r.res_status,
-      res_headers: r.res_headers,
-      res_body_id: r.res_body_id,
-      res_body_base64: null,
-      res_body_mime: r.res_body_mime,
-      res_delay_ms: r.res_delay_ms,
-    });
+    await api.rules.upsert(
+      upsertArgsFrom(r, {
+        // No id → a fresh row rather than an update of the source.
+        id: undefined,
+        name: `${r.name || "Unnamed rule"}${t()("rules.copy_suffix")}`,
+      }),
+    );
     await refresh();
   };
 
@@ -966,6 +979,7 @@ const RulesView: Component = () => {
               onExportRule={exportRule}
               onAddRule={() => startNewRule(c.id)}
               onEditRule={startEditRule}
+              onRenameRule={(r, name) => void renameRule(r, name)}
               onCopyRule={duplicateRule}
               onReorderRule={reorderRule}
               onReorderCollection={reorderCollection}
@@ -1008,6 +1022,7 @@ const RulesView: Component = () => {
           onExportRule={exportRule}
           onAddRule={() => startNewRule(null)}
           onEditRule={startEditRule}
+          onRenameRule={(r, name) => void renameRule(r, name)}
           onCopyRule={duplicateRule}
           onReorderRule={reorderRule}
           onReorderCollection={reorderCollection}
@@ -1117,6 +1132,7 @@ const CollectionSection: Component<{
   onDelete?: () => void;
   onAddRule: () => void;
   onEditRule: (r: RuleDto) => void;
+  onRenameRule: (r: RuleDto, name: string) => void;
   onCopyRule: (r: RuleDto) => void;
   onReorderRule: (draggedId: string, targetId: string, position: "before" | "after") => void;
   onReorderCollection: (draggedId: string, targetId: string, position: "before" | "after") => void;
@@ -1311,7 +1327,17 @@ const CollectionSection: Component<{
           when={isRenaming()}
           fallback={
             <>
-              <div class="font-medium text-sm">
+              {/* Double-click renames, same as the pencil. A name shown in a
+                  list is where people try to rename it first; the button
+                  stays for discoverability. Ungrouped is a pseudo-section
+                  with no row to rename. */}
+              <div
+                class={`font-medium text-sm ${isUngrouped() ? "" : "cursor-text"}`}
+                title={isUngrouped() ? undefined : t()("rules.rename_dblclick_title")}
+                onDblClick={() => {
+                  if (!isUngrouped()) p.onRename?.();
+                }}
+              >
                 {p.collection?.name ?? t()("rules.ungrouped")}
               </div>
               <div class="text-xs text-fg-muted">({p.rules.length})</div>
@@ -1398,6 +1424,7 @@ const CollectionSection: Component<{
                     isDragging={p.draggingRuleId === rule.id}
                     onToggle={() => p.onToggleRule(rule)}
                     onEdit={() => p.onEditRule(rule)}
+                    onRename={(name) => p.onRenameRule(rule, name)}
                     onCopy={() => p.onCopyRule(rule)}
                     onExport={() => p.onExportRule(rule)}
                     onDelete={() => p.onDeleteRule(rule)}
@@ -1459,6 +1486,7 @@ const RuleRow: Component<{
   isDragging: boolean;
   onToggle: () => void;
   onEdit: () => void;
+  onRename: (name: string) => void;
   onCopy: () => void;
   onExport: () => void;
   onDelete: () => void;
@@ -1470,6 +1498,22 @@ const RuleRow: Component<{
   // Which edge the dragged row would drop against, or null when nothing is
   // hovering this row. Drives the insertion indicator line.
   const [dropEdge, setDropEdge] = createSignal<"before" | "after" | null>(null);
+  // Inline rename, opened by double-clicking the name. Local to the row (only
+  // one can be open, and it should not survive the row being unmounted) —
+  // unlike the collection rename, which the parent owns because its pencil
+  // button lives in the same header.
+  const [renaming, setRenaming] = createSignal(false);
+  const [renameDraft, setRenameDraft] = createSignal("");
+  const startRename = () => {
+    setRenameDraft(p.rule.name);
+    setRenaming(true);
+  };
+  const confirmRename = () => {
+    if (!renaming()) return;
+    const next = renameDraft();
+    setRenaming(false);
+    p.onRename(next);
+  };
   const summary = () => {
     const r = p.rule;
     const m = r.match_method ?? "ANY";
@@ -1483,7 +1527,10 @@ const RuleRow: Component<{
   };
   return (
     <div
-      draggable={!p.dragDisabled}
+      // Drag off while renaming: in WKWebView a draggable ancestor swallows
+      // the text selection inside the input, so the field can be typed into
+      // but not selected with the mouse.
+      draggable={!p.dragDisabled && !renaming()}
       onDragStart={(e) => {
         if (e.dataTransfer) {
           e.dataTransfer.effectAllowed = "move";
@@ -1546,7 +1593,46 @@ const RuleRow: Component<{
       </div>
       <div class="flex-1 min-w-0">
         <div class="flex items-baseline gap-2">
-          <div class="font-medium text-sm truncate">{p.rule.name || t()("rules.unnamed_rule")}</div>
+          <Show
+            when={renaming()}
+            fallback={
+              <div
+                class="font-medium text-sm truncate cursor-text"
+                title={t()("rules.rename_dblclick_title")}
+                onDblClick={startRename}
+              >
+                {p.rule.name || t()("rules.unnamed_rule")}
+              </div>
+            }
+          >
+            <input {...NO_AC}
+              ref={(el) =>
+                setTimeout(() => {
+                  el?.focus();
+                  el?.select();
+                }, 0)
+              }
+              class="flex-1 min-w-0 bg-bg border border-border rounded px-2 py-0.5 text-sm"
+              value={renameDraft()}
+              onInput={(e) => setRenameDraft(e.currentTarget.value)}
+              // The row is a drag source and the buttons on its right are
+              // click targets; keep both from reacting to typing/clicking
+              // inside the field.
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  confirmRename();
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setRenaming(false);
+                }
+              }}
+              onBlur={confirmRename}
+            />
+          </Show>
         </div>
         <div class="text-xs font-mono text-fg-subtle truncate mt-0.5">{summary()}</div>
         <div class="text-xs text-fg-muted mt-0.5">

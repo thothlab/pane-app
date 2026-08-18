@@ -275,6 +275,7 @@ const ru: Dict = {
     clear_filter: "Очистить фильтр",
     clear_filter_title: "Очистить фильтр",
     rename: "Переименовать",
+    rename_dblclick_title: "Двойной клик - переименовать",
     delete: "Удалить",
     delete_title: "Удалить",
     delete_collection_title: "Удалить коллекцию",

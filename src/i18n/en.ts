@@ -278,6 +278,7 @@ const en = {
     clear_filter: "Clear filter",
     clear_filter_title: "Clear the filter",
     rename: "Rename",
+    rename_dblclick_title: "Double-click to rename",
     delete: "Delete",
     delete_title: "Delete",
     delete_collection_title: "Delete collection",
