@@ -2042,11 +2042,45 @@ const RuleEditor: Component<{
   // so wrote a no-edits snapshot to localStorage on first open. Next open
   // saw "had draft" and started the Save button red without anything to
   // actually save.
+  // Draft persistence is debounced. `saveRuleDraft` is a JSON.stringify of
+  // the whole draft plus a synchronous localStorage write, so its cost is
+  // O(response body) per keystroke — with a large JSON body loaded, that
+  // alone made typing in the name field visibly lag behind the keyboard.
+  // Coalescing to one write per quiet moment makes the cost independent of
+  // typing speed.
+  //
+  // The last keystrokes must not be lost, so the pending write is flushed
+  // on unmount; and it must not resurrect a draft the user just discarded,
+  // so the flush is conditional on the editor still being dirty (both
+  // `save` and the discard path clear that flag before the editor goes).
+  const DRAFT_DEBOUNCE_MS = 350;
+  let draftTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingDraft: DraftState | null = null;
+
+  const cancelDraftWrite = () => {
+    if (draftTimer !== undefined) clearTimeout(draftTimer);
+    draftTimer = undefined;
+    pendingDraft = null;
+  };
+
+  const flushDraftWrite = () => {
+    if (draftTimer !== undefined) clearTimeout(draftTimer);
+    draftTimer = undefined;
+    if (pendingDraft) saveRuleDraft(draftKey, pendingDraft);
+    pendingDraft = null;
+  };
+
+  const queueDraftWrite = (next: DraftState) => {
+    pendingDraft = next;
+    if (draftTimer !== undefined) clearTimeout(draftTimer);
+    draftTimer = setTimeout(flushDraftWrite, DRAFT_DEBOUNCE_MS);
+  };
+
   const patch = (q: Partial<DraftState>) => {
     const next = { ...d(), ...q };
     setD(next);
     setRuleEditorDirty(true);
-    saveRuleDraft(draftKey, next);
+    queueDraftWrite(next);
   };
 
   const existingBodyId = createMemo(() => p.initial?.res_body_id ?? null);
@@ -2087,6 +2121,7 @@ const RuleEditor: Component<{
     if (ruleEditorDirty()) {
       setRuleEditorPendingNav(() => p.onCancel);
     } else {
+      cancelDraftWrite();
       clearRuleDraft(draftKey);
       p.onCancel();
     }
@@ -2094,6 +2129,11 @@ const RuleEditor: Component<{
 
   onCleanup(() => {
     registerEditorSaveFn(null);
+    // Dirty ⇒ the user has unsaved keystrokes that the debounce may still
+    // be holding; write them. Not dirty ⇒ the draft was just saved or
+    // discarded, and writing would put it back.
+    if (ruleEditorDirty()) flushDraftWrite();
+    else cancelDraftWrite();
     // The editor is unmounting (closed, deleted, or the whole Rules view
     // navigated away). `ruleEditorDirty` / `ruleEditorPendingNav` are
     // module-level and otherwise survive this unmount — a dirty editor that
@@ -2120,7 +2160,7 @@ const RuleEditor: Component<{
     // persisted below, so the Save button shouldn't flag it as unsaved.
     const next = { ...d(), enabled: checked };
     setD(next);
-    saveRuleDraft(draftKey, next);
+    queueDraftWrite(next);
     try {
       await api.rules.setEnabled(id, checked);
       p.onLiveSync?.(id, checked);
@@ -2170,6 +2210,7 @@ const RuleEditor: Component<{
       const saved = await api.rules.upsert(args);
       // Saved state is authoritative now — drop the in-progress draft
       // so the editor doesn't reopen on the stale pre-save snapshot.
+      cancelDraftWrite();
       clearRuleDraft(draftKey);
       setRuleEditorDirty(false);
       await p.onSaved(saved);
