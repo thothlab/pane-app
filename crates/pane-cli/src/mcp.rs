@@ -343,7 +343,10 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
             Ok(format!(
                 "{} {matched} rule(s) in collection {id}{}{}",
                 if enabled { "enabled" } else { "disabled" },
-                device.as_deref().map(|d| format!(" for device {d}")).unwrap_or_default(),
+                device
+                    .as_deref()
+                    .map(|d| format!(" for device {d}"))
+                    .unwrap_or_default(),
                 materialized_note(&v)
             ))
         }
@@ -372,7 +375,10 @@ async fn call_tool(data_dir: &Path, params: &Value) -> Result<String> {
             Ok(format!(
                 "only collection {id} is live{} — {on} rule(s) enabled, everything else \
                  disabled{}",
-                device.as_deref().map(|d| format!(" for device {d}")).unwrap_or_default(),
+                device
+                    .as_deref()
+                    .map(|d| format!(" for device {d}"))
+                    .unwrap_or_default(),
                 materialized_note(&off)
             ))
         }
@@ -741,7 +747,9 @@ mod tests {
             "pane_collection_only",
             "pane_rule_mock",
         ] {
-            let t = by_name.get(name).unwrap_or_else(|| panic!("missing {name}"));
+            let t = by_name
+                .get(name)
+                .unwrap_or_else(|| panic!("missing {name}"));
             assert!(
                 t["inputSchema"]["properties"]["device"].is_object(),
                 "{name} must accept a device"

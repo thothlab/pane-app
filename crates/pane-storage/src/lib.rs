@@ -1003,9 +1003,8 @@ impl Storage {
             }
             None => {
                 let mut stmt = conn.prepare("SELECT rule_id, device_id FROM rule_device")?;
-                let rows = stmt.query_map([], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-                })?;
+                let rows =
+                    stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
                 for row in rows {
                     let (rule_id, device_id) = row?;
                     push(rule_id, device_id);
@@ -1041,8 +1040,8 @@ impl Storage {
     /// out — that traffic arrives as `__host__` or `__none__`, both of which are
     /// in the set.
     fn known_scope_ids(conn: &Connection) -> Result<Vec<String>> {
-        let mut stmt = conn
-            .prepare("SELECT id FROM device WHERE state <> 'removed' AND platform <> 'ios'")?;
+        let mut stmt =
+            conn.prepare("SELECT id FROM device WHERE state <> 'removed' AND platform <> 'ios'")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut ids = vec![
             crate::SCOPE_HOST.to_string(),
@@ -1384,8 +1383,9 @@ impl Storage {
                 "UPDATE rule SET enabled_scope='set', updated_at=?1 WHERE id=?2",
                 params![now, rule_id],
             )?;
-            let mut stmt = conn
-                .prepare("INSERT OR IGNORE INTO rule_device (rule_id, device_id) VALUES (?1, ?2)")?;
+            let mut stmt = conn.prepare(
+                "INSERT OR IGNORE INTO rule_device (rule_id, device_id) VALUES (?1, ?2)",
+            )?;
             for other in &others {
                 stmt.execute(params![rule_id, other])?;
             }
@@ -2026,7 +2026,12 @@ mod rule_enablement_tests {
         rule(&s, "orders-500", Some(errors));
 
         bulk(&s, false, RuleBulkScope::All, Some(&emu));
-        bulk(&s, true, RuleBulkScope::Collection { id: errors }, Some(&emu));
+        bulk(
+            &s,
+            true,
+            RuleBulkScope::Collection { id: errors },
+            Some(&emu),
+        );
         bulk(&s, false, RuleBulkScope::All, Some(&pixel));
         bulk(
             &s,
@@ -2075,7 +2080,10 @@ mod rule_enablement_tests {
         // Only one device exists, so switching it off there leaves nothing —
         // except the two sentinels, which still count as somewhere.
         bulk(&s, false, RuleBulkScope::All, Some(&pixel));
-        assert!(s.get_rule(id).unwrap().enabled, "still on for host/unattributed");
+        assert!(
+            s.get_rule(id).unwrap().enabled,
+            "still on for host/unattributed"
+        );
 
         bulk(&s, false, RuleBulkScope::All, Some(SCOPE_HOST));
         bulk(&s, false, RuleBulkScope::All, Some(SCOPE_UNATTRIBUTED));

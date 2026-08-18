@@ -285,9 +285,7 @@ async fn https_rules_are_scoped_to_the_device_the_connection_came_from() {
             res_status: 503,
             res_headers: vec![],
             res_body_id: None,
-            res_body_base64: Some(
-                base64_encode(STUB_BODY),
-            ),
+            res_body_base64: Some(base64_encode(STUB_BODY)),
             res_body_mime: Some("text/plain".into()),
             res_delay_ms: 0,
         })
@@ -383,7 +381,9 @@ async fn https_get_through(
     let mut buf = [0u8; 1024];
     let n = sock.read(&mut buf).await.unwrap();
     assert!(
-        std::str::from_utf8(&buf[..n]).unwrap().starts_with("HTTP/1.1 200"),
+        std::str::from_utf8(&buf[..n])
+            .unwrap()
+            .starts_with("HTTP/1.1 200"),
         "CONNECT failed through {proxy}"
     );
 
