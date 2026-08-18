@@ -325,6 +325,7 @@ fn rule_dto_shape() {
             op: "gte".into(),
             value: "1000".into(),
         }],
+        tags: vec!["smoke".into()],
         res_status: 500,
         res_headers: vec![RuleHeaderDto {
             name: "content-type".into(),
@@ -348,6 +349,7 @@ fn rule_dto_shape() {
             "match_params": [{"name": "string", "value": "string"}],
             "match_req_body": "string",
             "match_conditions": [{"path": "string", "op": "string", "value": "string"}],
+            "tags": ["string"],
             "res_status": "number",
             "res_headers": [{"name": "string", "value": "string"}],
             "res_body_id": "string", "res_body_mime": "string", "res_body_size": "number",
@@ -364,6 +366,7 @@ fn rule_collection_dto_shape() {
         name: "payments".into(),
         enabled: true,
         priority: 0,
+        tags: vec!["payments".into()],
         rule_count: 3,
         created_at: "2026-08-05T12:00:00Z".into(),
         updated_at: "2026-08-05T12:00:00Z".into(),
@@ -372,6 +375,7 @@ fn rule_collection_dto_shape() {
         shape(&c),
         json!({
             "id": "string", "name": "string", "enabled": "bool", "priority": "number",
+            "tags": ["string"],
             "rule_count": "number", "created_at": "string", "updated_at": "string",
         })
     );

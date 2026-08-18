@@ -51,6 +51,9 @@ pub async fn import(s: &mut Session, file: &Path, dry_run: bool, format: Format)
                     "name": c["name"],
                     "enabled": c["enabled"].as_bool().unwrap_or(true),
                     "priority": c["priority"].as_i64().unwrap_or(0),
+                    // Absent in files written before tags existed — an empty
+                    // list is the same thing as untagged, so no versioning.
+                    "tags": c["tags"].as_array().cloned().unwrap_or_default(),
                 }),
             )
             .await?;
@@ -83,6 +86,7 @@ pub async fn import(s: &mut Session, file: &Path, dry_run: bool, format: Format)
                 "match_params": r["match_params"].as_array().cloned().unwrap_or_default(),
                 "match_req_body": r["match_req_body"],
                 "match_conditions": r["match_conditions"].as_array().cloned().unwrap_or_default(),
+                "tags": r["tags"].as_array().cloned().unwrap_or_default(),
                 "res_status": r["res_status"].as_u64().unwrap_or(200),
                 "res_headers": r["res_headers"].as_array().cloned().unwrap_or_default(),
                 "res_body_id": null,
@@ -136,6 +140,7 @@ pub async fn export(s: &mut Session, out: Option<&Path>) -> Result<i32> {
             "match_params": r["match_params"],
             "match_req_body": r["match_req_body"],
             "match_conditions": r["match_conditions"],
+            "tags": r["tags"],
             "res_status": r["res_status"],
             "res_headers": r["res_headers"],
             "res_body_mime": r["res_body_mime"],
@@ -154,6 +159,7 @@ pub async fn export(s: &mut Session, out: Option<&Path>) -> Result<i32> {
             .map(|c| json!({
                 "ref": c["id"], "name": c["name"],
                 "enabled": c["enabled"], "priority": c["priority"],
+                "tags": c["tags"],
             }))
             .collect::<Vec<_>>(),
         "rules": exported_rules,

@@ -204,6 +204,49 @@ describe("readableDumpToPortFile", () => {
   });
 });
 
+describe("tags", () => {
+  it("carries rule and collection tags through a readable dump", () => {
+    const dump = {
+      collections: [
+        {
+          name: "Checkout",
+          enabled: true,
+          tags: ["scenario"],
+          rules: [
+            {
+              name: "r",
+              enabled: true,
+              tags: ["smoke", "ios"],
+              match: { path: "/x" },
+              response: { status: 200 },
+            },
+          ],
+        },
+      ],
+    };
+    const file = readableDumpToPortFile(dump) as Exclude<
+      ReturnType<typeof readableDumpToPortFile>,
+      string
+    >;
+    expect(file.collections?.[0].tags).toEqual(["scenario"]);
+    expect(file.rules[0].tags).toEqual(["smoke", "ios"]);
+  });
+
+  it("treats a file without tags as untagged rather than failing", () => {
+    const dump = {
+      collections: [
+        { name: "C", enabled: true, rules: [{ name: "r", match: { path: "/x" } }] },
+      ],
+    };
+    const file = readableDumpToPortFile(dump) as Exclude<
+      ReturnType<typeof readableDumpToPortFile>,
+      string
+    >;
+    expect(file.collections?.[0].tags).toEqual([]);
+    expect(file.rules[0].tags).toEqual([]);
+  });
+});
+
 describe("looksLikeReadableDump", () => {
   it("never claims a port file", () => {
     expect(

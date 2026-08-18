@@ -1,0 +1,21 @@
+-- Schema v15: free-form tags on rules and on collections.
+--
+-- `tags` holds a JSON array of strings ("smoke", "регресс", "ios"). NULL and
+-- `[]` both mean "untagged"; the writer normalises to NULL so there is one
+-- canonical empty state, the same convention match_conditions (V007) uses.
+--
+-- A column of JSON rather than a tag table with a join: the whole point of a
+-- tag here is that it travels with the row it labels — through the rules
+-- library UI, through export/import port files, through `rules ls --format
+-- json`. A join table would need its own migration path in every one of
+-- those, and buys nothing for a list that is a handful of short strings per
+-- rule and is always read whole with its owner.
+--
+-- Tags carry no behaviour: the engine never reads them, so a tag can never
+-- be the reason a mock did or did not fire. They are a way to find a rule
+-- (filter `tag:smoke`) and to say what a rule is for, nothing else.
+--
+-- Additive + nullable, so every row written before this migration stays
+-- valid and reads back as untagged.
+ALTER TABLE rule ADD COLUMN tags TEXT;
+ALTER TABLE rule_collection ADD COLUMN tags TEXT;

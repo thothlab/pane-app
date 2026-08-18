@@ -25,6 +25,7 @@ import {
   Search,
   ChevronsDownUp,
   ChevronsUpDown,
+  Tag as TagIcon,
 } from "lucide-solid";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readClipboard } from "@/lib/clipboard";
@@ -33,10 +34,12 @@ import HelpButton from "@/components/HelpButton";
 import JsonEditor from "@/components/JsonEditor";
 import { t, tr } from "@/i18n";
 import {
-  matchesCollectionName,
+  matchesCollection,
   matchesRuleFilter,
   parseFilterTerms,
+  type CollectionContext,
 } from "@/lib/rules-filter";
+import { TagChips, TagEditor } from "@/components/Tags";
 import {
   applyImport,
   buildCollectionExport,
@@ -159,6 +162,17 @@ const RulesView: Component = () => {
   >(null);
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [renamingName, setRenamingName] = createSignal("");
+  // Id of the collection whose tag editor is open, or null — one at a time,
+  // like renaming — plus the tags being edited.
+  //
+  // The editor works on a DRAFT and saves once, on close. Saving per chip
+  // would mean a refresh per chip, and a refresh replaces the collection
+  // objects, which recreates the section and with it the tag input the user
+  // is typing into: focus lost after every Enter. The draft also keeps the
+  // header honest — it shows what is saved, the editor shows what is being
+  // edited.
+  const [taggingId, setTaggingId] = createSignal<string | null>(null);
+  const [taggingDraft, setTaggingDraft] = createSignal<string[]>([]);
   let filterInput: HTMLInputElement | undefined;
 
   // Drag state. `dragOverKey` highlights the section currently under the
@@ -211,13 +225,17 @@ const RulesView: Component = () => {
   const filterTerms = createMemo(() => parseFilterTerms(rulesFilter()));
   const filterActive = createMemo(() => filterTerms().length > 0);
 
-  const collectionNameOf = (id: string | null): string =>
-    id === null
-      ? t()("rules.ungrouped")
-      : collections().find((c) => c.id === id)?.name ?? "";
+  // What the filter knows about a rule's group: its name and its tags. An
+  // ungrouped rule gets the localized "Ungrouped" label and no tags, so it
+  // behaves like a group that simply carries none.
+  const collectionContextOf = (id: string | null): CollectionContext => {
+    if (id === null) return { name: t()("rules.ungrouped") };
+    const c = collections().find((x) => x.id === id);
+    return { name: c?.name ?? "", tags: c?.tags };
+  };
 
   const matchesFilter = (r: RuleDto): boolean =>
-    matchesRuleFilter(r, collectionNameOf(r.collection_id), filterTerms());
+    matchesRuleFilter(r, collectionContextOf(r.collection_id), filterTerms());
 
   // Rendering-only view. `rulesByCollection` above stays UNFILTERED on
   // purpose: reorderRule renumbers a section to a dense 0..N-1 from it,
@@ -246,7 +264,7 @@ const RulesView: Component = () => {
     return collections().filter(
       (c) =>
         (visibleRulesByCollection().get(c.id) ?? []).length > 0 ||
-        matchesCollectionName(c.name, filterTerms()),
+        matchesCollection(c, filterTerms()),
     );
   });
 
@@ -259,6 +277,60 @@ const RulesView: Component = () => {
   const noFilterMatches = createMemo(
     () => filterActive() && visibleRules().length === 0 && visibleCollections().length === 0,
   );
+
+  // Every label in use anywhere, first-seen spelling wins. Feeds the
+  // suggestion chips in both tag editors: free text drifts into "smoke",
+  // "Smoke" and "smoke-test" living side by side, and then no single query
+  // finds them all. Offering what already exists is the cheap fix.
+  const allTags = createMemo(() => {
+    const seen = new Map<string, string>();
+    for (const src of [...collections(), ...rules()]) {
+      for (const tag of src.tags) {
+        const key = tag.toLowerCase();
+        if (!seen.has(key)) seen.set(key, tag);
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  });
+
+  // Clicking a chip anywhere means "show me everything with this label".
+  // Tags are single tokens by construction (see components/Tags), so this
+  // always produces an addressable query.
+  const filterByTag = (tag: string) => setRulesFilter(`tag:${tag}`);
+
+  const sameTags = (a: string[], b: string[]) =>
+    a.length === b.length && a.every((tag, i) => tag === b[i]);
+
+  /** Close the open tag editor, writing the draft only if it changed. */
+  const closeTagging = async () => {
+    const id = taggingId();
+    if (!id) return;
+    const c = collections().find((x) => x.id === id);
+    const next = taggingDraft();
+    setTaggingId(null);
+    if (!c || sameTags(c.tags, next)) return;
+    await api.collections.upsert({
+      id: c.id,
+      name: c.name,
+      enabled: c.enabled,
+      priority: c.priority,
+      tags: next,
+    });
+    await refresh();
+  };
+
+  const toggleTagging = (c: RuleCollectionDto) => {
+    if (taggingId() === c.id) {
+      void closeTagging();
+      return;
+    }
+    // Opening another collection's editor commits the one already open;
+    // nothing is silently thrown away.
+    void closeTagging().then(() => {
+      setTaggingDraft(c.tags.slice());
+      setTaggingId(c.id);
+    });
+  };
 
   const openCreateForm = (cb?: (id: string) => void) => {
     setCreatingCallback(() => cb ?? null);
@@ -306,6 +378,7 @@ const RulesView: Component = () => {
         name,
         enabled: c.enabled,
         priority: c.priority,
+        tags: c.tags,
       });
       await refresh();
     }
@@ -417,6 +490,9 @@ const RulesView: Component = () => {
     match_params: r.match_params,
     match_req_body: r.match_req_body,
     match_conditions: r.match_conditions,
+    // Same trap as res_body_id below: the upsert rewrites the row, so a
+    // partial edit that forgets the tags silently unlabels the rule.
+    tags: r.tags,
     res_status: r.res_status,
     res_headers: r.res_headers,
     res_body_id: r.res_body_id,
@@ -993,6 +1069,12 @@ const RulesView: Component = () => {
               onCancel={cancelEdit}
               onLiveSync={syncRuleEnabled}
                   onStartRename={startRename}
+              allTags={allTags()}
+              tagging={taggingId() === c.id}
+              tagDraft={taggingDraft()}
+              onToggleTagging={() => toggleTagging(c)}
+              onTagDraftChange={setTaggingDraft}
+              onPickTag={filterByTag}
               renamingId={renamingId()}
               renamingName={renamingName()}
               onRenamingNameChange={setRenamingName}
@@ -1040,6 +1122,12 @@ const RulesView: Component = () => {
           onCancel={cancelEdit}
           onLiveSync={syncRuleEnabled}
           onStartRename={startRename}
+          allTags={allTags()}
+          tagging={false}
+          tagDraft={[]}
+          onToggleTagging={() => {}}
+          onTagDraftChange={() => {}}
+          onPickTag={filterByTag}
           renamingId={renamingId()}
           renamingName={renamingName()}
           onRenamingNameChange={setRenamingName}
@@ -1144,6 +1232,14 @@ const CollectionSection: Component<{
   onCancel: () => void;
   onLiveSync: (id: string, enabled: boolean) => void;
   onStartRename: (c: RuleCollectionDto) => void;
+  /** Tags in use across the library — suggestion chips in the editor. */
+  allTags: string[];
+  tagging: boolean;
+  /** The draft the open editor is working on; ignored when `tagging` is false. */
+  tagDraft: string[];
+  onToggleTagging: () => void;
+  onTagDraftChange: (tags: string[]) => void;
+  onPickTag: (tag: string) => void;
   onExportCollection?: () => void;
   onExportRule: (r: RuleDto) => void;
   renamingId: string | null;
@@ -1341,6 +1437,9 @@ const CollectionSection: Component<{
                 {p.collection?.name ?? t()("rules.ungrouped")}
               </div>
               <div class="text-xs text-fg-muted">({p.rules.length})</div>
+              <Show when={p.collection && !p.tagging ? p.collection : null}>
+                {(c) => <TagChips tags={c().tags} onPick={p.onPickTag} />}
+              </Show>
             </>
           }
         >
@@ -1369,6 +1468,15 @@ const CollectionSection: Component<{
           </button>
           <Show when={!isUngrouped()}>
             <button
+              class={`text-xs p-1 rounded hover:bg-bg-muted ${
+                p.tagging ? "text-accent bg-bg-muted" : "text-fg-muted"
+              }`}
+              title={t()("rules.tag_collection_title")}
+              onClick={() => p.onToggleTagging()}
+            >
+              <TagIcon size={12} />
+            </button>
+            <button
               class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted"
               title={t()("rules.export_collection_title")}
               onClick={p.onExportCollection}
@@ -1393,6 +1501,25 @@ const CollectionSection: Component<{
         </div>
       </header>
 
+      {/* Sits outside the collapsed check on purpose: the button that opens
+          it lives in the header, and a control that answers by changing
+          something hidden reads as broken. */}
+      <Show when={p.tagging}>
+        <div class="px-3 pb-2 flex items-start gap-2">
+          <TagEditor
+            tags={p.tagDraft}
+            suggestions={p.allTags}
+            onChange={p.onTagDraftChange}
+          />
+          <button
+            class="text-xs px-2 py-0.5 rounded bg-accent text-white hover:opacity-90 shrink-0"
+            onClick={() => p.onToggleTagging()}
+          >
+            {t()("rules.save")}
+          </button>
+        </div>
+      </Show>
+
       <Show when={!p.collapsed}>
         <div class="px-3 pb-3 space-y-2">
           <Show when={editingNewHere()}>
@@ -1400,6 +1527,7 @@ const CollectionSection: Component<{
               <RuleEditor
                 initial={null}
                 defaultCollectionId={p.collection?.id ?? null}
+                allTags={p.allTags}
                 onCancel={p.onCancel}
                 onSaved={p.onSaved}
               />
@@ -1425,6 +1553,7 @@ const CollectionSection: Component<{
                     onToggle={() => p.onToggleRule(rule)}
                     onEdit={() => p.onEditRule(rule)}
                     onRename={(name) => p.onRenameRule(rule, name)}
+                    onPickTag={p.onPickTag}
                     onCopy={() => p.onCopyRule(rule)}
                     onExport={() => p.onExportRule(rule)}
                     onDelete={() => p.onDeleteRule(rule)}
@@ -1440,6 +1569,7 @@ const CollectionSection: Component<{
                   <RuleEditor
                     initial={rule}
                     defaultCollectionId={rule.collection_id}
+                    allTags={p.allTags}
                     onCancel={p.onCancel}
                     onSaved={p.onSaved}
                     onLiveSync={p.onLiveSync}
@@ -1487,6 +1617,7 @@ const RuleRow: Component<{
   onToggle: () => void;
   onEdit: () => void;
   onRename: (name: string) => void;
+  onPickTag: (tag: string) => void;
   onCopy: () => void;
   onExport: () => void;
   onDelete: () => void;
@@ -1633,6 +1764,11 @@ const RuleRow: Component<{
               onBlur={confirmRename}
             />
           </Show>
+          <TagChips
+            tags={p.rule.tags}
+            onPick={p.onPickTag}
+            dim={!effectivelyOn()}
+          />
         </div>
         <div class="text-xs font-mono text-fg-subtle truncate mt-0.5">{summary()}</div>
         <div class="text-xs text-fg-muted mt-0.5">
@@ -1690,6 +1826,7 @@ type DraftState = {
   match_params: RuleParamDto[];
   match_req_body: string;
   match_conditions: RuleConditionDto[];
+  tags: string[];
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_text: string;
@@ -1711,6 +1848,7 @@ const emptyDraft = (collectionId: string | null): DraftState => ({
   match_params: [],
   match_req_body: "",
   match_conditions: [],
+  tags: [],
   res_status: 200,
   res_headers: [{ name: "Content-Type", value: "application/json; charset=UTF-8" }],
   res_body_text: "",
@@ -1957,6 +2095,8 @@ function utf8ToBase64(s: string): string {
 const RuleEditor: Component<{
   initial: RuleDto | null;
   defaultCollectionId: string | null;
+  /** Tags in use across the library — suggestion chips under the field. */
+  allTags: string[];
   onCancel: () => void;
   onSaved: (saved: RuleDto) => void | Promise<void>;
   // Reflect a live (non-Save) enabled toggle in the parent list so the
@@ -1979,7 +2119,9 @@ const RuleEditor: Component<{
     const saved = loadRuleDraft<DraftState>(draftKey);
     if (saved) {
       hadInitialDraft = true;
-      return saved;
+      // A draft written before tags existed has no `tags` key, and every
+      // reader here does list work on it.
+      return { ...saved, tags: saved.tags ?? [] };
     }
     const r = p.initial;
     if (!r) return emptyDraft(p.defaultCollectionId);
@@ -1997,6 +2139,7 @@ const RuleEditor: Component<{
       match_params: r.match_params.slice(),
       match_req_body: r.match_req_body ?? "",
       match_conditions: r.match_conditions.slice(),
+      tags: r.tags.slice(),
       res_status: r.res_status,
       res_headers:
         r.res_headers.length > 0
@@ -2197,6 +2340,7 @@ const RuleEditor: Component<{
         match_conditions: draft.match_conditions.filter(
           (c) => c.path.trim().length > 0 && c.value.trim().length > 0,
         ),
+        tags: draft.tags,
         res_status: draft.res_status,
         res_headers: draft.res_headers.filter((h) => h.name.length > 0),
         // The textarea is pre-filled from existing body on open, so we always
@@ -2255,6 +2399,19 @@ const RuleEditor: Component<{
           {t()("rules.enabled_label")}
         </label>
       </div>
+
+      {/* Tags sit with the name, above Match, because they describe what the
+          rule IS, not what it intercepts. */}
+      <FieldRow label={t()("rules.tags_label")}>
+        <div class="flex-1 space-y-1 min-w-0">
+          <TagEditor
+            tags={d().tags}
+            suggestions={p.allTags}
+            onChange={(tags) => patch({ tags })}
+          />
+          <div class="text-xs text-fg-muted italic">{t()("rules.tags_note")}</div>
+        </div>
+      </FieldRow>
 
       <Section title={t()("rules.match_section")}>
         <FieldRow label={t()("rules.host_label")}>

@@ -33,7 +33,7 @@ import HelpButton from "@/components/HelpButton";
 import { writeClipboard } from "@/lib/clipboard";
 import { withTimeout } from "@/lib/async";
 import { uniqueRuleName } from "@/lib/rule-names";
-import { matchesCollectionName, parseFilterTerms } from "@/lib/rules-filter";
+import { matchesCollection, parseFilterTerms } from "@/lib/rules-filter";
 import { t, tr } from "@/i18n";
 
 const FILTER_PALETTE = [
@@ -684,7 +684,8 @@ const CapturesView: Component = () => {
   const visibleAddCollections = createMemo(() => {
     const terms = parseFilterTerms(addFilter());
     if (terms.length === 0) return addCollections();
-    return addCollections().filter((c) => matchesCollectionName(c.name, terms));
+    // `c` already carries name + tags, so `tag:` works here too.
+    return addCollections().filter((c) => matchesCollection(c, terms));
   });
   const [busy, setBusy] = createSignal(false);
   const [addToast, setAddToast] = createSignal<string | null>(null);

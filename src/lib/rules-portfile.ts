@@ -29,6 +29,9 @@ export interface ExportedCollection {
   name: string;
   enabled: boolean;
   priority: number;
+  // Optional — absent in files exported before tags existed, which is the
+  // same thing as untagged, so no format version bump.
+  tags?: string[];
 }
 
 export interface ExportedRule {
@@ -48,6 +51,8 @@ export interface ExportedRule {
   match_req_body: string | null;
   // Optional — absent in files exported before conditions existed.
   match_conditions?: RuleDto["match_conditions"];
+  // Same, for tags.
+  tags?: string[];
   res_status: number;
   res_headers: RuleDto["res_headers"];
   res_body_mime: string | null;
@@ -117,6 +122,7 @@ function ruleToExported(
     match_params: rule.match_params,
     match_req_body: rule.match_req_body,
     match_conditions: rule.match_conditions,
+    tags: rule.tags,
     res_status: rule.res_status,
     res_headers: rule.res_headers,
     res_body_mime: rule.res_body_mime,
@@ -131,6 +137,7 @@ function collectionToExported(c: RuleCollectionDto): ExportedCollectionEntry {
     name: c.name,
     enabled: c.enabled,
     priority: c.priority,
+    tags: c.tags,
   };
 }
 
@@ -254,6 +261,7 @@ interface ReadableRule {
   enabled?: unknown;
   mode?: unknown;
   patches?: unknown;
+  tags?: unknown;
   match?: Record<string, unknown>;
   response?: Record<string, unknown>;
 }
@@ -346,6 +354,7 @@ function readableRuleToExported(
     match_req_body:
       reqBody === undefined || reqBody === null ? null : asJsonText(reqBody),
     match_conditions: arr(m.conditions),
+    tags: arr<string>(r.tags).filter((tg) => typeof tg === "string"),
     res_status: typeof resp.status === "number" ? resp.status : 200,
     res_headers: arr(resp.headers),
     res_body_mime: str(resp.mime),
@@ -375,6 +384,7 @@ export function readableDumpToPortFile(raw: unknown): PortFile | string {
       ref,
       name: typeof c.name === "string" ? c.name : `Collection ${ci + 1}`,
       enabled: c.enabled === true,
+      tags: arr<string>(c.tags).filter((tg) => typeof tg === "string"),
       // Evaluation order is collection priority, then rule priority, both
       // ascending — so array position is exactly the intended precedence.
       priority: ci,
@@ -450,6 +460,7 @@ export async function applyImport(file: PortFile): Promise<ImportSummary> {
       name: c.name,
       enabled: c.enabled,
       priority: c.priority,
+      tags: c.tags ?? [],
     });
     refToId.set(c.ref, saved.id);
     createdCollections++;
@@ -472,6 +483,7 @@ export async function applyImport(file: PortFile): Promise<ImportSummary> {
       match_params: r.match_params,
       match_req_body: r.match_req_body ?? null,
       match_conditions: r.match_conditions ?? [],
+      tags: r.tags ?? [],
       res_status: r.res_status,
       res_headers: r.res_headers,
       res_body_base64: r.res_body_base64 ?? null,

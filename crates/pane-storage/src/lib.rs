@@ -154,6 +154,50 @@ pub fn validate_filter(filter: &str) -> Result<()> {
     filter_dsl::compile_to_sql(filter).map(|_| ())
 }
 
+/// Normalise a tag list for storage: trim each label, drop the empty ones,
+/// and drop later duplicates that differ only in case.
+///
+/// Case-insensitive dedup with the first spelling kept is the behaviour a tag
+/// list has to have to be worth filtering by: `Smoke` and `smoke` as two
+/// separate labels means a query finds half the rules that carry "the same"
+/// tag, and the half it misses is invisible.
+pub fn normalise_tags(tags: &[String]) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut out: Vec<String> = Vec::new();
+    for raw in tags {
+        let t = raw.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let key = t.to_lowercase();
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        out.push(t.to_string());
+    }
+    out
+}
+
+/// Tags as they go into the column: a JSON array, or NULL when there are
+/// none — one canonical empty state, same convention as `match_conditions`.
+fn encode_tags(tags: &[String]) -> Option<String> {
+    let norm = normalise_tags(tags);
+    if norm.is_empty() {
+        None
+    } else {
+        serde_json::to_string(&norm).ok()
+    }
+}
+
+/// Tags as they come out. A NULL, a malformed blob, or a pre-V015 row all
+/// read as "untagged" — a label is decoration, never a reason to fail a read.
+fn decode_tags(raw: Option<&str>) -> Vec<String> {
+    raw.and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .map(|v| normalise_tags(&v))
+        .unwrap_or_default()
+}
+
 /// Format a unix timestamp as RFC 3339.
 ///
 /// `OffsetDateTime::to_string()` yields `2026-08-05 12:31:04.812 +00:00:00`,
@@ -846,21 +890,12 @@ impl Storage {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT c.id, c.name, c.enabled, c.priority, c.created_at, c.updated_at,
-                    (SELECT COUNT(*) FROM rule r WHERE r.collection_id = c.id)
+                    (SELECT COUNT(*) FROM rule r WHERE r.collection_id = c.id),
+                    c.tags
              FROM rule_collection c
              ORDER BY c.priority ASC, c.created_at ASC",
         )?;
-        let rows = stmt.query_map([], |r| {
-            Ok(RuleCollectionDto {
-                id: Uuid::parse_str(&r.get::<_, String>(0)?).unwrap(),
-                name: r.get(1)?,
-                enabled: r.get::<_, i64>(2)? != 0,
-                priority: r.get(3)?,
-                created_at: r.get::<_, i64>(4)?.to_string(),
-                updated_at: r.get::<_, i64>(5)?.to_string(),
-                rule_count: r.get::<_, i64>(6)? as u64,
-            })
-        })?;
+        let rows = stmt.query_map([], Self::map_collection_row)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
@@ -877,11 +912,12 @@ impl Storage {
             .optional()?;
         let created_at = existing_created.unwrap_or(now);
         conn.execute(
-            "INSERT INTO rule_collection (id, name, enabled, priority, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO rule_collection (id, name, enabled, priority, created_at, updated_at, tags)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, enabled=excluded.enabled,
-                priority=excluded.priority, updated_at=excluded.updated_at",
+                priority=excluded.priority, updated_at=excluded.updated_at,
+                tags=excluded.tags",
             params![
                 id.to_string(),
                 &args.name,
@@ -889,6 +925,7 @@ impl Storage {
                 args.priority,
                 created_at,
                 now,
+                encode_tags(&args.tags),
             ],
         )?;
         drop(conn);
@@ -899,20 +936,11 @@ impl Storage {
         let conn = self.conn.lock();
         let dto = conn.query_row(
             "SELECT c.id, c.name, c.enabled, c.priority, c.created_at, c.updated_at,
-                    (SELECT COUNT(*) FROM rule r WHERE r.collection_id = c.id)
+                    (SELECT COUNT(*) FROM rule r WHERE r.collection_id = c.id),
+                    c.tags
              FROM rule_collection c WHERE c.id=?1",
             params![id.to_string()],
-            |r| {
-                Ok(RuleCollectionDto {
-                    id: Uuid::parse_str(&r.get::<_, String>(0)?).unwrap(),
-                    name: r.get(1)?,
-                    enabled: r.get::<_, i64>(2)? != 0,
-                    priority: r.get(3)?,
-                    created_at: r.get::<_, i64>(4)?.to_string(),
-                    updated_at: r.get::<_, i64>(5)?.to_string(),
-                    rule_count: r.get::<_, i64>(6)? as u64,
-                })
-            },
+            Self::map_collection_row,
         )?;
         Ok(dto)
     }
@@ -971,7 +999,7 @@ impl Storage {
                         match_host_glob, match_method, match_path_glob, match_query,
                         res_status, res_headers, res_body_id, res_delay_ms,
                         created_at, updated_at, collection_id, mode, patches,
-                        match_req_body, match_conditions
+                        match_req_body, match_conditions, tags
                  FROM rule
                  ORDER BY priority ASC, created_at ASC",
             )?;
@@ -1002,7 +1030,7 @@ impl Storage {
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
                     created_at, updated_at, collection_id, mode, patches,
-                    match_req_body, match_conditions
+                    match_req_body, match_conditions, tags
              FROM rule WHERE id=?1",
             params![id.to_string()],
             Self::map_rule_row,
@@ -1057,6 +1085,7 @@ impl Storage {
         } else {
             Some(serde_json::to_string(&args.match_conditions)?)
         };
+        let tags = encode_tags(&args.tags);
         let mode = match args.mode.as_str() {
             "patch" => "patch",
             _ => "stub",
@@ -1076,8 +1105,8 @@ impl Storage {
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
                     created_at, updated_at, collection_id, mode, patches, match_req_body,
-                    match_conditions)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+                    match_conditions, tags)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, enabled=excluded.enabled, priority=excluded.priority,
                 match_host_glob=excluded.match_host_glob, match_method=excluded.match_method,
@@ -1086,7 +1115,7 @@ impl Storage {
                 res_body_id=excluded.res_body_id, res_delay_ms=excluded.res_delay_ms,
                 collection_id=excluded.collection_id, mode=excluded.mode,
                 patches=excluded.patches, match_req_body=excluded.match_req_body,
-                match_conditions=excluded.match_conditions,
+                match_conditions=excluded.match_conditions, tags=excluded.tags,
                 updated_at=excluded.updated_at",
             params![
                 id.to_string(),
@@ -1108,6 +1137,7 @@ impl Storage {
                 patches_json,
                 match_req_body,
                 match_conditions,
+                tags,
             ],
         )?;
         drop(conn);
@@ -1214,7 +1244,7 @@ impl Storage {
                         r.match_host_glob, r.match_method, r.match_path_glob, r.match_query,
                         r.res_status, r.res_headers, r.res_body_id, r.res_delay_ms,
                         r.created_at, r.updated_at, r.collection_id, r.mode, r.patches,
-                        r.match_req_body, r.match_conditions
+                        r.match_req_body, r.match_conditions, r.tags
                  FROM rule r
                  LEFT JOIN rule_collection c ON c.id = r.collection_id
                  WHERE r.enabled=1
@@ -1306,6 +1336,22 @@ impl Storage {
         Ok(out)
     }
 
+    /// Columns in the order both collection SELECTs above list them; the
+    /// rule count is a subquery, `tags` the last column.
+    fn map_collection_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RuleCollectionDto> {
+        let tags_json: Option<String> = r.get(7)?;
+        Ok(RuleCollectionDto {
+            id: Uuid::parse_str(&r.get::<_, String>(0)?).unwrap(),
+            name: r.get(1)?,
+            enabled: r.get::<_, i64>(2)? != 0,
+            priority: r.get(3)?,
+            created_at: r.get::<_, i64>(4)?.to_string(),
+            updated_at: r.get::<_, i64>(5)?.to_string(),
+            rule_count: r.get::<_, i64>(6)? as u64,
+            tags: decode_tags(tags_json.as_deref()),
+        })
+    }
+
     fn map_rule_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<RuleDto> {
         let id: String = r.get(0)?;
         let match_params_json: String = r.get(7)?;
@@ -1318,6 +1364,7 @@ impl Storage {
         let patches_json: String = r.get(16)?;
         let match_req_body: Option<String> = r.get(17)?;
         let match_conditions_json: Option<String> = r.get(18)?;
+        let tags_json: Option<String> = r.get(19)?;
         Ok(RuleDto {
             id: Uuid::parse_str(&id).unwrap(),
             name: r.get(1)?,
@@ -1336,6 +1383,7 @@ impl Storage {
                 .as_deref()
                 .and_then(|s| serde_json::from_str::<Vec<RuleConditionDto>>(s).ok())
                 .unwrap_or_default(),
+            tags: decode_tags(tags_json.as_deref()),
             res_status: r.get::<_, i64>(8)? as u16,
             res_headers: serde_json::from_str::<Vec<RuleHeaderDto>>(&res_headers)
                 .unwrap_or_default(),
@@ -1420,6 +1468,7 @@ mod rule_enablement_tests {
             name: name.into(),
             enabled,
             priority: 0,
+            tags: vec![],
         })
         .unwrap()
         .id
@@ -1440,6 +1489,7 @@ mod rule_enablement_tests {
             match_params: vec![],
             match_req_body: None,
             match_conditions: vec![],
+            tags: vec![],
             res_status: 200,
             res_headers: vec![],
             res_body_id: None,
@@ -1614,5 +1664,157 @@ mod timestamp_tests {
     #[test]
     fn an_unrepresentable_timestamp_degrades_instead_of_panicking() {
         assert_eq!(rfc3339(i64::MAX), i64::MAX.to_string());
+    }
+}
+
+#[cfg(test)]
+mod rule_tag_tests {
+    use super::*;
+    use pane_ipc::{CollectionUpsertArgs, RuleUpsertArgs};
+    use tempfile::tempdir;
+
+    fn rule_with_tags(s: &Storage, name: &str, tags: Vec<String>) -> RuleDto {
+        s.upsert_rule(RuleUpsertArgs {
+            id: None,
+            name: name.into(),
+            enabled: true,
+            priority: 0,
+            collection_id: None,
+            mode: "stub".into(),
+            patches: vec![],
+            match_host_glob: Some("api.example.com".into()),
+            match_method: None,
+            match_path_glob: None,
+            match_params: vec![],
+            match_req_body: None,
+            match_conditions: vec![],
+            tags,
+            res_status: 200,
+            res_headers: vec![],
+            res_body_id: None,
+            res_body_base64: None,
+            res_body_mime: None,
+            res_delay_ms: 0,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn tags_survive_a_write_and_a_read() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let saved = rule_with_tags(
+            &s,
+            "orders-500",
+            vec!["smoke".into(), "регресс".into()],
+        );
+        assert_eq!(saved.tags, vec!["smoke", "регресс"]);
+        // …and through the other two read paths, which have their own
+        // column lists.
+        let listed = s.list_rules().unwrap();
+        assert_eq!(listed[0].tags, vec!["smoke", "регресс"]);
+        assert_eq!(s.get_rule(saved.id).unwrap().tags, vec!["smoke", "регресс"]);
+    }
+
+    /// Blank labels and case-variant duplicates are what a tag input actually
+    /// produces; both are dropped on write so a filter can trust the list.
+    #[test]
+    fn tags_are_trimmed_deduped_and_stripped_of_blanks() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let saved = rule_with_tags(
+            &s,
+            "r",
+            vec![
+                "  Smoke  ".into(),
+                "smoke".into(),
+                "".into(),
+                "   ".into(),
+                "ios".into(),
+            ],
+        );
+        assert_eq!(saved.tags, vec!["Smoke", "ios"]);
+    }
+
+    #[test]
+    fn an_untagged_rule_reads_back_as_an_empty_list() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let saved = rule_with_tags(&s, "r", vec![]);
+        assert!(saved.tags.is_empty());
+        // Explicitly NULL in the column, not "[]" — one canonical empty state.
+        let raw: Option<String> = s
+            .conn()
+            .lock()
+            .query_row(
+                "SELECT tags FROM rule WHERE id=?1",
+                params![saved.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, None);
+    }
+
+    /// Editing an unrelated field must not silently drop the labels — the
+    /// upsert rewrites the whole row, so the caller has to send them back.
+    #[test]
+    fn upsert_without_tags_clears_them() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let saved = rule_with_tags(&s, "r", vec!["smoke".into()]);
+        let cleared = s
+            .upsert_rule(RuleUpsertArgs {
+                id: Some(saved.id),
+                name: saved.name.clone(),
+                enabled: saved.enabled,
+                priority: saved.priority,
+                collection_id: None,
+                mode: "stub".into(),
+                patches: vec![],
+                match_host_glob: saved.match_host_glob.clone(),
+                match_method: None,
+                match_path_glob: None,
+                match_params: vec![],
+                match_req_body: None,
+                match_conditions: vec![],
+                tags: vec![],
+                res_status: 200,
+                res_headers: vec![],
+                res_body_id: None,
+                res_body_base64: None,
+                res_body_mime: None,
+                res_delay_ms: 0,
+            })
+            .unwrap();
+        assert!(cleared.tags.is_empty());
+    }
+
+    #[test]
+    fn collection_tags_round_trip() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let saved = s
+            .upsert_collection(CollectionUpsertArgs {
+                id: None,
+                name: "payments".into(),
+                enabled: true,
+                priority: 0,
+                tags: vec!["scenario".into(), " Scenario ".into()],
+            })
+            .unwrap();
+        assert_eq!(saved.tags, vec!["scenario"]);
+        assert_eq!(s.list_collections().unwrap()[0].tags, vec!["scenario"]);
+    }
+
+    /// Tags are decoration: the matcher never sees them, so a tag can never be
+    /// the reason a mock did or did not fire.
+    #[test]
+    fn tags_do_not_reach_the_engine() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        rule_with_tags(&s, "tagged", vec!["smoke".into()]);
+        let active = s.list_active_rules().unwrap();
+        assert_eq!(active.len(), 1, "a tagged rule is still just a rule");
+        assert_eq!(active[0].name, "tagged");
     }
 }

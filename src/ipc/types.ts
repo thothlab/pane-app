@@ -210,6 +210,10 @@ export interface RuleDto {
    * capable). null/blank = don't match on the body. */
   match_req_body: string | null;
   match_conditions: RuleConditionDto[];
+  /** Free-form labels. They carry no behaviour — the engine never reads
+   * them, so a tag can never be why a mock did or didn't fire. Normalised
+   * on write: trimmed, blanks dropped, case-insensitive duplicates removed. */
+  tags: string[];
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_id: string | null;
@@ -234,6 +238,9 @@ export interface RuleUpsertArgs {
   match_params: RuleParamDto[];
   match_req_body?: string | null;
   match_conditions?: RuleConditionDto[];
+  /** Omitted or empty clears the rule's tags — the upsert rewrites the whole
+   * row, so a partial edit has to send the existing list back. */
+  tags?: string[];
   res_status: number;
   res_headers: RuleHeaderDto[];
   res_body_id?: string | null;
@@ -247,6 +254,9 @@ export interface RuleCollectionDto {
   name: string;
   enabled: boolean;
   priority: number;
+  /** Same as `RuleDto.tags`. A collection's tags also match its rules in the
+   * filter, so labelling a group labels everything in it. */
+  tags: string[];
   rule_count: number;
   created_at: string;
   updated_at: string;
@@ -257,6 +267,7 @@ export interface CollectionUpsertArgs {
   name: string;
   enabled: boolean;
   priority: number;
+  tags?: string[];
 }
 
 /** One host the proxy decided not to decrypt, with the evidence for it. */

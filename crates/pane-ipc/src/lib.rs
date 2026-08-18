@@ -476,6 +476,12 @@ pub struct RuleDto {
     #[serde(default)]
     pub match_conditions: Vec<RuleConditionDto>,
 
+    /// Free-form labels. Carry no behaviour — the engine never reads them, so
+    /// a tag can never be the reason a mock did or did not fire. They exist to
+    /// find a rule (`tag:` in the rules filter) and to say what it is for.
+    #[serde(default)]
+    pub tags: Vec<String>,
+
     pub res_status: u16,
     pub res_headers: Vec<RuleHeaderDto>,
     pub res_body_id: Option<Uuid>,
@@ -511,6 +517,10 @@ pub struct RuleUpsertArgs {
     pub match_req_body: Option<String>,
     #[serde(default)]
     pub match_conditions: Vec<RuleConditionDto>,
+    /// Free-form labels; normalised on write (trimmed, empties dropped,
+    /// duplicates removed case-insensitively).
+    #[serde(default)]
+    pub tags: Vec<String>,
 
     pub res_status: u16,
     pub res_headers: Vec<RuleHeaderDto>,
@@ -576,6 +586,10 @@ pub struct RuleCollectionDto {
     pub name: String,
     pub enabled: bool,
     pub priority: i64,
+    /// Same as `RuleDto::tags`. A collection's tags also match its rules in
+    /// the UI filter, so tagging a group is a way to tag everything in it.
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub rule_count: u64,
     pub created_at: String,
     pub updated_at: String,
@@ -587,6 +601,8 @@ pub struct CollectionUpsertArgs {
     pub name: String,
     pub enabled: bool,
     pub priority: i64,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
