@@ -249,6 +249,15 @@ export interface RuleUpsertArgs {
   res_delay_ms: number;
 }
 
+/** Which rules a bulk operation covers. `ids` is what a filtered view needs:
+ *  the visible subset is arbitrary, and the button must never act on rows the
+ *  user cannot see. */
+export type RuleBulkScope =
+  | { kind: "all" }
+  | { kind: "ungrouped" }
+  | { kind: "collection"; id: string }
+  | { kind: "ids"; ids: string[] };
+
 export interface RuleCollectionDto {
   id: string;
   name: string;

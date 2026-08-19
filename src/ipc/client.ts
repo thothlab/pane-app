@@ -17,6 +17,7 @@ import type {
   CollectionUpsertArgs,
   ReplayRecordDto,
   RequestSpec,
+  RuleBulkScope,
   RuleCollectionDto,
   RuleDto,
   RuleUpsertArgs,
@@ -122,16 +123,14 @@ export const api = {
     setEnabled: (id: string, enabled: boolean) =>
       call<void>("rule_set_enabled", { args: { id, enabled } }),
     /** Flip a whole scope in one call instead of one call per rule. */
-    setEnabledBulk: (
-      enabled: boolean,
-      scope:
-        | { kind: "all" }
-        | { kind: "ungrouped" }
-        | { kind: "collection"; id: string },
-    ) =>
+    setEnabledBulk: (enabled: boolean, scope: RuleBulkScope) =>
       call<{ matched: number; changed: number }>("rules_set_enabled_bulk", {
         args: { enabled, scope },
       }),
+    /** Delete a whole scope in one transaction, so a big clear cannot
+     *  half-finish and leave the user guessing how far it got. */
+    deleteBulk: (scope: RuleBulkScope) =>
+      call<{ deleted: number }>("rules_delete_bulk", { args: { scope } }),
     setPriority: (id: string, priority: number) =>
       call<void>("rule_set_priority", { args: { id, priority } }),
     exportWrite: (path: string, content: string) =>

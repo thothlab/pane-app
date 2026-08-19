@@ -3,7 +3,8 @@ use uuid::Uuid;
 use pane_ipc::{
     kinds, CollectionSetEnabledArgs, CollectionSetPriorityArgs, CollectionUpsertArgs,
     RuleCollectionDto, RuleDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs,
-    RulesSetEnabledBulkArgs, RulesSetEnabledBulkResult,
+    RulesDeleteBulkArgs, RulesDeleteBulkResult, RulesSetEnabledBulkArgs,
+    RulesSetEnabledBulkResult,
 };
 
 use crate::error::{to_api, CoreResult};
@@ -49,6 +50,17 @@ impl Core {
         args: RulesSetEnabledBulkArgs,
     ) -> CoreResult<RulesSetEnabledBulkResult> {
         self.db(move |s| s.set_rules_enabled_bulk(args))
+            .await
+            .map_err(to_api(kinds::DB))
+    }
+
+    /// Delete a whole scope of rules at once — one transaction, so a big
+    /// "clear the library" cannot half-finish.
+    pub async fn rules_delete_bulk(
+        &self,
+        args: RulesDeleteBulkArgs,
+    ) -> CoreResult<RulesDeleteBulkResult> {
+        self.db(move |s| s.delete_rules_bulk(args))
             .await
             .map_err(to_api(kinds::DB))
     }

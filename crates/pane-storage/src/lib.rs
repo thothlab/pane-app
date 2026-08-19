@@ -23,8 +23,9 @@ use pane_ipc::{
     CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionSetPriorityArgs,
     CollectionUpsertArgs, ExportOneResult, FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs,
     RuleBulkScope, RuleCollectionDto, RuleConditionDto, RuleDto, RuleHeaderDto, RuleParamDto,
-    RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs,
-    RulesSetEnabledBulkArgs, RulesSetEnabledBulkResult, SaveFilterArgs, SessionDto, TlsHealthDto,
+    RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs, RulesDeleteBulkArgs,
+    RulesDeleteBulkResult, RulesSetEnabledBulkArgs, RulesSetEnabledBulkResult, SaveFilterArgs,
+    SessionDto, TlsHealthDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -152,6 +153,32 @@ impl CaRecord {
 /// the caller has already launched the app under test.
 pub fn validate_filter(filter: &str) -> Result<()> {
     filter_dsl::compile_to_sql(filter).map(|_| ())
+}
+
+/// How many ids go into one `IN (...)` list.
+///
+/// SQLite caps bound parameters per statement (999 in builds compiled with the
+/// old default). A library big enough to want a bulk delete is exactly the one
+/// that would trip it, so id lists are always chunked rather than trusted to
+/// be short.
+const ID_CHUNK: usize = 400;
+
+/// `?,?,?` for an `IN (...)` list of `n` values.
+fn placeholders(n: usize) -> String {
+    std::iter::repeat("?").take(n).collect::<Vec<_>>().join(",")
+}
+
+/// Same, numbered from `start` so the list can follow other bound params.
+fn placeholders_from(n: usize, start: usize) -> String {
+    (start..start + n)
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Uuids as bound strings, matching how ids are stored.
+fn id_params(ids: &[Uuid]) -> impl rusqlite::Params + '_ {
+    rusqlite::params_from_iter(ids.iter().map(|u| u.to_string()))
 }
 
 /// Normalise a tag list for storage: trim each label, drop the empty ones,
@@ -1172,8 +1199,39 @@ impl Storage {
         &self,
         args: RulesSetEnabledBulkArgs,
     ) -> Result<RulesSetEnabledBulkResult> {
-        let conn = self.conn.lock();
+        let mut conn = self.conn.lock();
         let now = OffsetDateTime::now_utc().unix_timestamp();
+
+        // An explicit id list cannot be a predicate fragment — the number of
+        // placeholders varies — so it gets its own chunked path.
+        if let RuleBulkScope::Ids { ids } = &args.scope {
+            let tx = conn.transaction()?;
+            let mut matched = 0u64;
+            let mut changed = 0u64;
+            for chunk in ids.chunks(ID_CHUNK) {
+                let sql = format!(
+                    "SELECT COUNT(*) FROM rule WHERE id IN ({})",
+                    placeholders(chunk.len())
+                );
+                let n: i64 = tx.query_row(&sql, id_params(chunk), |r| r.get(0))?;
+                matched += n as u64;
+
+                let sql = format!(
+                    "UPDATE rule SET enabled=?1, updated_at=?2 WHERE enabled<>?1 AND id IN ({})",
+                    placeholders_from(chunk.len(), 3)
+                );
+                let mut ps: Vec<Box<dyn rusqlite::ToSql>> =
+                    vec![Box::new(args.enabled as i64), Box::new(now)];
+                ps.extend(
+                    chunk
+                        .iter()
+                        .map(|u| Box::new(u.to_string()) as Box<dyn rusqlite::ToSql>),
+                );
+                changed += tx.execute(&sql, rusqlite::params_from_iter(ps.iter()))? as u64;
+            }
+            tx.commit()?;
+            return Ok(RulesSetEnabledBulkResult { matched, changed });
+        }
 
         // Built as a fragment rather than interpolating user input: the only
         // thing that varies is the shape of the predicate, and the collection
@@ -1182,6 +1240,7 @@ impl Storage {
             RuleBulkScope::All => ("1=1", None),
             RuleBulkScope::Ungrouped => ("collection_id IS NULL", None),
             RuleBulkScope::Collection { id } => ("collection_id = ?3", Some(id.to_string())),
+            RuleBulkScope::Ids { .. } => unreachable!("handled above"),
         };
 
         let matched: u64 = {
@@ -1205,6 +1264,47 @@ impl Storage {
             matched,
             changed: changed as u64,
         })
+    }
+
+    /// Delete a whole scope of rules in one transaction.
+    ///
+    /// One statement instead of one call per rule, for the same reason the
+    /// bulk enable exists — but here atomicity is the bigger half: a
+    /// fanned-out "delete everything" that fails in the middle leaves a
+    /// library the user has to finish clearing by hand, with no way to tell
+    /// how far it got.
+    ///
+    /// Collections are left standing. They are grouping, not content: a user
+    /// who cleared the rules out of a scenario usually wants the scenario's
+    /// shape back for the next set, and deleting them is one more click away.
+    /// Response bodies are not touched either — they are shared by sha256 and
+    /// belong to the body store's own GC.
+    pub fn delete_rules_bulk(&self, args: RulesDeleteBulkArgs) -> Result<RulesDeleteBulkResult> {
+        let mut conn = self.conn.lock();
+        let deleted = match &args.scope {
+            RuleBulkScope::All => conn.execute("DELETE FROM rule", [])? as u64,
+            RuleBulkScope::Ungrouped => {
+                conn.execute("DELETE FROM rule WHERE collection_id IS NULL", [])? as u64
+            }
+            RuleBulkScope::Collection { id } => conn.execute(
+                "DELETE FROM rule WHERE collection_id = ?1",
+                params![id.to_string()],
+            )? as u64,
+            RuleBulkScope::Ids { ids } => {
+                let tx = conn.transaction()?;
+                let mut n = 0u64;
+                for chunk in ids.chunks(ID_CHUNK) {
+                    let sql = format!(
+                        "DELETE FROM rule WHERE id IN ({})",
+                        placeholders(chunk.len())
+                    );
+                    n += tx.execute(&sql, id_params(chunk))? as u64;
+                }
+                tx.commit()?;
+                n
+            }
+        };
+        Ok(RulesDeleteBulkResult { deleted })
     }
 
     pub fn set_rule_priority(&self, args: RuleSetPriorityArgs) -> Result<()> {
@@ -1816,5 +1916,184 @@ mod rule_tag_tests {
         let active = s.list_active_rules().unwrap();
         assert_eq!(active.len(), 1, "a tagged rule is still just a rule");
         assert_eq!(active[0].name, "tagged");
+    }
+}
+
+#[cfg(test)]
+mod rule_bulk_delete_tests {
+    use super::*;
+    use pane_ipc::{CollectionUpsertArgs, RuleUpsertArgs};
+    use tempfile::tempdir;
+
+    fn collection(s: &Storage, name: &str) -> Uuid {
+        s.upsert_collection(CollectionUpsertArgs {
+            id: None,
+            name: name.into(),
+            enabled: true,
+            priority: 0,
+            tags: vec![],
+        })
+        .unwrap()
+        .id
+    }
+
+    fn rule(s: &Storage, name: &str, collection_id: Option<Uuid>) -> Uuid {
+        s.upsert_rule(RuleUpsertArgs {
+            id: None,
+            name: name.into(),
+            enabled: true,
+            priority: 0,
+            collection_id,
+            mode: "stub".into(),
+            patches: vec![],
+            match_host_glob: Some("api.example.com".into()),
+            match_method: None,
+            match_path_glob: None,
+            match_params: vec![],
+            match_req_body: None,
+            match_conditions: vec![],
+            tags: vec![],
+            res_status: 200,
+            res_headers: vec![],
+            res_body_id: None,
+            res_body_base64: None,
+            res_body_mime: None,
+            res_delay_ms: 0,
+        })
+        .unwrap()
+        .id
+    }
+
+    fn names(s: &Storage) -> Vec<String> {
+        s.list_rules().unwrap().into_iter().map(|r| r.name).collect()
+    }
+
+    #[test]
+    fn all_clears_every_rule_but_keeps_the_collections() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let c = collection(&s, "payments");
+        rule(&s, "a", Some(c));
+        rule(&s, "b", None);
+
+        let res = s
+            .delete_rules_bulk(RulesDeleteBulkArgs {
+                scope: RuleBulkScope::All,
+            })
+            .unwrap();
+        assert_eq!(res.deleted, 2);
+        assert!(names(&s).is_empty());
+        // The scenario's shape survives its content — see delete_rules_bulk.
+        assert_eq!(s.list_collections().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn collection_scope_leaves_the_rest_alone() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let c = collection(&s, "payments");
+        rule(&s, "in", Some(c));
+        rule(&s, "out", None);
+
+        let res = s
+            .delete_rules_bulk(RulesDeleteBulkArgs {
+                scope: RuleBulkScope::Collection { id: c },
+            })
+            .unwrap();
+        assert_eq!(res.deleted, 1);
+        assert_eq!(names(&s), vec!["out"]);
+    }
+
+    #[test]
+    fn ungrouped_scope_only_takes_the_orphans() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let c = collection(&s, "payments");
+        rule(&s, "in", Some(c));
+        rule(&s, "out", None);
+
+        let res = s
+            .delete_rules_bulk(RulesDeleteBulkArgs {
+                scope: RuleBulkScope::Ungrouped,
+            })
+            .unwrap();
+        assert_eq!(res.deleted, 1);
+        assert_eq!(names(&s), vec!["in"]);
+    }
+
+    /// The scope a filtered view needs: an arbitrary subset, and nothing
+    /// outside it may be touched.
+    #[test]
+    fn ids_scope_deletes_exactly_the_listed_rules() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let a = rule(&s, "a", None);
+        rule(&s, "b", None);
+        let c = rule(&s, "c", None);
+
+        let res = s
+            .delete_rules_bulk(RulesDeleteBulkArgs {
+                scope: RuleBulkScope::Ids { ids: vec![a, c] },
+            })
+            .unwrap();
+        assert_eq!(res.deleted, 2);
+        assert_eq!(names(&s), vec!["b"]);
+    }
+
+    /// An id that vanished between listing and confirming is not an error —
+    /// the dialog the user answered was drawn from a snapshot.
+    #[test]
+    fn ids_scope_ignores_ids_that_no_longer_exist() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let a = rule(&s, "a", None);
+        let res = s
+            .delete_rules_bulk(RulesDeleteBulkArgs {
+                scope: RuleBulkScope::Ids {
+                    ids: vec![a, Uuid::new_v4()],
+                },
+            })
+            .unwrap();
+        assert_eq!(res.deleted, 1);
+        assert!(names(&s).is_empty());
+    }
+
+    /// Past SQLite's bound-parameter cap, which is exactly the library size
+    /// that makes a bulk delete worth having.
+    #[test]
+    fn ids_scope_chunks_past_the_sqlite_parameter_cap() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let ids: Vec<Uuid> = (0..1200).map(|i| rule(&s, &format!("r{i}"), None)).collect();
+        let res = s
+            .delete_rules_bulk(RulesDeleteBulkArgs {
+                scope: RuleBulkScope::Ids { ids },
+            })
+            .unwrap();
+        assert_eq!(res.deleted, 1200);
+        assert!(names(&s).is_empty());
+    }
+
+    /// The same chunking on the enable path, which grew the Ids scope with it.
+    #[test]
+    fn enable_by_ids_flips_only_those_rules() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+        let a = rule(&s, "a", None);
+        rule(&s, "b", None);
+        let res = s
+            .set_rules_enabled_bulk(RulesSetEnabledBulkArgs {
+                enabled: false,
+                scope: RuleBulkScope::Ids { ids: vec![a] },
+            })
+            .unwrap();
+        assert_eq!((res.matched, res.changed), (1, 1));
+        let by_name: Vec<(String, bool)> = s
+            .list_rules()
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.name, r.enabled))
+            .collect();
+        assert_eq!(by_name, vec![("a".into(), false), ("b".into(), true)]);
     }
 }

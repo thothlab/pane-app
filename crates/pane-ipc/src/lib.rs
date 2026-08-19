@@ -562,12 +562,30 @@ pub enum RuleBulkScope {
     Collection { id: Uuid },
     /// Every rule that belongs to no collection.
     Ungrouped,
+    /// Exactly these rules.
+    ///
+    /// The scope a filtered view needs: what is on screen is an arbitrary
+    /// subset, and the alternative — one call per row — is neither atomic nor
+    /// cheap. An id that no longer exists is simply not matched.
+    Ids { ids: Vec<Uuid> },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RulesSetEnabledBulkArgs {
     pub enabled: bool,
     pub scope: RuleBulkScope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesDeleteBulkArgs {
+    pub scope: RuleBulkScope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesDeleteBulkResult {
+    /// Rows actually removed. Zero means the scope matched nothing — usually
+    /// a stale selector rather than success.
+    pub deleted: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

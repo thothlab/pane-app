@@ -40,6 +40,17 @@ pub async fn rules_set_enabled_bulk(
     state.rules_set_enabled_bulk(args).await
 }
 
+/// Delete a whole scope of rules in one transaction. The GUI's "delete all"
+/// uses it with `all`, or with an explicit id list when a filter is narrowing
+/// the view — the button must never act on rules the user cannot see.
+#[tauri::command]
+pub async fn rules_delete_bulk(
+    state: CoreState<'_>,
+    args: pane_ipc::RulesDeleteBulkArgs,
+) -> CmdResult<pane_ipc::RulesDeleteBulkResult> {
+    state.rules_delete_bulk(args).await
+}
+
 #[tauri::command]
 pub async fn rule_set_priority(state: CoreState<'_>, args: RuleSetPriorityArgs) -> CmdResult<()> {
     state.rule_set_priority(args).await

@@ -294,6 +294,15 @@ const en = {
     delete_collection_title: "Delete collection",
     delete_collection_confirm: "Delete collection \"{{name}}\"?",
     delete_rule_confirm: "Delete rule \"{{name}}\"?",
+    delete_all: "Delete all",
+    delete_all_title: "Delete every rule in the library",
+    delete_all_confirm: "Delete all rules ({{count}})?",
+    delete_all_detail:
+      "Collections stay — only the rules inside them go. This cannot be undone.",
+    delete_filtered: "Delete {{count}}",
+    delete_filtered_title: "Delete the rules matching the current filter",
+    delete_filtered_confirm:
+      "Delete the rules matching \"{{query}}\" ({{count}})?",
     delete_collection_detail: "Its rules survive and move to Ungrouped.",
     edit: "Edit",
     import: "Import",

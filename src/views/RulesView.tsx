@@ -564,6 +564,53 @@ const RulesView: Component = () => {
     await refresh();
   };
 
+  // Delete every rule the user is currently looking at.
+  //
+  // Scoped to `visibleRules()` for the same reason the master checkbox is:
+  // with a filter on, the button's label and the dialog's count describe the
+  // filtered set, and an action that quietly reached past it would be the
+  // exact trap the filtered bulk-enable path was written to avoid. Unfiltered,
+  // "visible" IS the whole library, so that case goes through the cheap `all`
+  // scope instead of shipping every id.
+  //
+  // Collections survive: they are grouping, not content (see
+  // `delete_rules_bulk` in storage).
+  const deleteVisibleRules = async () => {
+    const doomed = visibleRules();
+    if (doomed.length === 0) return;
+    const ok = await askConfirm({
+      message: filterActive()
+        ? tr("rules.delete_filtered_confirm", {
+            count: String(doomed.length),
+            query: rulesFilter().trim(),
+          })
+        : tr("rules.delete_all_confirm", { count: String(doomed.length) }),
+      detail: tr("rules.delete_all_detail"),
+      confirmLabel: tr("common.delete"),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.rules.deleteBulk(
+        filterActive()
+          ? { kind: "ids", ids: doomed.map((r) => r.id) }
+          : { kind: "all" },
+      );
+    } catch (e) {
+      setLoadError((e as { message?: string })?.message ?? String(e));
+      return;
+    }
+    // The editor may be sitting on a rule that no longer exists, and each
+    // deleted rule may have left a draft key behind.
+    const ed = editing();
+    if (ed?.kind === "rule" && doomed.some((r) => r.id === ed.id)) {
+      setRuleEditorDirty(false);
+      setEditing(null);
+    }
+    for (const r of doomed) clearRuleDraft(ruleDraftKey(r.id, r.collection_id));
+    await refresh();
+  };
+
   // ── Import / export ──────────────────────────────────────────────
   //
   // Three export entry points (one rule, one collection, full
@@ -884,6 +931,23 @@ const RulesView: Component = () => {
             onClick={() => openCreateForm()}
           >
             <FolderPlus size={14} /> {t()("rules.new_collection")}
+          </button>
+          {/* Destructive, so it sits apart from the three benign actions and
+              is painted as danger. Its label counts what it will take. */}
+          <button
+            class="inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40 ml-1"
+            onClick={() => void deleteVisibleRules()}
+            disabled={visibleRules().length === 0}
+            title={
+              filterActive()
+                ? t()("rules.delete_filtered_title")
+                : t()("rules.delete_all_title")
+            }
+          >
+            <Trash2 size={14} />{" "}
+            {filterActive()
+              ? tr("rules.delete_filtered", { count: String(visibleRules().length) })
+              : t()("rules.delete_all")}
           </button>
         </div>
       </header>
