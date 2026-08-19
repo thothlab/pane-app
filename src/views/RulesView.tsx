@@ -397,7 +397,15 @@ const RulesView: Component = () => {
       danger: true,
     });
     if (!ok) return;
-    await api.collections.delete(c.id);
+    // Surfaced in the load-error banner, not `alert()` — that is dead in this
+    // webview for the same reason `confirm()` was (see stores/confirm), so a
+    // failed delete would otherwise look exactly like a successful one.
+    try {
+      await api.collections.delete(c.id);
+    } catch (e) {
+      setLoadError((e as { message?: string })?.message ?? String(e));
+      return;
+    }
     await refresh();
   };
 
@@ -555,7 +563,12 @@ const RulesView: Component = () => {
       danger: true,
     });
     if (!ok) return;
-    await api.rules.delete(r.id);
+    try {
+      await api.rules.delete(r.id);
+    } catch (e) {
+      setLoadError((e as { message?: string })?.message ?? String(e));
+      return;
+    }
     const ed = editing();
     if (ed?.kind === "rule" && ed.id === r.id) setEditing(null);
     // Drop any persisted draft for this rule — its key would otherwise
