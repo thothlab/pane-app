@@ -115,6 +115,14 @@ A single click only flips the rules whose current state differs from the target 
 
 The **enabled** checkbox inside an open rule editor behaves the same way — for an already-saved rule the toggle commits immediately and instantly syncs the collapsed-row switch and the collection-header tri-state, without waiting for Save.
 
+## Deleting rules
+
+The trash icon on a rule row deletes that rule; **Delete all** in the header clears the library. With a filter on, the second button relabels itself to "Delete N" and removes exactly what is on screen — the label and the action always describe the same set.
+
+Collections survive: a collection is grouping, not content, and after clearing the rules you usually want the same layout for the next set. Deleting a collection itself (the trash icon in its header) does not delete its rules — they move to Ungrouped.
+
+Every delete asks for confirmation. The dialog is our own, not the browser's: in the webview this app runs on, the native `confirm()` never renders and always answers "no" — which is why the delete buttons used to be silent in earlier versions.
+
 ## Drag to reorder
 
 Rule and collection order is also **match precedence**: the engine takes the first matching rule (by collection priority first, then rule priority). So you can reorder by dragging:
