@@ -35,7 +35,7 @@ import { withTimeout } from "@/lib/async";
 import { uniqueRuleName } from "@/lib/rule-names";
 import { matchesCollection, parseFilterTerms } from "@/lib/rules-filter";
 import { t, tr } from "@/i18n";
-import { askConfirm } from "@/stores/confirm";
+import { askConfirm, showMessage } from "@/stores/confirm";
 
 const FILTER_PALETTE = [
   "#60a5fa", // blue
@@ -229,11 +229,12 @@ const CapturesView: Component = () => {
     try {
       await api.host.enable();
     } catch (e: unknown) {
-      alert(
-        tr("captures.host_capture_failed", {
+      void showMessage({
+        message: tr("captures.host_capture_failed", {
           message: (e as { message?: string })?.message ?? String(e),
         }),
-      );
+        danger: true,
+      });
       return;
     }
     setDeviceToken("device:__host__");
@@ -461,7 +462,12 @@ const CapturesView: Component = () => {
       setSaveOpen(false);
     } catch (err) {
       console.error("save filter failed", err);
-      alert(tr("captures.save_failed", { message: (err as { message?: string })?.message ?? String(err) }));
+      void showMessage({
+        message: tr("captures.save_failed", {
+          message: (err as { message?: string })?.message ?? String(err),
+        }),
+        danger: true,
+      });
     } finally {
       setSaveBusy(false);
     }
@@ -891,7 +897,10 @@ const CapturesView: Component = () => {
       // actually attempted, so a null here means an empty batch —
       // nothing happened and there is nothing to report.
       if (lastError) {
-        alert(tr("captures.add_to_rules_failed", { message: lastError }));
+        void showMessage({
+          message: tr("captures.add_to_rules_failed", { message: lastError }),
+          danger: true,
+        });
       }
       return;
     }
@@ -1139,11 +1148,12 @@ const CapturesView: Component = () => {
       // the post-add navigation itself blows up. Same guard as
       // `addToNewCollection` — an unhandled rejection here would leave
       // the user with no message at all.
-      alert(
-        tr("captures.add_to_rules_failed", {
+      void showMessage({
+        message: tr("captures.add_to_rules_failed", {
           message: (e as { message?: string })?.message ?? String(e),
         }),
-      );
+        danger: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -1196,11 +1206,12 @@ const CapturesView: Component = () => {
     } catch (e: unknown) {
       // Only the collection creation can throw here — per-rule failures
       // are folded into the result and reported by `finishAdd`.
-      alert(
-        tr("captures.add_to_rules_failed", {
+      void showMessage({
+        message: tr("captures.add_to_rules_failed", {
           message: (e as { message?: string })?.message ?? String(e),
         }),
-      );
+        danger: true,
+      });
     } finally {
       setBusy(false);
     }
@@ -1250,7 +1261,10 @@ const CapturesView: Component = () => {
       await api.captures.clear();
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message ?? String(e);
-      alert(tr("captures.clear_failed", { message: msg }));
+      void showMessage({
+        message: tr("captures.clear_failed", { message: msg }),
+        danger: true,
+      });
       return;
     }
     void refresh(true);

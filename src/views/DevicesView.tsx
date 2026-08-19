@@ -5,7 +5,7 @@ import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import { writeClipboard } from "@/lib/clipboard";
 import { t, tr } from "@/i18n";
-import { askConfirm } from "@/stores/confirm";
+import { askConfirm, showMessage } from "@/stores/confirm";
 import type { DeviceDto, DiscoveredDeviceDto } from "@/ipc/types";
 
 /** What ca_install_state means visually — see pane-android::add_usb. */
@@ -68,7 +68,7 @@ const DevicesView: Component = () => {
       await invoke("logcat_open", { serial, appLabel: appLabel ?? null });
     } catch (e: unknown) {
       const msg = (e as { message?: string })?.message ?? String(e);
-      alert(msg);
+      void showMessage({ message: msg, danger: true });
     }
   };
 

@@ -62,15 +62,22 @@ export const ConfirmDialog: Component = () => {
               </div>
             </div>
             <div class="flex justify-end gap-2">
+              {/* A message has nothing to decline, so it gets one button —
+                  and that button may hold focus, unlike the confirm case. */}
+              <Show when={!req().dismissOnly}>
+                <button
+                  ref={cancelEl}
+                  type="button"
+                  class="text-sm px-3 py-1.5 rounded hover:bg-bg-muted text-fg-muted"
+                  onClick={() => resolveConfirm(false)}
+                >
+                  {req().cancelLabel ?? t()("common.cancel")}
+                </button>
+              </Show>
               <button
-                ref={cancelEl}
-                type="button"
-                class="text-sm px-3 py-1.5 rounded hover:bg-bg-muted text-fg-muted"
-                onClick={() => resolveConfirm(false)}
-              >
-                {req().cancelLabel ?? t()("common.cancel")}
-              </button>
-              <button
+                ref={(el) => {
+                  if (req().dismissOnly) cancelEl = el;
+                }}
                 type="button"
                 class={`text-sm px-3 py-1.5 rounded text-white hover:opacity-90 ${
                   req().danger ? "bg-danger" : "bg-accent"

@@ -31,7 +31,7 @@ import {
   X,
 } from "lucide-solid";
 import { t, tr } from "@/i18n";
-import { askConfirm } from "@/stores/confirm";
+import { askConfirm, showMessage } from "@/stores/confirm";
 import { compileLogcatFilter, resolveAppPids } from "@/lib/logcat-filter";
 import { savedFiltersFor } from "@/stores/saved-filters";
 import { fontScale, ROOT_PX } from "@/stores/font-scale";
@@ -1408,11 +1408,12 @@ const LogcatView: Component = () => {
       setSaveOpen(false);
     } catch (err) {
       console.error("save logcat filter failed", err);
-      alert(
-        tr("logcat.save_failed", {
+      void showMessage({
+        message: tr("logcat.save_failed", {
           message: (err as { message?: string })?.message ?? String(err),
         }),
-      );
+        danger: true,
+      });
     } finally {
       setSaveBusy(false);
     }

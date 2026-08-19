@@ -19,6 +19,7 @@
  */
 
 import { createSignal } from "solid-js";
+import { showMessage } from "@/stores/confirm";
 import { isTauri, updatesSupported } from "@/ipc/platform";
 
 export { updatesSupported };
@@ -93,6 +94,12 @@ export async function installPendingUpdate(): Promise<void> {
     await relaunch();
   } catch (e) {
     console.error("[updater] install failed", e);
-    alert(`Update failed to install: ${(e as Error).message ?? e}`);
+    // Not `alert()`: it draws nothing in this webview, so a failed install
+    // used to look exactly like a hung one — the app neither restarts nor
+    // says why.
+    void showMessage({
+      message: `Update failed to install: ${(e as Error).message ?? e}`,
+      danger: true,
+    });
   }
 }

@@ -34,6 +34,15 @@ export interface ConfirmRequest {
   cancelLabel?: string;
   /** Paints the confirm button as destructive. */
   danger?: boolean;
+  /**
+   * No choice to make — one button that dismisses. This is the `alert()`
+   * replacement, and it is dead for exactly the same reason `confirm()` is:
+   * without `runJavaScriptAlertPanel` the webview draws nothing, so every
+   * "export failed", "import failed", "update failed" message in this app
+   * was going nowhere. An error nobody can see is worse than the missing
+   * confirmation was — the action already went wrong by then.
+   */
+  dismissOnly?: boolean;
 }
 
 interface PendingConfirm extends ConfirmRequest {
@@ -55,6 +64,17 @@ export function askConfirm(req: ConfirmRequest): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     setPendingConfirm({ ...req, resolve });
   });
+}
+
+/**
+ * Show a message with a single dismiss button — the `alert()` replacement.
+ * Resolves when the user closes it, so a caller can await the acknowledgement
+ * before moving on (nothing does today; it keeps the shape honest).
+ */
+export function showMessage(
+  req: Omit<ConfirmRequest, "cancelLabel" | "dismissOnly">,
+): Promise<void> {
+  return askConfirm({ ...req, dismissOnly: true }).then(() => undefined);
 }
 
 /** Answer the open dialog. No-op when nothing is pending. */

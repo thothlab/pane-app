@@ -40,7 +40,7 @@ import {
   type CollectionContext,
 } from "@/lib/rules-filter";
 import { TagChips, TagEditor } from "@/components/Tags";
-import { askConfirm } from "@/stores/confirm";
+import { askConfirm, showMessage } from "@/stores/confirm";
 import {
   applyImport,
   buildCollectionExport,
@@ -639,11 +639,12 @@ const RulesView: Component = () => {
     try {
       await api.rules.exportWrite(path, JSON.stringify(file, null, 2));
     } catch (e) {
-      alert(
-        tr("rules.export_failed", {
+      void showMessage({
+        message: tr("rules.export_failed", {
           message: (e as { message?: string })?.message ?? String(e),
         }),
-      );
+        danger: true,
+      });
     }
   };
 
@@ -684,23 +685,27 @@ const RulesView: Component = () => {
       // `parseImportFile` for why the second one is worth supporting.
       const validated = parseImportFile(parsed);
       if (typeof validated === "string") {
-        alert(tr("rules.import_invalid", { message: validated }));
+        void showMessage({
+          message: tr("rules.import_invalid", { message: validated }),
+          danger: true,
+        });
         return;
       }
       const summary = await applyImport(validated);
       await refresh();
-      alert(
-        tr("rules.import_success", {
+      void showMessage({
+        message: tr("rules.import_success", {
           collections: String(summary.collections),
           rules: String(summary.rules),
         }),
-      );
+      });
     } catch (e) {
-      alert(
-        tr("rules.import_failed", {
+      void showMessage({
+        message: tr("rules.import_failed", {
           message: (e as { message?: string })?.message ?? String(e),
         }),
-      );
+        danger: true,
+      });
     }
   };
 
