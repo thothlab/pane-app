@@ -5,6 +5,7 @@ import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import { writeClipboard } from "@/lib/clipboard";
 import { t, tr } from "@/i18n";
+import { askConfirm } from "@/stores/confirm";
 import type { DeviceDto, DiscoveredDeviceDto } from "@/ipc/types";
 
 /** What ca_install_state means visually — see pane-android::add_usb. */
@@ -48,7 +49,12 @@ const DevicesView: Component = () => {
   };
 
   const remove = async (id: string) => {
-    if (!confirm(tr("devices.remove_confirm"))) return;
+    const ok = await askConfirm({
+      message: tr("devices.remove_confirm"),
+      confirmLabel: tr("devices.remove"),
+      danger: true,
+    });
+    if (!ok) return;
     await api.devices.remove(id);
     await refetch();
   };

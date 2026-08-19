@@ -9,6 +9,8 @@ import { docsUrl } from "@/components/HelpButton";
 import { setFilter } from "@/stores/captures";
 import { filters, saveFilter, deleteFilter, refreshFilters } from "@/stores/saved-filters";
 import { t, tr } from "@/i18n";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { askConfirm } from "@/stores/confirm";
 import {
   checkForUpdatesNow,
   checkForUpdatesOnStartup,
@@ -215,11 +217,14 @@ const Layout: ParentComponent = (props) => {
                       type="button"
                       class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0"
                       title={t()("nav.delete_filter")}
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation();
-                        if (confirm(tr("nav.delete_filter_confirm", { name: f.name }))) {
-                          void deleteFilter(f.id);
-                        }
+                        const ok = await askConfirm({
+                          message: tr("nav.delete_filter_confirm", { name: f.name }),
+                          confirmLabel: tr("common.delete"),
+                          danger: true,
+                        });
+                        if (ok) void deleteFilter(f.id);
                       }}
                     >
                       <X size={12} />
@@ -269,6 +274,8 @@ const Layout: ParentComponent = (props) => {
         onReset={() => setSidebarWidth(SIDEBAR_DEFAULT)}
       />
       <main class="overflow-hidden">{props.children}</main>
+      {/* One host for every `askConfirm` in the app — see stores/confirm. */}
+      <ConfirmDialog />
     </div>
   );
 };

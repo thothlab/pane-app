@@ -292,9 +292,9 @@ const en = {
     delete: "Delete",
     delete_title: "Delete",
     delete_collection_title: "Delete collection",
-    delete_collection_confirm:
-      "Delete collection \"{{name}}\"? Its rules will move to Ungrouped.",
+    delete_collection_confirm: "Delete collection \"{{name}}\"?",
     delete_rule_confirm: "Delete rule \"{{name}}\"?",
+    delete_collection_detail: "Its rules survive and move to Ungrouped.",
     edit: "Edit",
     import: "Import",
     import_title: "Import rules or a collection from a .json file",
@@ -598,6 +598,7 @@ const en = {
       "Apache-2.0. Built on top of rustls, rcgen, libimobiledevice, and the Android Platform Tools.",
   },
   common: {
+    ok: "OK",
     cancel: "Cancel",
     save: "Save",
     delete: "Delete",

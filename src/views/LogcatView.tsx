@@ -31,6 +31,7 @@ import {
   X,
 } from "lucide-solid";
 import { t, tr } from "@/i18n";
+import { askConfirm } from "@/stores/confirm";
 import { compileLogcatFilter, resolveAppPids } from "@/lib/logcat-filter";
 import { savedFiltersFor } from "@/stores/saved-filters";
 import { fontScale, ROOT_PX } from "@/stores/font-scale";
@@ -1596,13 +1597,14 @@ const LogcatView: Component = () => {
                     type="button"
                     class="opacity-0 group-hover:opacity-100 hover:text-danger shrink-0"
                     title={t()("logcat.delete_filter")}
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      if (
-                        confirm(tr("logcat.delete_filter_confirm", { name: f.name }))
-                      ) {
-                        void savedStore.remove(f.id);
-                      }
+                      const ok = await askConfirm({
+                        message: tr("logcat.delete_filter_confirm", { name: f.name }),
+                        confirmLabel: tr("common.delete"),
+                        danger: true,
+                      });
+                      if (ok) void savedStore.remove(f.id);
                     }}
                   >
                     <X size={12} />

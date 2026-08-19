@@ -289,9 +289,9 @@ const ru: Dict = {
     delete: "Удалить",
     delete_title: "Удалить",
     delete_collection_title: "Удалить коллекцию",
-    delete_collection_confirm:
-      "Удалить коллекцию «{{name}}»? Её правила переедут в «Без группы».",
+    delete_collection_confirm: "Удалить коллекцию «{{name}}»?",
     delete_rule_confirm: "Удалить правило «{{name}}»?",
+    delete_collection_detail: "Её правила не удаляются - переедут в «Без группы».",
     edit: "Редактировать",
     import: "Импорт",
     import_title: "Импортировать правила или коллекцию из .json",
@@ -598,6 +598,7 @@ const ru: Dict = {
       "Apache-2.0. Построено на rustls, rcgen, libimobiledevice и Android Platform Tools.",
   },
   common: {
+    ok: "OK",
     cancel: "Отмена",
     save: "Сохранить",
     delete: "Удалить",

@@ -11,6 +11,7 @@ import {
   type FontScale,
 } from "@/stores/font-scale";
 import { t, tr, locale, setLocale, LOCALES } from "@/i18n";
+import { askConfirm } from "@/stores/confirm";
 import { groupByBaseDomain } from "@/lib/host-grouping";
 import {
   capturesPoll,
@@ -67,7 +68,14 @@ const SettingsView: Component = () => {
   );
 
   const rotate = async () => {
-    if (!confirm(tr("settings.ca_rotate_confirm"))) return;
+    // askConfirm, not confirm(): the native dialog never renders in this
+    // webview and returns false, so this guard used to swallow every click.
+    const ok = await askConfirm({
+      message: tr("settings.ca_rotate_confirm"),
+      confirmLabel: tr("settings.ca_rotate"),
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await api.ca.rotate();

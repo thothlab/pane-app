@@ -35,6 +35,7 @@ import { withTimeout } from "@/lib/async";
 import { uniqueRuleName } from "@/lib/rule-names";
 import { matchesCollection, parseFilterTerms } from "@/lib/rules-filter";
 import { t, tr } from "@/i18n";
+import { askConfirm } from "@/stores/confirm";
 
 const FILTER_PALETTE = [
   "#60a5fa", // blue
@@ -1239,7 +1240,12 @@ const CapturesView: Component = () => {
   const selected = createMemo(() => captures().find((c) => c.id === selectedId()) ?? null);
 
   const clearAll = async () => {
-    if (!confirm(tr("captures.clear_confirm"))) return;
+    const ok = await askConfirm({
+      message: tr("captures.clear_confirm"),
+      confirmLabel: tr("captures.clear"),
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.captures.clear();
     } catch (e: unknown) {

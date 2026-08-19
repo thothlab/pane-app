@@ -40,6 +40,7 @@ import {
   type CollectionContext,
 } from "@/lib/rules-filter";
 import { TagChips, TagEditor } from "@/components/Tags";
+import { askConfirm } from "@/stores/confirm";
 import {
   applyImport,
   buildCollectionExport,
@@ -385,8 +386,17 @@ const RulesView: Component = () => {
     setRenamingId(null);
   };
 
+  // `askConfirm`, never `confirm()`: the native one returns false without
+  // drawing anything in this webview, so every delete behind it was a
+  // guaranteed no-op. See stores/confirm.
   const deleteCollection = async (c: RuleCollectionDto) => {
-    if (!confirm(tr("rules.delete_collection_confirm", { name: c.name }))) return;
+    const ok = await askConfirm({
+      message: tr("rules.delete_collection_confirm", { name: c.name }),
+      detail: tr("rules.delete_collection_detail"),
+      confirmLabel: tr("common.delete"),
+      danger: true,
+    });
+    if (!ok) return;
     await api.collections.delete(c.id);
     await refresh();
   };
@@ -537,7 +547,14 @@ const RulesView: Component = () => {
   };
 
   const removeRule = async (r: RuleDto) => {
-    if (!confirm(tr("rules.delete_rule_confirm", { name: r.name }))) return;
+    const ok = await askConfirm({
+      message: tr("rules.delete_rule_confirm", {
+        name: r.name || t()("rules.unnamed_rule"),
+      }),
+      confirmLabel: tr("common.delete"),
+      danger: true,
+    });
+    if (!ok) return;
     await api.rules.delete(r.id);
     const ed = editing();
     if (ed?.kind === "rule" && ed.id === r.id) setEditing(null);
