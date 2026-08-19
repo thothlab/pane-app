@@ -506,6 +506,41 @@ fn arg_structs_deserialize_from_wire_json() {
     assert!(r.patches.is_empty());
     assert!(r.match_conditions.is_empty());
     assert!(r.match_req_body.is_none());
+    // Tags are optional too: a client written before they existed omits them.
+    assert!(r.tags.is_empty());
+
+    // The bulk scope is externally tagged so "everything" can never be read as
+    // "the ungrouped ones" — getting that wrong on a delete is unrecoverable,
+    // so every variant is pinned here, `ids` included.
+    let all: RulesDeleteBulkArgs =
+        serde_json::from_value(json!({"scope": {"kind": "all"}})).unwrap();
+    assert!(matches!(all.scope, RuleBulkScope::All));
+
+    let ungrouped: RulesDeleteBulkArgs =
+        serde_json::from_value(json!({"scope": {"kind": "ungrouped"}})).unwrap();
+    assert!(matches!(ungrouped.scope, RuleBulkScope::Ungrouped));
+
+    let one = Uuid::nil();
+    let coll: RulesDeleteBulkArgs =
+        serde_json::from_value(json!({"scope": {"kind": "collection", "id": one}})).unwrap();
+    assert!(matches!(coll.scope, RuleBulkScope::Collection { id } if id == one));
+
+    let ids: RulesDeleteBulkArgs =
+        serde_json::from_value(json!({"scope": {"kind": "ids", "ids": [one]}})).unwrap();
+    assert!(matches!(ids.scope, RuleBulkScope::Ids { ref ids } if ids == &vec![one]));
+
+    // Same scope on the enable side, where the variant was added along the way.
+    let en: RulesSetEnabledBulkArgs =
+        serde_json::from_value(json!({"enabled": false, "scope": {"kind": "ids", "ids": [one]}}))
+            .unwrap();
+    assert!(!en.enabled);
+    assert!(matches!(en.scope, RuleBulkScope::Ids { .. }));
+
+    // And the result the caller reads back.
+    assert_eq!(
+        shape(&RulesDeleteBulkResult { deleted: 3 }),
+        json!({ "deleted": "number" })
+    );
 
     let l: LogcatQueryArgs = serde_json::from_value(json!({
         "serial": "R5CT30ABCDE", "filter": "level:E",
