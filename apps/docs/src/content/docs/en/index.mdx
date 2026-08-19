@@ -14,12 +14,13 @@ hero:
       icon: external
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { CardGrid } from '@astrojs/starlight/components';
+import Card from '../../../components/Card.astro';
 
 ## Why Pane
 
 <CardGrid>
-  <Card title="Trust setup over USB" icon="seti:apple">
+  <Card title="Trust setup over USB" icon="usb">
     Plug a phone in, hit Add device. Pane installs the root CA over USB
     (fully automatic on iOS and rooted Android; one manual step on
     non-root Android because Google blocks programmatic CA install,

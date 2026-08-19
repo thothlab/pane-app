@@ -1,0 +1,129 @@
+---
+// Local stand-in for Starlight's `Card`, with a USB glyph added.
+//
+// Starlight 0.30 ships a closed icon set — no USB symbol, and no
+// supported way to add one — so `icon="usb"` is drawn here and every
+// other name falls through to Starlight's own `<Icon>`. Nothing
+// typechecks `icon` in MDX, so a name that is not in the set — a
+// mistyped `seti:` prefix, say — renders as an empty `<svg>` inside
+// the bordered box: a coloured square with no icon in it.
+//
+// Markup and styles are a verbatim copy of Starlight's Card so the
+// per-card colour rotation still lines up. That rotation is
+// `nth-child` inside this component's scope, which means a card grid
+// must use this component for *all* of its cards, never a mix of this
+// one and Starlight's.
+import type { ComponentProps } from 'astro/types';
+import { Icon } from '@astrojs/starlight/components';
+
+interface Props {
+  icon?: ComponentProps<typeof Icon>['name'] | 'usb';
+  title: string;
+}
+
+const { icon, title } = Astro.props;
+---
+
+<article class="card sl-flex">
+  <p class="title sl-flex">
+    {
+      icon === 'usb' ? (
+        <svg
+          class="icon"
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path d="M12 1.6 15.4 6.4H8.6Z" />
+          <path
+            d="M12 6.4V19"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+          <circle cx="12" cy="20.2" r="2.4" />
+          <path
+            d="M12 16.2 5.4 11.6V10.6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <rect x="3.3" y="6.4" width="4.2" height="4.2" rx="0.5" />
+          <path
+            d="M12 12.2 18.6 7.6V6.6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <circle cx="18.6" cy="4.4" r="2.2" />
+        </svg>
+      ) : (
+        icon && <Icon name={icon} class="icon" size="1.333em" />
+      )
+    }
+    <span set:html={title} />
+  </p>
+  <div class="body"><slot /></div>
+</article>
+
+<style>
+  .card {
+    --sl-card-border: var(--sl-color-purple);
+    --sl-card-bg: var(--sl-color-purple-low);
+    border: 1px solid var(--sl-color-gray-5);
+    background-color: var(--sl-color-black);
+    padding: clamp(1rem, calc(0.125rem + 3vw), 2.5rem);
+    flex-direction: column;
+    gap: clamp(0.5rem, calc(0.125rem + 1vw), 1rem);
+  }
+  .card:nth-child(4n + 1) {
+    --sl-card-border: var(--sl-color-orange);
+    --sl-card-bg: var(--sl-color-orange-low);
+  }
+  .card:nth-child(4n + 3) {
+    --sl-card-border: var(--sl-color-green);
+    --sl-card-bg: var(--sl-color-green-low);
+  }
+  .card:nth-child(4n + 4) {
+    --sl-card-border: var(--sl-color-red);
+    --sl-card-bg: var(--sl-color-red-low);
+  }
+  .card:nth-child(4n + 5) {
+    --sl-card-border: var(--sl-color-blue);
+    --sl-card-bg: var(--sl-color-blue-low);
+  }
+  .title {
+    font-weight: 600;
+    font-size: var(--sl-text-h4);
+    color: var(--sl-color-white);
+    line-height: var(--sl-line-height-headings);
+    gap: 1rem;
+    align-items: center;
+  }
+  /* `:global` because `<Icon>` renders in its own style scope. */
+  .card :global(.icon) {
+    border: 1px solid var(--sl-card-border);
+    background-color: var(--sl-card-bg);
+    padding: 0.2em;
+    border-radius: 0.25rem;
+  }
+  /* Starlight's `<Icon>` sizes itself from its `size` prop; the inline
+     USB svg above has to be told the same 1.333em. */
+  .card :global(svg.icon) {
+    font-size: 1.333em;
+    width: 1em;
+    height: 1em;
+  }
+  .card .body {
+    margin: 0;
+    font-size: clamp(var(--sl-text-sm), calc(0.5rem + 1vw), var(--sl-text-body));
+  }
+</style>

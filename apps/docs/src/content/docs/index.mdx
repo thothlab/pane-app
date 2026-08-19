@@ -14,12 +14,13 @@ hero:
       icon: external
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { CardGrid } from '@astrojs/starlight/components';
+import Card from '../../components/Card.astro';
 
 ## Зачем Pane
 
 <CardGrid>
-  <Card title="Настройка устройства через USB" icon="seti:apple">
+  <Card title="Настройка устройства через USB" icon="usb">
     Подключи телефон, нажми Add device — Pane через USB поставит root
     CA (на iOS и рутованном Android — полный авто; на non-root
     Android из-за блокировки Google нужен один ручной шаг по
