@@ -45,6 +45,39 @@ sees `state:stubbed`. `only` makes that impossible.
 Single rules toggle the same way — `pane rules enable|disable <sel>` — but reach
 for the collection first.
 
+## Two devices, two scenarios, at once
+
+Without `--device`, `only` stomps every connected phone — which is fine on one
+device and actively wrong on four. Add `--device <sel>` and the switch applies to
+that device alone; the others keep running what they were running.
+
+```console
+$ pane devices ls
+ID        STATE  PLATFORM  NAME
+a91f3c02  ready  android   Google Pixel 7 · Android 14 · r-0XXH
+77b1e4de  ready  android   Google sdk_gphone64 · Android 14 · r-5554
+
+$ pane rules disable --all --device pixel
+pane: disabled 14 of 21 rules for a91f3c02
+pane: 14 rule(s) are now pinned to named devices — a device paired from here on
+      will not get them (undo with `pane rules enable --all`)
+$ pane collections only checkout --device pixel
+$ pane collections only errors --device 77b1e4de
+```
+
+`<sel>` is a device name substring, serial or id — the same string
+`--filter 'device:…'` takes. `__host__` scopes to this Mac's own traffic.
+
+Two things to know before scripting it:
+
+- **Pinning is one-way per rule.** Switching a rule off for one device writes out
+  the devices it stays on for, so a phone paired later starts with none of them.
+  `pane rules enable --all` (no `--device`) returns the whole library to global.
+- **iOS cannot be scoped.** It shares the host proxy port, so its traffic is
+  never attributed to its own device row. `--device <ios>` is refused rather than
+  accepted-and-ignored, and an iOS device only ever sees rules scoped to all
+  devices.
+
 ## Prove the mock actually served the request
 
 `state:stubbed` says *a* mock answered. With a large library that is much weaker
@@ -55,6 +88,16 @@ Assert both sides.
 $ pane captures count --filter 'state:stubbed rule:orders-500'
 1
 $ pane captures count --filter 'host:api.example.com state:completed'
+0
+```
+
+Running scenarios per device? Put `device:` on both sides too, or the other
+phone's traffic answers for this one:
+
+```console
+$ pane captures count --filter 'device:pixel state:stubbed rule:checkout-ok'
+1
+$ pane captures count --filter 'device:pixel rule:orders-500'
 0
 ```
 
@@ -138,6 +181,10 @@ pane rules import fixtures/all-rules.json
 
 Import always creates new entities; it never overwrites by name.
 
+A bundle carries the rule library, not the per-device wiring: device ids belong
+to one Mac's database, so a rule pinned to a phone exports as an ordinary
+enabled rule and imports as live everywhere. Re-scope it after import.
+
 ## Three things that will bite you
 
 **The CLI and the Pane app must be the same build.** The CLI refuses a data
@@ -167,6 +214,14 @@ Run your own instance instead of rebuilding the app: `pane proxy run &`.
 
 Selectors: full id, unique id prefix, or name substring. Ambiguity is an error
 listing candidates — it never picks for you. Destructive commands need `--yes`.
+A device selector also matches the display name or serial, so the string that
+works in `--filter 'device:…'` works in `--device`.
+
+Device scope: `--device <sel>` on `rules enable|disable|mock` and
+`collections enable|disable|only` applies the change to one device. Omit it and
+the change applies everywhere, exactly as before. `pane rules ls --device <sel>`
+reports each rule as that device sees it, with a `SCOPE` column showing which
+rules are pinned.
 
 Filter keys: `host: path: method: status: mime: size: duration: error: device:
 state: rule:` · bare word = host OR path · `!` negates · `a,b` = OR · `N..M` =

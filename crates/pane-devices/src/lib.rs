@@ -233,6 +233,14 @@ impl DeviceManager {
             "UPDATE device SET state='removed' WHERE id=?1",
             params![id.to_string()],
         )?;
+        // Drop this device from every rule's scope. The row itself is kept
+        // (re-pairing restores the device), but a stale scope entry would sit
+        // in the rule list as a device nobody can see, and would come back to
+        // life pointing at whatever re-used that id.
+        conn.execute(
+            "DELETE FROM rule_device WHERE device_id=?1",
+            params![id.to_string()],
+        )?;
         Ok(RemoveDeviceResult {
             cleaned,
             pending_cleanup: !cleaned,

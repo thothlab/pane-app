@@ -71,6 +71,27 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Автоматизация',
+          translations: { en: 'Automation' },
+          items: [
+            {
+              label: 'CLI pane',
+              translations: { en: 'The pane CLI' },
+              link: '/cli/',
+            },
+            {
+              label: 'Pane без окна',
+              translations: { en: 'Headless Pane' },
+              link: '/headless/',
+            },
+            {
+              label: 'Агенты и MCP',
+              translations: { en: 'Agents and MCP' },
+              link: '/agents/',
+            },
+          ],
+        },
+        {
           label: 'Справочник',
           translations: { en: 'Reference' },
           items: [

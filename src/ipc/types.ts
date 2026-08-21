@@ -198,6 +198,12 @@ export interface RuleDto {
   id: string;
   name: string;
   enabled: boolean;
+  /** Which devices the `enabled` flag covers: every device, or exactly the ids
+   * in `devices`. The scope of the checkbox, not a second switch beside it. */
+  enabled_scope: "all" | "set";
+  /** Device ids (or the `__host__` sentinel) this rule is live for when
+   * `enabled_scope` is `"set"`. Empty for `"all"`. */
+  devices: string[];
   priority: number;
   collection_id: string | null;
   mode: RuleMode;
@@ -228,6 +234,12 @@ export interface RuleUpsertArgs {
   id?: string | null;
   name: string;
   enabled: boolean;
+  /** Omit to leave the rule's device scoping exactly as it is. Every caller
+   * here sends a whole rule, so a missing field has to be inert — otherwise
+   * editing a status code would silently unbind the rule from its device. */
+  enabled_scope?: "all" | "set" | null;
+  /** Same "absent = don't touch" rule as `enabled_scope`. */
+  devices?: string[] | null;
   priority: number;
   collection_id: string | null;
   mode: RuleMode;

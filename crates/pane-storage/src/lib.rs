@@ -14,6 +14,24 @@ mod replay_impl;
 pub use bodies::BodyStore;
 pub use logcat::LogcatInsert;
 
+/// Scope id for this Mac's own traffic — port 8888 is never handed to a device,
+/// so host captures are attributed to this instead of a `device` row. Mirrors
+/// `pane_core::host_proxy::HOST_SENTINEL`, which is macOS-gated and therefore
+/// not usable from here.
+pub const SCOPE_HOST: &str = "__host__";
+
+/// Scope id for traffic we could not attribute: iOS (forwarded 8888 → 8888,
+/// never through the device port pool), the Mac's own traffic with host capture
+/// off, and a device sharing a port after pool exhaustion.
+///
+/// This exists so "we don't know which device" is a scope like any other rather
+/// than a hole in the predicate. It matters when an on-for-every-device rule is
+/// switched off for one phone: the remaining scopes have to be written out, and
+/// leaving this one out would quietly stop mocking iOS and Mac-local traffic as
+/// a side effect of a command that named a completely different device.
+pub const SCOPE_UNATTRIBUTED: &str = "__none__";
+
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,7 +46,7 @@ use pane_ipc::{
     SessionDto, TlsHealthDto,
 };
 use parking_lot::Mutex;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{named_params, params, Connection, OptionalExtension};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -1018,6 +1036,78 @@ impl Storage {
 
     // ---------- Rules (response stubbing) ----------
 
+    /// `rule_id -> device ids` for one rule, or for the whole table when
+    /// `only` is `None`. Rules with an `all` scope simply have no rows.
+    fn load_rule_devices(&self, only: Option<Uuid>) -> Result<HashMap<String, Vec<String>>> {
+        let conn = self.conn.lock();
+        let mut out: HashMap<String, Vec<String>> = HashMap::new();
+        let mut push = |rule_id: String, device_id: String| {
+            out.entry(rule_id).or_default().push(device_id);
+        };
+        match only {
+            Some(id) => {
+                let mut stmt =
+                    conn.prepare("SELECT rule_id, device_id FROM rule_device WHERE rule_id=?1")?;
+                let rows = stmt.query_map(params![id.to_string()], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })?;
+                for row in rows {
+                    let (rule_id, device_id) = row?;
+                    push(rule_id, device_id);
+                }
+            }
+            None => {
+                let mut stmt = conn.prepare("SELECT rule_id, device_id FROM rule_device")?;
+                let rows =
+                    stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                for row in rows {
+                    let (rule_id, device_id) = row?;
+                    push(rule_id, device_id);
+                }
+            }
+        }
+        for v in out.values_mut() {
+            v.sort();
+        }
+        Ok(out)
+    }
+
+    /// Every scope a request can currently arrive under: the paired devices,
+    /// this Mac, and unattributed traffic.
+    ///
+    /// `'all'` is shorthand for this set *including members that do not exist
+    /// yet*. The moment a rule is scoped away from one device the shorthand has
+    /// to be spelled out, and this is what it expands to. Both sentinels are in
+    /// deliberately: without them, switching a rule off for one phone would also
+    /// stop mocking iOS and the Mac's own browser — traffic the command never
+    /// mentioned. With them, the expansion changes nothing except for the scope
+    /// that was actually named.
+    ///
+    /// Unpaired devices are excluded: `devices rm` marks the row `removed`
+    /// rather than deleting it, and a device nobody is using should not collect
+    /// scope rows. A device paired in the moment between this read and the
+    /// surrounding transaction misses the expansion; the window is milliseconds
+    /// and the fix is the documented one, `pane rules enable --all`.
+    ///
+    /// iOS is excluded too, for the same reason `--device <ios>` is refused: its
+    /// traffic shares the host proxy port and is never stamped with its device
+    /// id, so a row naming it could never match. Nothing is lost by leaving it
+    /// out — that traffic arrives as `__host__` or `__none__`, both of which are
+    /// in the set.
+    fn known_scope_ids(conn: &Connection) -> Result<Vec<String>> {
+        let mut stmt =
+            conn.prepare("SELECT id FROM device WHERE state <> 'removed' AND platform <> 'ios'")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut ids = vec![
+            crate::SCOPE_HOST.to_string(),
+            crate::SCOPE_UNATTRIBUTED.to_string(),
+        ];
+        for r in rows {
+            ids.push(r?);
+        }
+        Ok(ids)
+    }
+
     pub fn list_rules(&self) -> Result<Vec<RuleDto>> {
         let mut dtos = {
             let conn = self.conn.lock();
@@ -1026,7 +1116,7 @@ impl Storage {
                         match_host_glob, match_method, match_path_glob, match_query,
                         res_status, res_headers, res_body_id, res_delay_ms,
                         created_at, updated_at, collection_id, mode, patches,
-                        match_req_body, match_conditions, tags
+                        match_req_body, match_conditions, enabled_scope, tags
                  FROM rule
                  ORDER BY priority ASC, created_at ASC",
             )?;
@@ -1037,6 +1127,10 @@ impl Storage {
             }
             v
         };
+        // One extra query for the whole table rather than one per rule: the GUI
+        // re-reads this list on every refresh, and a real library is hundreds of
+        // rules.
+        let mut scopes = self.load_rule_devices(None)?;
         for dto in dtos.iter_mut() {
             if let Some(bid) = dto.res_body_id {
                 let (mime, bytes) = self
@@ -1046,6 +1140,7 @@ impl Storage {
                 dto.res_body_mime = mime;
                 dto.res_body_size = bytes.len() as u64;
             }
+            dto.devices = scopes.remove(&dto.id.to_string()).unwrap_or_default();
         }
         Ok(dtos)
     }
@@ -1057,7 +1152,7 @@ impl Storage {
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
                     created_at, updated_at, collection_id, mode, patches,
-                    match_req_body, match_conditions, tags
+                    match_req_body, match_conditions, enabled_scope, tags
              FROM rule WHERE id=?1",
             params![id.to_string()],
             Self::map_rule_row,
@@ -1071,6 +1166,10 @@ impl Storage {
             dto.res_body_mime = mime;
             dto.res_body_size = bytes.len() as u64;
         }
+        dto.devices = self
+            .load_rule_devices(Some(id))?
+            .remove(&id.to_string())
+            .unwrap_or_default();
         Ok(dto)
     }
 
@@ -1119,21 +1218,61 @@ impl Storage {
         };
         let conn = self.conn.lock();
         // Preserve created_at on update.
-        let existing_created: Option<i64> = conn
+        let existing: Option<(i64, String)> = conn
             .query_row(
-                "SELECT created_at FROM rule WHERE id=?1",
+                "SELECT created_at, enabled_scope FROM rule WHERE id=?1",
                 params![id.to_string()],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        let created_at = existing_created.unwrap_or(now);
+        let created_at = existing.as_ref().map(|(c, _)| *c).unwrap_or(now);
+        // An absent scope means "leave it as it is" — every caller sends a whole
+        // rule, so treating a missing field as a reset would unbind a rule from
+        // its device the first time anyone edited its status code.
+        let mut enabled_scope = match args.enabled_scope.as_deref() {
+            Some("set") => "set".to_string(),
+            Some(_) => "all".to_string(),
+            None => existing
+                .as_ref()
+                .map(|(_, sc)| sc.clone())
+                .unwrap_or_else(|| "all".to_string()),
+        };
+
+        // Normalize to the only two shapes a rule is allowed to hold, so the
+        // list can never show a ticked rule that is incapable of firing:
+        //   off           -> scope 'all', no device rows (off carries no memory)
+        //   on for nobody -> off
+        // `devices_to_write == None` still means "leave the existing rows alone".
+        let mut enabled = args.enabled;
+        let mut devices_to_write = args.devices.clone();
+        if enabled && enabled_scope == "set" {
+            let effective_is_empty = match devices_to_write.as_ref() {
+                Some(v) => v.is_empty(),
+                None => {
+                    let n: i64 = conn.query_row(
+                        "SELECT COUNT(*) FROM rule_device WHERE rule_id=?1",
+                        params![id.to_string()],
+                        |r| r.get(0),
+                    )?;
+                    n == 0
+                }
+            };
+            if effective_is_empty {
+                enabled = false;
+            }
+        }
+        if !enabled || enabled_scope == "all" {
+            enabled_scope = "all".to_string();
+            devices_to_write = Some(Vec::new());
+        }
         conn.execute(
             "INSERT INTO rule (id, name, enabled, priority,
                     match_host_glob, match_method, match_path_glob, match_query,
                     res_status, res_headers, res_body_id, res_delay_ms,
                     created_at, updated_at, collection_id, mode, patches, match_req_body,
-                    match_conditions, tags)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                    match_conditions, enabled_scope, tags)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                     ?19, ?20, ?21)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, enabled=excluded.enabled, priority=excluded.priority,
                 match_host_glob=excluded.match_host_glob, match_method=excluded.match_method,
@@ -1142,12 +1281,13 @@ impl Storage {
                 res_body_id=excluded.res_body_id, res_delay_ms=excluded.res_delay_ms,
                 collection_id=excluded.collection_id, mode=excluded.mode,
                 patches=excluded.patches, match_req_body=excluded.match_req_body,
-                match_conditions=excluded.match_conditions, tags=excluded.tags,
+                match_conditions=excluded.match_conditions,
+                enabled_scope=excluded.enabled_scope, tags=excluded.tags,
                 updated_at=excluded.updated_at",
             params![
                 id.to_string(),
                 &args.name,
-                args.enabled as i64,
+                enabled as i64,
                 args.priority,
                 args.match_host_glob,
                 args.match_method,
@@ -1164,15 +1304,37 @@ impl Storage {
                 patches_json,
                 match_req_body,
                 match_conditions,
+                &enabled_scope,
                 tags,
             ],
         )?;
+        // Same "absent = don't touch" rule as the scope itself.
+        if let Some(devices) = devices_to_write.as_ref() {
+            conn.execute(
+                "DELETE FROM rule_device WHERE rule_id=?1",
+                params![id.to_string()],
+            )?;
+            let mut stmt = conn.prepare(
+                "INSERT OR IGNORE INTO rule_device (rule_id, device_id) VALUES (?1, ?2)",
+            )?;
+            for device in devices {
+                stmt.execute(params![id.to_string(), device])?;
+            }
+        }
         drop(conn);
         self.get_rule(id)
     }
 
     pub fn delete_rule(&self, id: Uuid) -> Result<()> {
         let conn = self.conn.lock();
+        // The FK cascades (foreign_keys=ON everywhere we open), but say it out
+        // loud: an orphan scope row would re-attach itself to whatever rule id
+        // came next, and rule ids are UUIDs only because nothing has needed
+        // them to be anything else.
+        conn.execute(
+            "DELETE FROM rule_device WHERE rule_id=?1",
+            params![id.to_string()],
+        )?;
         conn.execute("DELETE FROM rule WHERE id=?1", params![id.to_string()])?;
         Ok(())
     }
@@ -1180,14 +1342,140 @@ impl Storage {
     pub fn set_rule_enabled(&self, args: RuleSetEnabledArgs) -> Result<()> {
         let conn = self.conn.lock();
         let now = OffsetDateTime::now_utc().unix_timestamp();
-        conn.execute(
-            "UPDATE rule SET enabled=?1, updated_at=?2 WHERE id=?3",
-            params![args.enabled as i64, now, args.id.to_string()],
-        )?;
+        match args.device.as_deref() {
+            None => Self::set_enabled_everywhere(&conn, &args.id.to_string(), args.enabled, now)?,
+            Some(device) => {
+                Self::set_enabled_for_device(
+                    &conn,
+                    &args.id.to_string(),
+                    args.enabled,
+                    device,
+                    now,
+                )?;
+            }
+        }
         Ok(())
     }
 
-    /// Flip `enabled` on a whole scope of rules in one statement.
+    /// The device-agnostic flip: on means on for every device, off means off
+    /// everywhere. Either way the rule goes back to a plain `all` scope and
+    /// loses its device rows, so "enable this rule" always lands in the same
+    /// state no matter what a previous per-device run left behind.
+    fn set_enabled_everywhere(
+        conn: &Connection,
+        rule_id: &str,
+        enabled: bool,
+        now: i64,
+    ) -> Result<()> {
+        conn.execute(
+            "UPDATE rule SET enabled=?1, enabled_scope='all', updated_at=?2 WHERE id=?3",
+            params![enabled as i64, now, rule_id],
+        )?;
+        conn.execute("DELETE FROM rule_device WHERE rule_id=?1", params![rule_id])?;
+        Ok(())
+    }
+
+    /// Flip one rule for one device. Returns `(changed, materialized)`.
+    ///
+    /// Switching a rule OFF for one device when it was on for all of them has to
+    /// write out the devices it stays on for — there is no "everywhere except"
+    /// state, and inventing one would mean a second place that decides whether a
+    /// ticked rule fires. That rewrite is the `materialized` count: it is
+    /// reported rather than hidden, because it also decides what a device paired
+    /// *later* will see (nothing — it is not in the list).
+    fn set_enabled_for_device(
+        conn: &Connection,
+        rule_id: &str,
+        enabled: bool,
+        device: &str,
+        now: i64,
+    ) -> Result<(u64, u64)> {
+        let (cur_enabled, cur_scope): (bool, String) = match conn
+            .query_row(
+                "SELECT enabled, enabled_scope FROM rule WHERE id=?1",
+                params![rule_id],
+                |r| Ok((r.get::<_, i64>(0)? != 0, r.get::<_, String>(1)?)),
+            )
+            .optional()?
+        {
+            Some(v) => v,
+            None => return Ok((0, 0)),
+        };
+        let has_row: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM rule_device WHERE rule_id=?1 AND device_id=?2)",
+            params![rule_id, device],
+            |r| Ok(r.get::<_, i64>(0)? != 0),
+        )?;
+        let live_now = cur_enabled && (cur_scope == "all" || has_row);
+        if live_now == enabled {
+            return Ok((0, 0));
+        }
+
+        if enabled {
+            conn.execute(
+                "UPDATE rule SET enabled=1, enabled_scope='set', updated_at=?1 WHERE id=?2",
+                params![now, rule_id],
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO rule_device (rule_id, device_id) VALUES (?1, ?2)",
+                params![rule_id, device],
+            )?;
+            return Ok((1, 0));
+        }
+
+        if cur_scope == "all" {
+            let others: Vec<String> = Self::known_scope_ids(conn)?
+                .into_iter()
+                .filter(|d| d != device)
+                .collect();
+            conn.execute("DELETE FROM rule_device WHERE rule_id=?1", params![rule_id])?;
+            if others.is_empty() {
+                // Nothing left to stay on for, so this is a plain "off".
+                conn.execute(
+                    "UPDATE rule SET enabled=0, enabled_scope='all', updated_at=?1 WHERE id=?2",
+                    params![now, rule_id],
+                )?;
+                return Ok((1, 0));
+            }
+            conn.execute(
+                "UPDATE rule SET enabled_scope='set', updated_at=?1 WHERE id=?2",
+                params![now, rule_id],
+            )?;
+            let mut stmt = conn.prepare(
+                "INSERT OR IGNORE INTO rule_device (rule_id, device_id) VALUES (?1, ?2)",
+            )?;
+            for other in &others {
+                stmt.execute(params![rule_id, other])?;
+            }
+            return Ok((1, 1));
+        }
+
+        conn.execute(
+            "DELETE FROM rule_device WHERE rule_id=?1 AND device_id=?2",
+            params![rule_id, device],
+        )?;
+        let left: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM rule_device WHERE rule_id=?1",
+            params![rule_id],
+            |r| r.get(0),
+        )?;
+        if left == 0 {
+            // An empty set is off, and saying so keeps `enabled` honest in the
+            // list instead of showing a ticked rule that can never fire.
+            conn.execute(
+                "UPDATE rule SET enabled=0, enabled_scope='all', updated_at=?1 WHERE id=?2",
+                params![now, rule_id],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE rule SET updated_at=?1 WHERE id=?2",
+                params![now, rule_id],
+            )?;
+        }
+        Ok((1, 0))
+    }
+
+    /// Flip `enabled` on a whole scope of rules.
     ///
     /// The GUI used to fan out one IPC call per rule because there was no
     /// batch endpoint; from the CLI the same job meant one process launch per
@@ -1195,6 +1483,12 @@ impl Storage {
     /// selector. On a 622-rule library that is 622 round trips to answer
     /// "turn everything off" — slow enough that people stopped doing it, which
     /// is how a run ends up with rules live that nobody meant to leave on.
+    ///
+    /// With `args.device` set the flip applies to one device only, and the work
+    /// goes through the same per-rule helper the single-rule path uses, wrapped
+    /// in one transaction. Duplicating the state machine as set-wise SQL would
+    /// be faster still, but "the bulk form and the single form disagree about
+    /// what enable means" is the bug this feature can least afford.
     pub fn set_rules_enabled_bulk(
         &self,
         args: RulesSetEnabledBulkArgs,
@@ -1203,11 +1497,16 @@ impl Storage {
         let now = OffsetDateTime::now_utc().unix_timestamp();
 
         // An explicit id list cannot be a predicate fragment — the number of
-        // placeholders varies — so it gets its own chunked path.
+        // placeholders varies — so it gets its own chunked path. It mirrors
+        // the predicate path below statement for statement, including the
+        // normalisation back to `enabled_scope='all'`: a sweep over a filtered
+        // subset that skipped that would leave rules ticked but still pinned to
+        // one phone, which is the state the device plane exists to make visible.
         if let RuleBulkScope::Ids { ids } = &args.scope {
             let tx = conn.transaction()?;
             let mut matched = 0u64;
             let mut changed = 0u64;
+            let mut materialized = 0u64;
             for chunk in ids.chunks(ID_CHUNK) {
                 let sql = format!(
                     "SELECT COUNT(*) FROM rule WHERE id IN ({})",
@@ -1216,53 +1515,135 @@ impl Storage {
                 let n: i64 = tx.query_row(&sql, id_params(chunk), |r| r.get(0))?;
                 matched += n as u64;
 
-                let sql = format!(
-                    "UPDATE rule SET enabled=?1, updated_at=?2 WHERE enabled<>?1 AND id IN ({})",
-                    placeholders_from(chunk.len(), 3)
-                );
-                let mut ps: Vec<Box<dyn rusqlite::ToSql>> =
-                    vec![Box::new(args.enabled as i64), Box::new(now)];
-                ps.extend(
-                    chunk
-                        .iter()
-                        .map(|u| Box::new(u.to_string()) as Box<dyn rusqlite::ToSql>),
-                );
-                changed += tx.execute(&sql, rusqlite::params_from_iter(ps.iter()))? as u64;
+                match args.device.as_deref() {
+                    None => {
+                        let sql = format!(
+                            "UPDATE rule SET enabled=?1, enabled_scope='all', updated_at=?2
+                             WHERE (enabled<>?1 OR enabled_scope<>'all') AND id IN ({})",
+                            placeholders_from(chunk.len(), 3)
+                        );
+                        let mut ps: Vec<Box<dyn rusqlite::ToSql>> =
+                            vec![Box::new(args.enabled as i64), Box::new(now)];
+                        ps.extend(
+                            chunk
+                                .iter()
+                                .map(|u| Box::new(u.to_string()) as Box<dyn rusqlite::ToSql>),
+                        );
+                        changed += tx.execute(&sql, rusqlite::params_from_iter(ps.iter()))? as u64;
+
+                        let del = format!(
+                            "DELETE FROM rule_device WHERE rule_id IN ({})",
+                            placeholders(chunk.len())
+                        );
+                        tx.execute(&del, id_params(chunk))?;
+                    }
+                    Some(device) => {
+                        for id in chunk {
+                            let (c, m) = Self::set_enabled_for_device(
+                                &tx,
+                                &id.to_string(),
+                                args.enabled,
+                                device,
+                                now,
+                            )?;
+                            changed += c;
+                            materialized += m;
+                        }
+                    }
+                }
             }
             tx.commit()?;
-            return Ok(RulesSetEnabledBulkResult { matched, changed });
+            return Ok(RulesSetEnabledBulkResult {
+                matched,
+                changed,
+                materialized,
+            });
         }
 
         // Built as a fragment rather than interpolating user input: the only
         // thing that varies is the shape of the predicate, and the collection
-        // id still travels as a bound parameter.
+        // id still travels as a bound parameter. Named rather than positional
+        // because the fragment is now glued into four statements, and the old
+        // `sql.replace("?3", "?1")` trick does not survive that.
         let (predicate, coll): (&str, Option<String>) = match &args.scope {
             RuleBulkScope::All => ("1=1", None),
             RuleBulkScope::Ungrouped => ("collection_id IS NULL", None),
-            RuleBulkScope::Collection { id } => ("collection_id = ?3", Some(id.to_string())),
+            RuleBulkScope::Collection { id } => ("collection_id = :coll", Some(id.to_string())),
             RuleBulkScope::Ids { .. } => unreachable!("handled above"),
         };
 
         let matched: u64 = {
             let sql = format!("SELECT COUNT(*) FROM rule WHERE {predicate}");
             match &coll {
-                Some(c) => conn.query_row(&sql.replace("?3", "?1"), params![c], |r| r.get(0))?,
+                Some(c) => conn.query_row(&sql, named_params! { ":coll": c }, |r| r.get(0))?,
                 None => conn.query_row(&sql, [], |r| r.get(0))?,
             }
         };
 
-        // `AND enabled<>?1` keeps `changed` honest and skips rewriting rows
-        // that already hold the target value.
-        let sql =
-            format!("UPDATE rule SET enabled=?1, updated_at=?2 WHERE {predicate} AND enabled<>?1");
-        let changed = match &coll {
-            Some(c) => conn.execute(&sql, params![args.enabled as i64, now, c])?,
-            None => conn.execute(&sql, params![args.enabled as i64, now])?,
+        let Some(device) = args.device.as_deref() else {
+            // Device-agnostic flip: also normalises the scope back to `all` and
+            // drops every device row, so "enable everything" lands in the same
+            // state no matter what a previous per-device run left behind. This
+            // is what makes `pane rules disable --all` the documented way back
+            // to a known state.
+            let sql = format!(
+                "UPDATE rule SET enabled=:enabled, enabled_scope='all', updated_at=:now
+                 WHERE {predicate} AND (enabled<>:enabled OR enabled_scope<>'all')"
+            );
+            let changed = match &coll {
+                Some(c) => conn.execute(
+                    &sql,
+                    named_params! { ":enabled": args.enabled as i64, ":now": now, ":coll": c },
+                )?,
+                None => conn.execute(
+                    &sql,
+                    named_params! { ":enabled": args.enabled as i64, ":now": now },
+                )?,
+            };
+            let del = format!(
+                "DELETE FROM rule_device WHERE rule_id IN (SELECT id FROM rule WHERE {predicate})"
+            );
+            match &coll {
+                Some(c) => conn.execute(&del, named_params! { ":coll": c })?,
+                None => conn.execute(&del, [])?,
+            };
+            return Ok(RulesSetEnabledBulkResult {
+                matched,
+                changed: changed as u64,
+                materialized: 0,
+            });
         };
+
+        let mut ids: Vec<String> = Vec::new();
+        {
+            let sql = format!("SELECT id FROM rule WHERE {predicate}");
+            let mut stmt = conn.prepare(&sql)?;
+            let mut rows = match &coll {
+                Some(c) => stmt.query(named_params! { ":coll": c })?,
+                None => stmt.query([])?,
+            };
+            while let Some(row) = rows.next()? {
+                ids.push(row.get(0)?);
+            }
+        }
+
+        // One transaction for the whole sweep: without it every statement is
+        // its own commit, and "turn the library off for this phone" is back to
+        // being slow enough that people skip it.
+        let tx = conn.unchecked_transaction()?;
+        let mut changed = 0u64;
+        let mut materialized = 0u64;
+        for id in &ids {
+            let (c, m) = Self::set_enabled_for_device(&tx, id, args.enabled, device, now)?;
+            changed += c;
+            materialized += m;
+        }
+        tx.commit()?;
 
         Ok(RulesSetEnabledBulkResult {
             matched,
-            changed: changed as u64,
+            changed,
+            materialized,
         })
     }
 
@@ -1317,26 +1698,44 @@ impl Storage {
         Ok(())
     }
 
-    /// Load active rules with their bodies materialized for the engine
-    /// matcher. A rule is active on its own `enabled` flag alone. Ordered by
-    /// collection priority then rule priority then created_at.
+    /// Load the rules that serve traffic for one scope, with their bodies
+    /// materialized for the engine matcher. Ordered by collection priority then
+    /// rule priority then created_at.
     ///
-    /// **The checkbox is the only truth.** There is deliberately no second
+    /// `scope` is the device resolved from the local port the connection landed
+    /// on, [`SCOPE_HOST`] for this Mac's traffic, or `None` for traffic we could
+    /// not attribute — normalized to [`SCOPE_UNATTRIBUTED`] here so "no device"
+    /// is a scope like any other rather than a hole in the predicate.
+    ///
+    /// **The checkbox is still the only truth.** There is deliberately no second
     /// switch on the collection that can also silence a rule. A collection is
     /// grouping and ordering, nothing more.
     ///
-    /// This was tried the other way and rejected: with a cascade, a rule can
-    /// sit there ticked and still not fire, and nothing about the rule itself
+    /// That was tried the other way and rejected: with a cascade, a rule can sit
+    /// there ticked and still not fire, and nothing about the rule itself
     /// explains why. Every "my mock isn't working" then has two places to look
-    /// instead of one. Switching scenarios does not need the extra state —
-    /// `set_rules_enabled_bulk` over a collection scope ticks and unticks the
-    /// boxes directly, which is both visible in the UI and the same mechanism
-    /// the user operates by hand.
+    /// instead of one.
+    ///
+    /// The device scope is not that second switch, and the difference is worth
+    /// stating because it looks similar. A cascade put the answer somewhere
+    /// else — on the collection. `enabled_scope` and its device list are *on the
+    /// rule*, listed in the rule row, and they answer a question the flag
+    /// structurally cannot: which of the four phones on the desk. A rule that is
+    /// ticked and not firing here says so on its own face — "on for:
+    /// emulator-5554" — which is exactly the property the cascade lacked.
     ///
     /// `rule_collection.enabled` still exists in the schema (V003) and is still
     /// carried in the DTO for export/import round-trips, but nothing reads it
     /// to decide what serves traffic. Do not reintroduce it here.
-    pub fn list_active_rules(&self) -> Result<Vec<ActiveRule>> {
+    ///
+    /// Filtering happens in SQL rather than over the returned rows on purpose:
+    /// the loop below materializes a body per rule (a `capture_body` lookup and,
+    /// for file-backed bodies, a read), so post-filtering would pay that cost
+    /// for rules that cannot fire. If a cache is ever added here it MUST be
+    /// keyed by scope — a scope-blind cache would serve one device's scenario to
+    /// another.
+    pub fn list_active_rules(&self, scope: Option<&str>) -> Result<Vec<ActiveRule>> {
+        let scope = scope.unwrap_or(crate::SCOPE_UNATTRIBUTED);
         let dtos = {
             let conn = self.conn.lock();
             let mut stmt = conn.prepare(
@@ -1344,15 +1743,18 @@ impl Storage {
                         r.match_host_glob, r.match_method, r.match_path_glob, r.match_query,
                         r.res_status, r.res_headers, r.res_body_id, r.res_delay_ms,
                         r.created_at, r.updated_at, r.collection_id, r.mode, r.patches,
-                        r.match_req_body, r.match_conditions, r.tags
+                        r.match_req_body, r.match_conditions, r.enabled_scope, r.tags
                  FROM rule r
                  LEFT JOIN rule_collection c ON c.id = r.collection_id
                  WHERE r.enabled=1
+                   AND (r.enabled_scope='all'
+                        OR EXISTS (SELECT 1 FROM rule_device rd
+                                    WHERE rd.rule_id = r.id AND rd.device_id = ?1))
                  ORDER BY COALESCE(c.priority, 0) ASC,
                           r.priority ASC,
                           r.created_at ASC",
             )?;
-            let rows = stmt.query_map([], Self::map_rule_row)?;
+            let rows = stmt.query_map(params![scope], Self::map_rule_row)?;
             let mut v = Vec::new();
             for r in rows {
                 v.push(r?);
@@ -1464,11 +1866,20 @@ impl Storage {
         let patches_json: String = r.get(16)?;
         let match_req_body: Option<String> = r.get(17)?;
         let match_conditions_json: Option<String> = r.get(18)?;
-        let tags_json: Option<String> = r.get(19)?;
+        let enabled_scope: String = r.get(19)?;
+        // Last column in all three projections above. Appended rather than
+        // slotted in: `map_rule_row` reads by index, so a column inserted
+        // anywhere but the end shifts every field after it — silently, and
+        // only against a real library.
+        let tags_json: Option<String> = r.get(20)?;
         Ok(RuleDto {
             id: Uuid::parse_str(&id).unwrap(),
             name: r.get(1)?,
             enabled: r.get::<_, i64>(2)? != 0,
+            enabled_scope,
+            // Filled in by the caller — one query for the whole set beats a
+            // lookup per row.
+            devices: Vec::new(),
             priority: r.get(3)?,
             collection_id: collection_id.and_then(|s| Uuid::parse_str(&s).ok()),
             mode,
@@ -1579,6 +1990,8 @@ mod rule_enablement_tests {
             id: None,
             name: name.into(),
             enabled: true,
+            enabled_scope: None,
+            devices: None,
             priority: 0,
             collection_id,
             mode: "stub".into(),
@@ -1602,7 +2015,13 @@ mod rule_enablement_tests {
     }
 
     fn active_names(s: &Storage) -> Vec<String> {
-        s.list_active_rules()
+        active_names_for(s, None)
+    }
+
+    /// What the engine would serve to one scope: a device id, `SCOPE_HOST`, or
+    /// `None` for traffic we could not attribute.
+    fn active_names_for(s: &Storage, scope: Option<&str>) -> Vec<String> {
+        s.list_active_rules(scope)
             .unwrap()
             .into_iter()
             .map(|r| r.name)
@@ -1654,11 +2073,13 @@ mod rule_enablement_tests {
         s.set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
             enabled: false,
             scope: RuleBulkScope::All,
+            device: None,
         })
         .unwrap();
         s.set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
             enabled: true,
             scope: RuleBulkScope::Collection { id: b },
+            device: None,
         })
         .unwrap();
 
@@ -1683,6 +2104,7 @@ mod rule_enablement_tests {
             .set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
                 enabled: false,
                 scope: RuleBulkScope::All,
+                device: None,
             })
             .unwrap();
         assert_eq!((r.matched, r.changed), (3, 3));
@@ -1693,6 +2115,7 @@ mod rule_enablement_tests {
             .set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
                 enabled: false,
                 scope: RuleBulkScope::All,
+                device: None,
             })
             .unwrap();
         assert_eq!((again.matched, again.changed), (3, 0));
@@ -1713,6 +2136,7 @@ mod rule_enablement_tests {
             .set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
                 enabled: false,
                 scope: RuleBulkScope::Collection { id: a },
+                device: None,
             })
             .unwrap();
         assert_eq!((r.matched, r.changed), (1, 1));
@@ -1735,10 +2159,294 @@ mod rule_enablement_tests {
             .set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
                 enabled: false,
                 scope: RuleBulkScope::Ungrouped,
+                device: None,
             })
             .unwrap();
         assert_eq!((r.matched, r.changed), (1, 1));
         assert_eq!(active_names(&s), vec!["grouped"]);
+    }
+
+    // ---------- per-device scope ----------
+
+    fn device(s: &Storage, serial: &str) -> String {
+        device_of(s, serial, "android")
+    }
+
+    fn device_of(s: &Storage, serial: &str, platform: &str) -> String {
+        let id = Uuid::new_v4().to_string();
+        s.conn()
+            .lock()
+            .execute(
+                "INSERT INTO device (id, platform, connection, serial, display_name, state,
+                                     created_at)
+                 VALUES (?1, ?4, 'usb', ?2, ?3, 'ready', 0)",
+                params![id, serial, format!("Device {serial}"), platform],
+            )
+            .unwrap();
+        id
+    }
+
+    fn bulk(
+        s: &Storage,
+        enabled: bool,
+        scope: RuleBulkScope,
+        device: Option<&str>,
+    ) -> pane_ipc::RulesSetEnabledBulkResult {
+        s.set_rules_enabled_bulk(pane_ipc::RulesSetEnabledBulkArgs {
+            enabled,
+            scope,
+            device: device.map(str::to_string),
+        })
+        .unwrap()
+    }
+
+    /// The reason this feature exists: two phones, two scenarios, at once.
+    #[test]
+    fn two_devices_run_different_scenarios() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let emu = device(&s, "emulator-5554");
+        let pixel = device(&s, "pixel");
+        let checkout = collection(&s, "checkout", true);
+        let errors = collection(&s, "errors", true);
+        rule(&s, "checkout-ok", Some(checkout));
+        rule(&s, "orders-500", Some(errors));
+
+        bulk(&s, false, RuleBulkScope::All, Some(&emu));
+        bulk(
+            &s,
+            true,
+            RuleBulkScope::Collection { id: errors },
+            Some(&emu),
+        );
+        bulk(&s, false, RuleBulkScope::All, Some(&pixel));
+        bulk(
+            &s,
+            true,
+            RuleBulkScope::Collection { id: checkout },
+            Some(&pixel),
+        );
+
+        assert_eq!(active_names_for(&s, Some(&emu)), vec!["orders-500"]);
+        assert_eq!(active_names_for(&s, Some(&pixel)), vec!["checkout-ok"]);
+    }
+
+    /// Switching a rule off for one device must not touch the others — including
+    /// the two scopes nobody named. Traffic we cannot attribute and the Mac's
+    /// own traffic keep exactly what they had, which is what makes expanding the
+    /// "all devices" shorthand safe to do behind the user's back.
+    #[test]
+    fn disabling_for_one_device_leaves_every_other_scope_alone() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let pixel = device(&s, "pixel");
+        let emu = device(&s, "emulator-5554");
+        rule(&s, "orders-500", None);
+
+        let r = bulk(&s, false, RuleBulkScope::All, Some(&pixel));
+        assert_eq!(r.materialized, 1, "the wildcard had to be spelled out");
+
+        assert!(active_names_for(&s, Some(&pixel)).is_empty());
+        assert_eq!(active_names_for(&s, Some(&emu)), vec!["orders-500"]);
+        assert_eq!(active_names_for(&s, Some(SCOPE_HOST)), vec!["orders-500"]);
+        assert_eq!(active_names_for(&s, None), vec!["orders-500"]);
+    }
+
+    /// There is exactly one representation of "fires nowhere": the unticked box.
+    /// A ticked rule with an empty device set would be a rule that looks live in
+    /// the list and can never serve a request.
+    #[test]
+    fn a_rule_scoped_to_nobody_is_simply_off() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let pixel = device(&s, "pixel");
+        let id = rule(&s, "orders-500", None);
+
+        // Only one device exists, so switching it off there leaves nothing —
+        // except the two sentinels, which still count as somewhere.
+        bulk(&s, false, RuleBulkScope::All, Some(&pixel));
+        assert!(
+            s.get_rule(id).unwrap().enabled,
+            "still on for host/unattributed"
+        );
+
+        bulk(&s, false, RuleBulkScope::All, Some(SCOPE_HOST));
+        bulk(&s, false, RuleBulkScope::All, Some(SCOPE_UNATTRIBUTED));
+
+        let dto = s.get_rule(id).unwrap();
+        assert!(!dto.enabled);
+        assert_eq!(dto.enabled_scope, "all");
+        assert!(dto.devices.is_empty(), "off carries no memory");
+    }
+
+    /// The documented way back to a known state has to clear device scoping too,
+    /// or `pane rules disable --all` would stop meaning what AGENTS.md says.
+    #[test]
+    fn a_bare_disable_all_clears_device_scoping() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let pixel = device(&s, "pixel");
+        let id = rule(&s, "orders-500", None);
+        bulk(&s, false, RuleBulkScope::All, Some(&pixel));
+        assert_eq!(s.get_rule(id).unwrap().enabled_scope, "set");
+
+        bulk(&s, false, RuleBulkScope::All, None);
+        let dto = s.get_rule(id).unwrap();
+        assert!(!dto.enabled);
+        assert_eq!(dto.enabled_scope, "all");
+        assert!(dto.devices.is_empty());
+    }
+
+    /// Enabling without naming a device widens a scoped rule back to everywhere.
+    /// Without this there is no way out of a narrowed library.
+    #[test]
+    fn enabling_globally_widens_a_scoped_rule() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let pixel = device(&s, "pixel");
+        let emu = device(&s, "emulator-5554");
+        let id = rule(&s, "orders-500", None);
+        bulk(&s, false, RuleBulkScope::All, Some(&pixel));
+        assert!(active_names_for(&s, Some(&pixel)).is_empty());
+
+        bulk(&s, true, RuleBulkScope::All, None);
+        let dto = s.get_rule(id).unwrap();
+        assert_eq!(dto.enabled_scope, "all");
+        assert!(dto.devices.is_empty());
+        assert_eq!(active_names_for(&s, Some(&pixel)), vec!["orders-500"]);
+        assert_eq!(active_names_for(&s, Some(&emu)), vec!["orders-500"]);
+    }
+
+    /// Enabling for a device a rule is already live on everywhere must not
+    /// narrow it as a side effect — that would be a silent loss from a command
+    /// that says "enable".
+    #[test]
+    fn enabling_for_one_device_does_not_narrow_a_global_rule() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let pixel = device(&s, "pixel");
+        let emu = device(&s, "emulator-5554");
+        let id = rule(&s, "orders-500", None);
+
+        let r = bulk(&s, true, RuleBulkScope::All, Some(&pixel));
+        assert_eq!(r.changed, 0, "already live there");
+        assert_eq!(s.get_rule(id).unwrap().enabled_scope, "all");
+        assert_eq!(active_names_for(&s, Some(&emu)), vec!["orders-500"]);
+    }
+
+    /// Every rule-writing caller sends a whole rule. If a missing scope meant
+    /// "reset", editing a status code would silently unbind the rule from the
+    /// device its scenario runs on.
+    #[test]
+    fn editing_a_rule_keeps_its_device_scope() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let pixel = device(&s, "pixel");
+        let id = rule(&s, "orders-500", None);
+        bulk(&s, false, RuleBulkScope::All, Some(&pixel));
+        let before = s.get_rule(id).unwrap();
+        assert_eq!(before.enabled_scope, "set");
+
+        let args = RuleUpsertArgs {
+            id: Some(id),
+            name: before.name.clone(),
+            enabled: before.enabled,
+            enabled_scope: None,
+            devices: None,
+            priority: before.priority,
+            collection_id: before.collection_id,
+            mode: before.mode.clone(),
+            patches: vec![],
+            match_host_glob: before.match_host_glob.clone(),
+            match_method: None,
+            match_path_glob: None,
+            match_params: vec![],
+            match_req_body: None,
+            match_conditions: vec![],
+            tags: vec![],
+            res_status: 503,
+            res_headers: vec![],
+            res_body_id: None,
+            res_body_base64: None,
+            res_body_mime: None,
+            res_delay_ms: 0,
+        };
+        s.upsert_rule(args).unwrap();
+
+        let after = s.get_rule(id).unwrap();
+        assert_eq!(after.res_status, 503);
+        assert_eq!(after.enabled_scope, "set");
+        assert_eq!(after.devices, before.devices);
+    }
+
+    #[test]
+    fn deleting_a_rule_takes_its_device_set_with_it() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let pixel = device(&s, "pixel");
+        let id = rule(&s, "orders-500", None);
+        bulk(&s, false, RuleBulkScope::All, Some(&pixel));
+        s.delete_rule(id).unwrap();
+
+        let left: i64 = s
+            .conn()
+            .lock()
+            .query_row("SELECT COUNT(*) FROM rule_device", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    /// iOS never gets a port of its own, so its traffic is never stamped with
+    /// its device id. Writing that id into a rule's scope would be a row that
+    /// can never match — and it would inflate every "on for N devices" count on
+    /// the way. Its traffic is covered by the unattributed scope instead.
+    #[test]
+    fn ios_is_left_out_of_the_expanded_scope() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let pixel = device(&s, "pixel");
+        let iphone = device_of(&s, "00008110-001", "ios");
+        let id = rule(&s, "orders-500", None);
+
+        bulk(&s, false, RuleBulkScope::All, Some(&pixel));
+
+        let scoped = s.get_rule(id).unwrap();
+        assert!(
+            !scoped.devices.contains(&iphone),
+            "iOS must not collect scope rows it can never match: {:?}",
+            scoped.devices
+        );
+        // Its traffic still gets the rule, through the unattributed scope.
+        assert_eq!(active_names_for(&s, None), vec!["orders-500"]);
+    }
+
+    /// The flag still dominates: a rule scoped to a device but switched off
+    /// serves nobody.
+    #[test]
+    fn a_disabled_rule_stays_off_for_its_own_device() {
+        let dir = tempdir().unwrap();
+        let s = Storage::open(dir.path()).unwrap();
+
+        let pixel = device(&s, "pixel");
+        let id = rule(&s, "orders-500", None);
+        bulk(&s, true, RuleBulkScope::All, Some(&pixel));
+
+        s.set_rule_enabled(pane_ipc::RuleSetEnabledArgs {
+            id,
+            enabled: false,
+            device: None,
+        })
+        .unwrap();
+        assert!(active_names_for(&s, Some(&pixel)).is_empty());
     }
 }
 
@@ -1778,6 +2486,8 @@ mod rule_tag_tests {
             id: None,
             name: name.into(),
             enabled: true,
+            enabled_scope: None,
+            devices: None,
             priority: 0,
             collection_id: None,
             mode: "stub".into(),
@@ -1867,6 +2577,8 @@ mod rule_tag_tests {
                 id: Some(saved.id),
                 name: saved.name.clone(),
                 enabled: saved.enabled,
+                enabled_scope: None,
+                devices: None,
                 priority: saved.priority,
                 collection_id: None,
                 mode: "stub".into(),
@@ -1913,7 +2625,7 @@ mod rule_tag_tests {
         let dir = tempdir().unwrap();
         let s = Storage::open(dir.path()).unwrap();
         rule_with_tags(&s, "tagged", vec!["smoke".into()]);
-        let active = s.list_active_rules().unwrap();
+        let active = s.list_active_rules(None).unwrap();
         assert_eq!(active.len(), 1, "a tagged rule is still just a rule");
         assert_eq!(active[0].name, "tagged");
     }
@@ -1942,6 +2654,8 @@ mod rule_bulk_delete_tests {
             id: None,
             name: name.into(),
             enabled: true,
+            enabled_scope: None,
+            devices: None,
             priority: 0,
             collection_id,
             mode: "stub".into(),
@@ -2085,6 +2799,8 @@ mod rule_bulk_delete_tests {
             .set_rules_enabled_bulk(RulesSetEnabledBulkArgs {
                 enabled: false,
                 scope: RuleBulkScope::Ids { ids: vec![a] },
+                // Global plane: no device picked, so this is the plain flip.
+                device: None,
             })
             .unwrap();
         assert_eq!((res.matched, res.changed), (1, 1));

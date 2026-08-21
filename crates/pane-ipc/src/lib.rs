@@ -455,6 +455,16 @@ pub struct RuleDto {
     pub id: Uuid,
     pub name: String,
     pub enabled: bool,
+    /// Which devices the `enabled` flag covers: `"all"` (every device, including
+    /// ones paired later) or `"set"` (exactly the ids in `devices`). This is the
+    /// scope of the checkbox, not a second switch beside it — see the doc comment
+    /// on `Storage::list_active_rules_for_device`.
+    #[serde(default = "default_enabled_scope")]
+    pub enabled_scope: String,
+    /// Device-row ids (or the `__host__` sentinel) this rule is live for when
+    /// `enabled_scope` is `"set"`. Empty for `"all"`.
+    #[serde(default)]
+    pub devices: Vec<String>,
     pub priority: i64,
     pub collection_id: Option<Uuid>,
 
@@ -499,6 +509,17 @@ pub struct RuleUpsertArgs {
     pub id: Option<Uuid>,
     pub name: String,
     pub enabled: bool,
+    /// `None` means "leave the current scope alone", NOT "reset to all". Every
+    /// caller here sends a whole rule (the GUI editor, `rules mock`, bundle
+    /// import, "mock this request"), so a missing field has to be inert —
+    /// otherwise editing a rule's status code would silently unbind it from the
+    /// device its scenario runs on. A brand-new rule with no scope defaults to
+    /// `"all"`, which is also what a pre-device `pane-rules` bundle imports as.
+    #[serde(default)]
+    pub enabled_scope: Option<String>,
+    /// Same "absent = don't touch" rule as `enabled_scope`.
+    #[serde(default)]
+    pub devices: Option<Vec<String>>,
     pub priority: i64,
     pub collection_id: Option<Uuid>,
 
@@ -536,10 +557,18 @@ fn default_mode() -> String {
     "stub".to_string()
 }
 
+fn default_enabled_scope() -> String {
+    "all".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleSetEnabledArgs {
     pub id: Uuid,
     pub enabled: bool,
+    /// Scope the flip to one device. `None` keeps the pre-device behaviour:
+    /// enable = on for every device, disable = off everywhere.
+    #[serde(default)]
+    pub device: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -574,6 +603,9 @@ pub enum RuleBulkScope {
 pub struct RulesSetEnabledBulkArgs {
     pub enabled: bool,
     pub scope: RuleBulkScope,
+    /// Scope the flip to one device. `None` keeps the pre-device behaviour.
+    #[serde(default)]
+    pub device: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -596,6 +628,12 @@ pub struct RulesSetEnabledBulkResult {
     /// caller can tell "nothing to do" from "scope matched nothing" — the
     /// second is usually a typo'd selector, the first is success.
     pub changed: u64,
+    /// How many rules stopped being on-for-every-device as a side effect.
+    /// Turning a rule off for one device when it was on for all of them has to
+    /// pin it to the remaining devices explicitly, and that silently changes
+    /// what a device paired later will see — so it is reported, not hidden.
+    #[serde(default)]
+    pub materialized: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

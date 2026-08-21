@@ -120,13 +120,19 @@ export const api = {
     get: (id: string) => call<RuleDto>("rule_get", { id }),
     upsert: (args: RuleUpsertArgs) => call<RuleDto>("rule_upsert", { args }),
     delete: (id: string) => call<void>("rule_delete", { id }),
-    setEnabled: (id: string, enabled: boolean) =>
-      call<void>("rule_set_enabled", { args: { id, enabled } }),
+    /** `device` scopes the flip to one device; omit it to apply everywhere. */
+    setEnabled: (id: string, enabled: boolean, device?: string | null) =>
+      call<void>("rule_set_enabled", { args: { id, enabled, device } }),
     /** Flip a whole scope in one call instead of one call per rule. */
-    setEnabledBulk: (enabled: boolean, scope: RuleBulkScope) =>
-      call<{ matched: number; changed: number }>("rules_set_enabled_bulk", {
-        args: { enabled, scope },
-      }),
+    setEnabledBulk: (
+      enabled: boolean,
+      scope: RuleBulkScope,
+      device?: string | null,
+    ) =>
+      call<{ matched: number; changed: number; materialized: number }>(
+        "rules_set_enabled_bulk",
+        { args: { enabled, scope, device } },
+      ),
     /** Delete a whole scope in one transaction, so a big clear cannot
      *  half-finish and leave the user guessing how far it got. */
     deleteBulk: (scope: RuleBulkScope) =>

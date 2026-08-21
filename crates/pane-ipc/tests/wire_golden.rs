@@ -304,6 +304,8 @@ fn rule_dto_shape() {
         id: uuid(),
         name: "orders-500".into(),
         enabled: true,
+        enabled_scope: "set".into(),
+        devices: vec!["c0ffee00-0000-4000-8000-000000000001".into()],
         priority: 0,
         collection_id: Some(uuid()),
         mode: "stub".into(),
@@ -341,7 +343,9 @@ fn rule_dto_shape() {
     assert_eq!(
         shape(&r),
         json!({
-            "id": "string", "name": "string", "enabled": "bool", "priority": "number",
+            "id": "string", "name": "string", "enabled": "bool",
+            "enabled_scope": "string", "devices": ["string"],
+            "priority": "number",
             "collection_id": "string",
             "mode": "string",
             "patches": [{"op": "string", "path": "string", "value": "number"}],
@@ -535,6 +539,9 @@ fn arg_structs_deserialize_from_wire_json() {
             .unwrap();
     assert!(!en.enabled);
     assert!(matches!(en.scope, RuleBulkScope::Ids { .. }));
+    // Omitted `device` = the global plane, so a client written before the
+    // device plane keeps meaning "everywhere".
+    assert!(en.device.is_none());
 
     // And the result the caller reads back.
     assert_eq!(

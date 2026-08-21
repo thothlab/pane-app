@@ -1,4 +1,10 @@
--- Schema v15: free-form tags on rules and on collections.
+-- Schema v16: free-form tags on rules and on collections.
+--
+-- Written as V015 on a branch that started before per-device scoping landed;
+-- renumbered on merge because V015 was taken by `rule_device_scope`. Two live
+-- branches picked the same number, which is the collision that has already
+-- shipped a startup abort once — check every branch, not just main, before
+-- claiming a version.
 --
 -- `tags` holds a JSON array of strings ("smoke", "регресс", "ios"). NULL and
 -- `[]` both mean "untagged"; the writer normalises to NULL so there is one

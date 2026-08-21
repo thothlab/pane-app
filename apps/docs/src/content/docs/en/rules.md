@@ -115,6 +115,38 @@ A single click only flips the rules whose current state differs from the target 
 
 The **enabled** checkbox inside an open rule editor behaves the same way — for an already-saved rule the toggle commits immediately and instantly syncs the collapsed-row switch and the collection-header tri-state, without waiting for Save.
 
+## Per-device scenarios
+
+With more than one device paired, a device selector appears in the Rules header.
+It starts on **All devices**, where everything behaves exactly as before and a
+checkbox means "on everywhere".
+
+Pick a specific device and the list is read through its eyes: a checkbox means
+"live on this device" and changes only that one. The second phone keeps running
+its own scenario — which is what lets several runs go in parallel instead of
+queueing behind one shared rule library. While a device is selected a banner
+above the list names it: a mode you cannot see is a mode you edit by accident.
+
+A rule pinned to specific devices is marked in its own row with an `N dev` badge.
+That is deliberate. A cascading switch on the collection was tried and reverted
+because a rule could sit there ticked and silently not fire, with nothing on the
+rule to explain it. The scope lives on the rule and shows in its row, so "why
+didn't my mock fire" still has one place to look.
+
+Worth knowing:
+
+- Switching a rule off for one device writes out the devices it stays on for, so
+  a device paired later will not get it. Enabling it on the All devices plane
+  returns it to global.
+- Duplicating a rule carries its scope: a copy of a rule pinned to one phone does
+  not quietly spread to all of them.
+- iOS is listed but not selectable: its traffic goes through the shared proxy
+  port and is not attributed per device. Such devices only ever see rules enabled
+  for all devices.
+- The device selection does not survive a restart, just like the library filter.
+  Every launch starts on the global plane, so nobody edits the wrong phone from
+  the memory of a previous session.
+
 ## Deleting rules
 
 The trash icon on a rule row deletes that rule; **Delete all** in the header clears the library. With a filter on, the second button relabels itself to "Delete N" and removes exactly what is on screen — the label and the action always describe the same set.
@@ -122,6 +154,7 @@ The trash icon on a rule row deletes that rule; **Delete all** in the header cle
 Collections survive: a collection is grouping, not content, and after clearing the rules you usually want the same layout for the next set. Deleting a collection itself (the trash icon in its header) does not delete its rules — they move to Ungrouped.
 
 Every delete asks for confirmation. The dialog is our own, not the browser's: in the webview this app runs on, the native `confirm()` never renders and always answers "no" — which is why the delete buttons used to be silent in earlier versions.
+
 
 ## Drag to reorder
 

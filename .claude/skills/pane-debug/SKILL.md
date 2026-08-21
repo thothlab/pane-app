@@ -128,6 +128,12 @@ them; `pane collections only <name>` switches scenario in a single call. See the
 **pane-mock** skill for creating rules and for the assertion pattern that proves
 which one served a response.
 
+A rule can also be scoped to particular devices, which is worth knowing when a
+mock "isn't firing": with several phones paired, it may simply be live on another
+one. `pane rules ls --device <sel>` answers that directly — a `LIVE` column for
+that device and a `SCOPE` column showing which rules are pinned rather than
+global.
+
 ## Two things that will bite you
 
 **The CLI and the Pane app must be the same build.** The CLI refuses a data

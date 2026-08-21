@@ -111,6 +111,22 @@ fn human_capture_table(rows: &[Value]) {
 /// silent pick — choosing for the user here would mean deleting or disabling
 /// the wrong rule.
 fn resolve(items: &[Value], selector: &str, name_field: &str, what: &str) -> Result<String> {
+    resolve_by(items, selector, &[name_field], what).map(|(id, _)| id)
+}
+
+/// Selector resolution over several human-readable fields.
+///
+/// Devices need two of them: the captures DSL matches `device:` against display
+/// name *or* serial (`filter_dsl::device_clause`), and a `--device` flag that
+/// only understood serials would reject the very string the user just verified
+/// their filter with. Returns the matched item alongside its id so a caller can
+/// inspect the rest of the row.
+fn resolve_by<'a>(
+    items: &'a [Value],
+    selector: &str,
+    name_fields: &[&str],
+    what: &str,
+) -> Result<(String, &'a Value)> {
     let sel = selector.to_lowercase();
     let id_of = |v: &Value| {
         v.get("id")
@@ -118,21 +134,24 @@ fn resolve(items: &[Value], selector: &str, name_field: &str, what: &str) -> Res
             .unwrap_or("")
             .to_string()
     };
+    let names_of = |v: &'a Value| -> Vec<&'a str> {
+        name_fields
+            .iter()
+            .filter_map(|f| v.get(*f).and_then(|x| x.as_str()))
+            .collect()
+    };
 
     if let Some(hit) = items
         .iter()
         .find(|v| id_of(v).eq_ignore_ascii_case(selector))
     {
-        return Ok(id_of(hit));
+        return Ok((id_of(hit), hit));
     }
     let matches: Vec<&Value> = items
         .iter()
         .filter(|v| {
             id_of(v).to_lowercase().starts_with(&sel)
-                || v.get(name_field)
-                    .and_then(|x| x.as_str())
-                    .map(|n| n.to_lowercase().contains(&sel))
-                    .unwrap_or(false)
+                || names_of(v).iter().any(|n| n.to_lowercase().contains(&sel))
         })
         .collect();
 
@@ -141,17 +160,11 @@ fn resolve(items: &[Value], selector: &str, name_field: &str, what: &str) -> Res
             pane_ipc::kinds::NOT_FOUND,
             format!("no {what} matches `{selector}`"),
         ))),
-        1 => Ok(id_of(matches[0])),
+        1 => Ok((id_of(matches[0]), matches[0])),
         _ => {
             let names: Vec<String> = matches
                 .iter()
-                .map(|v| {
-                    format!(
-                        "{} {}",
-                        short(&id_of(v)),
-                        v.get(name_field).and_then(|x| x.as_str()).unwrap_or("")
-                    )
-                })
+                .map(|v| format!("{} {}", short(&id_of(v)), names_of(v).join(" ")))
                 .collect();
             Err(anyhow!(
                 "`{selector}` matches {} {what}s:\n  {}",
@@ -641,24 +654,37 @@ async fn tail(s: &mut Session, args: TailArgs) -> Result<i32> {
 
 async fn rules(s: &mut Session, cmd: RulesCmd, format: Format) -> Result<i32> {
     match cmd {
-        RulesCmd::Ls => {
+        RulesCmd::Ls { device } => {
+            let scope = match device.as_deref() {
+                Some(sel) => Some(resolve_device(s, sel).await?),
+                None => None,
+            };
             let v = s.call("rules.list", Value::Null).await?;
             match format {
                 Format::Json => print_json(&v),
                 Format::Human => {
+                    // With a device named, STATE answers "is this live on that
+                    // phone" rather than reporting the raw flag — the rows are
+                    // all still listed, because "why isn't my mock firing" has
+                    // to be answerable without guessing which rules were hidden.
                     println!(
-                        "{:<9} {:<7} {:<28} {:<7} MATCH",
-                        "ID", "STATE", "NAME", "STATUS"
+                        "{:<9} {:<7} {:<10} {:<28} {:<7} MATCH",
+                        "ID",
+                        if scope.is_some() { "LIVE" } else { "STATE" },
+                        "SCOPE",
+                        "NAME",
+                        "STATUS"
                     );
                     for r in as_array(v) {
+                        let state = match scope.as_deref() {
+                            Some(d) => live_on(&r, d),
+                            None => r["enabled"].as_bool().unwrap_or(false),
+                        };
                         println!(
-                            "{:<9} {:<7} {:<28} {:<7} {} {}{}",
+                            "{:<9} {:<7} {:<10} {:<28} {:<7} {} {}{}",
                             short(r["id"].as_str().unwrap_or("")),
-                            if r["enabled"].as_bool().unwrap_or(false) {
-                                "on"
-                            } else {
-                                "off"
-                            },
+                            if state { "on" } else { "off" },
+                            scope_label(&r),
                             r["name"].as_str().unwrap_or(""),
                             r["res_status"].as_u64().unwrap_or(0),
                             r["match_method"].as_str().unwrap_or("*"),
@@ -681,13 +707,15 @@ async fn rules(s: &mut Session, cmd: RulesCmd, format: Format) -> Result<i32> {
             all,
             collection,
             ungrouped,
-        } => set_rules_enabled(s, selector, all, collection, ungrouped, true).await,
+            device,
+        } => set_rules_enabled(s, selector, all, collection, ungrouped, device, true).await,
         RulesCmd::Disable {
             selector,
             all,
             collection,
             ungrouped,
-        } => set_rules_enabled(s, selector, all, collection, ungrouped, false).await,
+            device,
+        } => set_rules_enabled(s, selector, all, collection, ungrouped, device, false).await,
         RulesCmd::Rm { selector, r#yes } => {
             require_yes(r#yes, "deleting a rule")?;
             let id = resolve_rule(s, &selector).await?;
@@ -706,8 +734,17 @@ async fn rules(s: &mut Session, cmd: RulesCmd, format: Format) -> Result<i32> {
             delay_ms,
             name,
             disabled,
+            device,
         } => {
             let body_b64 = read_body(body, body_file)?;
+            // Scoped at creation rather than created-then-narrowed: narrowing a
+            // rule that is already live everywhere has to expand the wildcard
+            // for the whole library, and a brand-new rule should not drag the
+            // rest of it into device scope.
+            let scope = match device.as_deref() {
+                Some(sel) => Some(resolve_device(s, sel).await?),
+                None => None,
+            };
             let args = json!({
                 "id": null,
                 "name": name.unwrap_or_else(|| format!("{host}{}", path.clone().unwrap_or_default())),
@@ -728,6 +765,8 @@ async fn rules(s: &mut Session, cmd: RulesCmd, format: Format) -> Result<i32> {
                 "res_body_base64": body_b64,
                 "res_body_mime": mime,
                 "res_delay_ms": delay_ms,
+                "enabled_scope": scope.as_ref().map(|_| "set"),
+                "devices": scope.as_ref().map(|d| vec![d.clone()]),
             });
             let v = s.call("rules.upsert", args).await?;
             emit(&v, format, |v| {
@@ -813,15 +852,21 @@ async fn rules(s: &mut Session, cmd: RulesCmd, format: Format) -> Result<i32> {
 /// One rule by selector, or a whole scope via `--all` / `--collection` /
 /// `--ungrouped`. Exactly one of the four must be given; clap enforces that
 /// they don't combine, this catches the case where none were.
+#[allow(clippy::too_many_arguments)]
 async fn set_rules_enabled(
     s: &mut Session,
     selector: Option<String>,
     all: bool,
     collection: Option<String>,
     ungrouped: bool,
+    device: Option<String>,
     enabled: bool,
 ) -> Result<i32> {
     let verb = if enabled { "enabled" } else { "disabled" };
+    let dev = match device.as_deref() {
+        Some(sel) => Some(resolve_device(s, sel).await?),
+        None => None,
+    };
 
     let scope = if all {
         json!({ "kind": "all" })
@@ -833,9 +878,12 @@ async fn set_rules_enabled(
         // Single-rule path keeps the narrower op: it reports "not found" for a
         // bad selector, where a bulk call would cheerfully match zero rules.
         let id = resolve_rule(s, &sel).await?;
-        s.call("rules.set_enabled", json!({ "id": id, "enabled": enabled }))
-            .await?;
-        note(format!("{verb} {}", short(&id)));
+        s.call(
+            "rules.set_enabled",
+            json!({ "id": id, "enabled": enabled, "device": dev }),
+        )
+        .await?;
+        note(format!("{verb} {}{}", short(&id), for_device(&dev)));
         return Ok(exit::OK);
     } else {
         return Err(anyhow!(
@@ -846,16 +894,102 @@ async fn set_rules_enabled(
     let v = s
         .call(
             "rules.set_enabled_bulk",
-            json!({ "enabled": enabled, "scope": scope }),
+            json!({ "enabled": enabled, "scope": scope, "device": dev }),
         )
         .await?;
     let matched = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
     let changed = v.get("changed").and_then(|x| x.as_u64()).unwrap_or(0);
     note(format!(
-        "{verb} {changed} of {matched} rule{}",
-        if matched == 1 { "" } else { "s" }
+        "{verb} {changed} of {matched} rule{}{}",
+        if matched == 1 { "" } else { "s" },
+        for_device(&dev)
     ));
+    report_materialized(&v);
     Ok(exit::OK)
+}
+
+fn for_device(dev: &Option<String>) -> String {
+    match dev {
+        Some(d) => format!(" for {}", short(d)),
+        None => String::new(),
+    }
+}
+
+/// Say when rules stopped being on-for-every-device.
+///
+/// Switching a rule off for one phone has to pin it to the phones it stays on
+/// for, and that quietly decides what a device paired *later* will see: nothing.
+/// It is reversible with a plain `pane rules enable --all`, but only if the user
+/// knows it happened.
+fn report_materialized(v: &Value) {
+    let n = v.get("materialized").and_then(|x| x.as_u64()).unwrap_or(0);
+    if n > 0 {
+        note(format!(
+            "{n} rule(s) are now pinned to named devices — a device paired from \
+             here on will not get them (undo with `pane rules enable --all`)"
+        ));
+    }
+}
+
+/// Resolve a `--device` selector to the scope id the engine will see.
+///
+/// `__host__` passes straight through: this Mac's own traffic is a scope like
+/// any other, and there is no `device` row to look it up in.
+async fn resolve_device(s: &mut Session, selector: &str) -> Result<String> {
+    if selector == pane_storage::SCOPE_HOST {
+        return Ok(selector.to_string());
+    }
+    let list = as_array(s.call("devices.list", Value::Null).await?);
+    let (id, dev) = resolve_by(&list, selector, &["display_name", "serial"], "device")?;
+    // An iOS device is forwarded 8888 → 8888 and never gets a port of its own,
+    // so its traffic is never stamped with this id. Scoping a rule to it would
+    // be accepted and then silently do nothing at runtime — an hour of "why
+    // isn't my mock firing" for a flag that could just say so.
+    if dev.get("platform").and_then(|p| p.as_str()) == Some("ios") {
+        return Err(anyhow!(
+            "`{selector}` is an iOS device: its traffic shares the host proxy port and \
+             is not attributed per device, so a rule cannot be scoped to it. Leave the \
+             rule global, or scope it to `__host__`."
+        ));
+    }
+    Ok(id)
+}
+
+/// Is this rule live for one scope? Mirrors the engine's SQL predicate.
+fn live_on(rule: &Value, scope: &str) -> bool {
+    if !rule["enabled"].as_bool().unwrap_or(false) {
+        return false;
+    }
+    if rule["enabled_scope"].as_str().unwrap_or("all") == "all" {
+        return true;
+    }
+    rule["devices"]
+        .as_array()
+        .map(|ds| ds.iter().any(|d| d.as_str() == Some(scope)))
+        .unwrap_or(false)
+}
+
+/// `all`, or how many real devices a pinned rule names.
+///
+/// The two sentinels — this Mac and unattributed traffic — are in the stored set
+/// but deliberately not in the count: "4 dev" on a desk with two phones reads as
+/// a bug. `pane rules get` prints the full set for anyone who needs it.
+fn scope_label(rule: &Value) -> String {
+    if rule["enabled_scope"].as_str().unwrap_or("all") == "all" {
+        return "all".to_string();
+    }
+    let n = rule["devices"]
+        .as_array()
+        .map(|d| {
+            d.iter()
+                .filter(|v| !matches!(v.as_str(), Some("__host__") | Some("__none__")))
+                .count()
+        })
+        .unwrap_or(0);
+    match n {
+        0 => "pinned".to_string(),
+        n => format!("{n} dev"),
+    }
 }
 
 async fn resolve_rule(s: &mut Session, selector: &str) -> Result<String> {
@@ -901,36 +1035,54 @@ async fn collections(s: &mut Session, cmd: CollectionsCmd, format: Format) -> Re
             }
             Ok(exit::OK)
         }
-        CollectionsCmd::Enable { selector } => set_collection(s, &selector, true).await,
-        CollectionsCmd::Disable { selector } => set_collection(s, &selector, false).await,
-        CollectionsCmd::Only { selector } => {
+        CollectionsCmd::Enable { selector, device } => {
+            set_collection(s, &selector, device, true).await
+        }
+        CollectionsCmd::Disable { selector, device } => {
+            set_collection(s, &selector, device, false).await
+        }
+        CollectionsCmd::Only { selector, device } => {
             // "Only this scenario" = clear every checkbox, then tick this
             // collection's. Expressed in `rule.enabled`, the one flag the
             // engine reads and the user can see in the list — there is no
             // separate collection switch to fall out of sync with it.
             let all = as_array(s.call("collections.list", Value::Null).await?);
             let keep = resolve(&all, &selector, "name", "collection")?;
+            // With a device named this is "switch THIS phone to that scenario":
+            // every other device keeps whatever it was running, which is the
+            // whole point of running two scenarios side by side.
+            let dev = match device.as_deref() {
+                Some(sel) => Some(resolve_device(s, sel).await?),
+                None => None,
+            };
 
-            s.call(
-                "rules.set_enabled_bulk",
-                json!({ "enabled": false, "scope": { "kind": "all" } }),
-            )
-            .await?;
+            let off = s
+                .call(
+                    "rules.set_enabled_bulk",
+                    json!({ "enabled": false, "scope": { "kind": "all" }, "device": dev }),
+                )
+                .await?;
             let v = s
                 .call(
                     "rules.set_enabled_bulk",
-                    json!({ "enabled": true, "scope": { "kind": "collection", "id": keep } }),
+                    json!({
+                        "enabled": true,
+                        "scope": { "kind": "collection", "id": keep },
+                        "device": dev,
+                    }),
                 )
                 .await?;
             let on = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
 
             note(format!(
-                "only `{}` is live — {on} rule(s) enabled, everything else off",
+                "only `{}` is live{} — {on} rule(s) enabled, everything else off",
                 all.iter()
                     .find(|c| c["id"].as_str() == Some(keep.as_str()))
                     .and_then(|c| c["name"].as_str())
-                    .unwrap_or(&keep)
+                    .unwrap_or(&keep),
+                for_device(&dev)
             ));
+            report_materialized(&off);
             Ok(exit::OK)
         }
         CollectionsCmd::Rm {
@@ -992,21 +1144,36 @@ async fn resolve_collection(s: &mut Session, selector: &str) -> Result<String> {
 /// Deliberately not a write to `rule_collection.enabled`: that column exists
 /// but nothing reads it when deciding what serves traffic, so writing it would
 /// report success and change nothing.
-async fn set_collection(s: &mut Session, selector: &str, enabled: bool) -> Result<i32> {
+async fn set_collection(
+    s: &mut Session,
+    selector: &str,
+    device: Option<String>,
+    enabled: bool,
+) -> Result<i32> {
     let id = resolve_collection(s, selector).await?;
+    let dev = match device.as_deref() {
+        Some(sel) => Some(resolve_device(s, sel).await?),
+        None => None,
+    };
     let v = s
         .call(
             "rules.set_enabled_bulk",
-            json!({ "enabled": enabled, "scope": { "kind": "collection", "id": id } }),
+            json!({
+                "enabled": enabled,
+                "scope": { "kind": "collection", "id": id },
+                "device": dev,
+            }),
         )
         .await?;
     let matched = v.get("matched").and_then(|x| x.as_u64()).unwrap_or(0);
     let changed = v.get("changed").and_then(|x| x.as_u64()).unwrap_or(0);
     note(format!(
-        "{} {changed} of {matched} rule(s) in {}",
+        "{} {changed} of {matched} rule(s) in {}{}",
         if enabled { "enabled" } else { "disabled" },
-        short(&id)
+        short(&id),
+        for_device(&dev)
     ));
+    report_materialized(&v);
     Ok(exit::OK)
 }
 
@@ -1089,7 +1256,10 @@ async fn devices(s: &mut Session, cmd: DevicesCmd, format: Format) -> Result<i32
         DevicesCmd::Rm { selector, r#yes } => {
             require_yes(r#yes, "unpairing a device")?;
             let list = as_array(s.call("devices.list", Value::Null).await?);
-            let id = resolve(&list, &selector, "serial", "device")?;
+            // Same two fields the captures `device:` filter matches on, so a
+            // selector that worked there works here. Not `resolve_device`: that
+            // one refuses iOS, and unpairing an iOS device has to keep working.
+            let (id, _) = resolve_by(&list, &selector, &["display_name", "serial"], "device")?;
             let v = s.call("devices.remove", json!(id)).await?;
             emit(&v, format, |_| note("device removed"));
             Ok(exit::OK)

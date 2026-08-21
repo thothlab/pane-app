@@ -7,7 +7,10 @@ description: Выпуск версионного релиза Pane через т
 1. Создать релиз-ветку: `git checkout -b release/v0.X.Y`.
 2. Поднять версии в `Cargo.toml` (workspace), `package.json`,
    `src-tauri/tauri.conf.json`. Все три должны совпадать.
-3. Обновить `CHANGELOG.md` (будет добавлен в первом релизе).
+3. Обновить [`CHANGELOG.md`](https://github.com/thothlab/pane-app/blob/main/CHANGELOG.md) —
+   секцию этой версии потом руками кладут в тело GitHub Release
+   (`gh release edit v0.X.Y --notes-file …`), потому что workflow подставляет
+   общий шаблон.
 4. Открыть PR, дождаться зелёного CI на всех трёх OS.
 5. Смерджить в `main`, поставить тег: `git tag -a v0.X.Y -m "v0.X.Y"`.
 6. Запушить тег: `git push --tags`. Триггерится

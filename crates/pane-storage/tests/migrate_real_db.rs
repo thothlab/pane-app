@@ -70,7 +70,9 @@ fn migrations_apply_to_an_existing_database() {
     }
     // The engine's own view of the library — a third projection over the same
     // table, easy to update in two places out of three.
-    let _ = storage.list_active_rules().expect("list active rules");
+    // `None` = the global plane, the same view the proxy takes for traffic
+    // it cannot attribute to a device.
+    let _ = storage.list_active_rules(None).expect("list active rules");
 
     // Idempotent: opening again must be a no-op, not a re-run.
     let _ = Storage::open(dir.path()).expect("second open");

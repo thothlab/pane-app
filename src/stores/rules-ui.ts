@@ -139,6 +139,22 @@ createEffect(() => {
   setRulesFilterCollapsedRaw({});
 });
 
+// ── Device plane ───────────────────────────────────────────────────
+//
+// Which device the list is being read and edited as. `null` is the
+// global plane: checkboxes mean "on everywhere", exactly as before.
+// With a device picked, a checkbox means "live on THIS device" and
+// writes a per-device change, leaving the other phones alone.
+//
+// Session-scoped for the same reason as the filter above, only more
+// so. A filter that outlived a restart would hide rules that still
+// fire; a device plane that outlived one would silently redirect
+// every checkbox to a phone the user has forgotten they selected —
+// and unlike the filter, that writes. Every launch starts global.
+const [rulesDevice, setRulesDevice] = createSignal<string | null>(null);
+
+export { rulesDevice, setRulesDevice };
+
 createEffect(() => {
   if (typeof localStorage === "undefined") return;
   try {

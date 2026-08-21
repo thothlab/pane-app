@@ -41,6 +41,13 @@ export interface ExportedRule {
   collection_ref: string | null;
   name: string;
   enabled: boolean;
+  // Deliberately NOT carried: `enabled_scope` and `devices`. A bundle is the
+  // rule library, not the per-device wiring — device ids are rows in one Mac's
+  // database, so importing them elsewhere would either dangle or, worse, bind a
+  // rule to whatever device happened to reuse the id. A rule pinned to one
+  // phone exports as an ordinary enabled rule and imports as live everywhere,
+  // which is the safe direction: visible, and fixed with one click.
+
   priority: number;
   mode: RuleDto["mode"];
   patches: RuleDto["patches"];

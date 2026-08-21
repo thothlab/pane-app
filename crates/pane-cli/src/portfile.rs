@@ -127,6 +127,12 @@ pub async fn export(s: &mut Session, out: Option<&Path>) -> Result<i32> {
                 .and_then(|b| b["bytes_base64"].as_str().map(String::from)),
             None => None,
         };
+        // `enabled_scope` and `devices` are deliberately absent, here and in
+        // the GUI's exporter: a bundle is the rule library, not the per-device
+        // wiring. Device ids are rows in one Mac's database, so carrying them
+        // would either dangle on the next machine or bind the rule to whatever
+        // device reused the id. A pinned rule exports as an ordinary enabled
+        // rule and imports as live everywhere — visible, and one click to fix.
         exported_rules.push(json!({
             "collection_ref": r["collection_id"],
             "name": r["name"],
