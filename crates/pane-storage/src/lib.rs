@@ -183,7 +183,7 @@ const ID_CHUNK: usize = 400;
 
 /// `?,?,?` for an `IN (...)` list of `n` values.
 fn placeholders(n: usize) -> String {
-    std::iter::repeat("?").take(n).collect::<Vec<_>>().join(",")
+    std::iter::repeat_n("?", n).collect::<Vec<_>>().join(",")
 }
 
 /// Same, numbered from `start` so the list can follow other bound params.
