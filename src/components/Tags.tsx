@@ -42,38 +42,52 @@ export function addTags(existing: string[], incoming: string[]): string[] {
   return out;
 }
 
-/** Read-only chips. `onPick` makes them a filter shortcut. */
+/** Read-only chips. `onPick` makes them a filter shortcut.
+ *
+ *  Without `onPick` a chip is a `<span>`, not a dead button — the captures
+ *  context menu renders these INSIDE its row button, and a button nested in a
+ *  button is invalid markup whose click handling is browser's choice. */
 export const TagChips: Component<{
   tags: string[];
   onPick?: (tag: string) => void;
   /** Muted variant for a row that is switched off. */
   dim?: boolean;
-}> = (p) => (
-  <Show when={p.tags.length > 0}>
-    <div class="flex items-center gap-1 flex-wrap min-w-0">
-      <For each={p.tags}>
-        {(tag) => (
-          <button
-            type="button"
-            class={`shrink-0 max-w-[160px] truncate rounded-full border border-accent/40 bg-accent/10 px-1.5 py-px text-[10px] leading-4 ${
-              p.dim ? "opacity-60" : ""
-            } ${p.onPick ? "hover:bg-accent/20 cursor-pointer" : "cursor-default"}`}
-            title={p.onPick ? t()("rules.tag_filter_title", { tag }) : tag}
-            onClick={(e) => {
-              if (!p.onPick) return;
-              // Rows are drag sources and section headers toggle on click.
-              e.stopPropagation();
-              p.onPick(tag);
-            }}
-            onDblClick={(e) => e.stopPropagation()}
-          >
-            {tag}
-          </button>
-        )}
-      </For>
-    </div>
-  </Show>
-);
+}> = (p) => {
+  const chipClass = () =>
+    `shrink-0 max-w-[160px] truncate rounded-full border border-accent/40 bg-accent/10 px-1.5 py-px text-[10px] leading-4 ${
+      p.dim ? "opacity-60" : ""
+    } ${p.onPick ? "hover:bg-accent/20 cursor-pointer" : "cursor-default"}`;
+
+  return (
+    <Show when={p.tags.length > 0}>
+      <div class="flex items-center gap-1 flex-wrap min-w-0">
+        <For each={p.tags}>
+          {(tag) =>
+            p.onPick ? (
+              <button
+                type="button"
+                class={chipClass()}
+                title={t()("rules.tag_filter_title", { tag })}
+                onClick={(e) => {
+                  // Rows are drag sources and section headers toggle on click.
+                  e.stopPropagation();
+                  p.onPick?.(tag);
+                }}
+                onDblClick={(e) => e.stopPropagation()}
+              >
+                {tag}
+              </button>
+            ) : (
+              <span class={chipClass()} title={tag}>
+                {tag}
+              </span>
+            )
+          }
+        </For>
+      </div>
+    </Show>
+  );
+};
 
 /**
  * Chips with a remove button plus a free-text input. Commits on Enter, on
