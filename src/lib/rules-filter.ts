@@ -12,6 +12,13 @@
  * collection holding it, the request it matches (method, host glob,
  * path glob, query params), and its tags.
  *
+ * Inside one term, `a,b` is OR — `tag:smoke,ios` finds the rules
+ * labelled with either. The comma is borrowed from the captures filter
+ * DSL, where it already means exactly this within one key; two filters
+ * in one app that spell OR differently is a worse cost than the rule
+ * itself. Space still means AND, so `tag:smoke,ios tag:v2` reads as
+ * "(smoke or ios) and v2".
+ *
  * The one keyed term is `tag:`. It narrows the same substring match to
  * the tags alone, which is what makes a label worth attaching: `smoke`
  * finds a rule whose *name* happens to contain the word too, `tag:smoke`
@@ -33,10 +40,13 @@ import type { RuleDto } from "@/ipc/types";
 /** Prefix that switches a term from "search everything" to "search tags". */
 const TAG_PREFIX = "tag:";
 
-/** One parsed term. `key: "tag"` came in as `tag:<value>`. */
+/** One parsed term. `key: "tag"` came in as `tag:<value>`.
+ *
+ *  `values` is an OR-set: `a,b` produces two, and the term matches when
+ *  either does. A single value is the ordinary case. */
 export interface FilterTerm {
   key: "any" | "tag";
-  value: string;
+  values: string[];
 }
 
 /**
@@ -49,20 +59,35 @@ export interface CollectionContext {
   tags?: string[];
 }
 
+/** The OR-set inside one term. Blanks are dropped, so a stray comma cannot
+ *  contribute an empty needle that matches every row. */
+function splitAlternatives(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /** Split a raw query into normalised terms. Empty query → no terms. */
 export function parseFilterTerms(query: string): FilterTerm[] {
-  return query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) =>
-      // A bare `tag:` with nothing after it stays a plain term: as a keyed
-      // one it would have an empty needle and quietly match every tagged
-      // row, which is the opposite of what half-typing a filter should do.
-      word.startsWith(TAG_PREFIX) && word.length > TAG_PREFIX.length
-        ? ({ key: "tag", value: word.slice(TAG_PREFIX.length) } as const)
-        : ({ key: "any", value: word } as const),
-    );
+  const terms: FilterTerm[] = [];
+  for (const word of query.toLowerCase().split(/\s+/).filter(Boolean)) {
+    if (word.startsWith(TAG_PREFIX)) {
+      const values = splitAlternatives(word.slice(TAG_PREFIX.length));
+      if (values.length > 0) {
+        terms.push({ key: "tag", values });
+        continue;
+      }
+      // A bare `tag:` with nothing after it falls through to a plain term:
+      // as a keyed one it would have an empty needle and quietly match every
+      // tagged row, which is the opposite of what half-typing should do.
+    }
+    const values = splitAlternatives(word);
+    // A word made of nothing but commas leaves no needle at all. Dropping it
+    // is the safe reading — keeping it would match everything.
+    if (values.length > 0) terms.push({ key: "any", values });
+  }
+  return terms;
 }
 
 /** Tags of a rule and of its collection, lowercased and joined. */
@@ -92,7 +117,8 @@ export function ruleHaystack(
     .toLowerCase();
 }
 
-/** True when every term appears somewhere in the rule's haystack. */
+/** True when every term appears somewhere in the rule's haystack — where a
+ *  term with several alternatives needs only one of them to appear. */
 export function matchesRuleFilter(
   rule: RuleDto,
   collection: CollectionContext,
@@ -101,9 +127,10 @@ export function matchesRuleFilter(
   if (terms.length === 0) return true;
   const hay = ruleHaystack(rule, collection);
   const tagHay = ruleTagHaystack(rule, collection);
-  return terms.every((term) =>
-    term.key === "tag" ? tagHay.includes(term.value) : hay.includes(term.value),
-  );
+  return terms.every((term) => {
+    const target = term.key === "tag" ? tagHay : hay;
+    return term.values.some((v) => target.includes(v));
+  });
 }
 
 /** True when every term appears in a collection's own name or tags. Used to
@@ -116,7 +143,8 @@ export function matchesCollection(
   if (terms.length === 0) return true;
   const tagHay = (collection.tags ?? []).join(" ").toLowerCase();
   const hay = `${collection.name} ${tagHay}`.toLowerCase();
-  return terms.every((term) =>
-    term.key === "tag" ? tagHay.includes(term.value) : hay.includes(term.value),
-  );
+  return terms.every((term) => {
+    const target = term.key === "tag" ? tagHay : hay;
+    return term.values.some((v) => target.includes(v));
+  });
 }

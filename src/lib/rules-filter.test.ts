@@ -43,9 +43,27 @@ describe("parseFilterTerms", () => {
 
   it("splits on any run of whitespace and lowercases", () => {
     expect(parseFilterTerms("  Orders   500 ")).toEqual([
-      { key: "any", value: "orders" },
-      { key: "any", value: "500" },
+      { key: "any", values: ["orders"] },
+      { key: "any", values: ["500"] },
     ]);
+  });
+
+  it("a comma inside one term is OR, a space between terms is still AND", () => {
+    expect(parseFilterTerms("tag:smoke,ios orders")).toEqual([
+      { key: "tag", values: ["smoke", "ios"] },
+      { key: "any", values: ["orders"] },
+    ]);
+  });
+
+  it("drops the blanks a stray comma leaves behind", () => {
+    // Each of these would otherwise contribute an empty needle, and an empty
+    // needle matches every row — the failure mode is a filter that silently
+    // stops filtering.
+    expect(parseFilterTerms("tag:smoke,,")).toEqual([
+      { key: "tag", values: ["smoke"] },
+    ]);
+    expect(parseFilterTerms(",")).toEqual([]);
+    expect(parseFilterTerms("tag:,")).toEqual([{ key: "any", values: ["tag:"] }]);
   });
 });
 
@@ -152,8 +170,23 @@ describe("tags", () => {
     expect(matchesRuleFilter(r, { name: "Grp" }, terms("tag:smoke refunds"))).toBe(false);
   });
 
+  it("finds either label with tag:a,b, and neither with a third", () => {
+    const smoke = rule({ name: "x", match_host_glob: "h", match_path_glob: "/p", tags: ["smoke"] });
+    const ios = rule({ name: "x", match_host_glob: "h", match_path_glob: "/p", tags: ["ios"] });
+    const other = rule({ name: "x", match_host_glob: "h", match_path_glob: "/p", tags: ["perf"] });
+    expect(matchesRuleFilter(smoke, { name: "Grp" }, terms("tag:smoke,ios"))).toBe(true);
+    expect(matchesRuleFilter(ios, { name: "Grp" }, terms("tag:smoke,ios"))).toBe(true);
+    expect(matchesRuleFilter(other, { name: "Grp" }, terms("tag:smoke,ios"))).toBe(false);
+  });
+
+  it("ORs inside a term but still ANDs across terms", () => {
+    const r = rule({ name: "x", match_host_glob: "h", match_path_glob: "/p", tags: ["smoke", "v2"] });
+    expect(matchesRuleFilter(r, { name: "Grp" }, terms("tag:smoke,ios tag:v2"))).toBe(true);
+    expect(matchesRuleFilter(r, { name: "Grp" }, terms("tag:smoke,ios tag:v3"))).toBe(false);
+  });
+
   it("half-typed `tag:` stays a plain term instead of matching everything tagged", () => {
-    expect(parseFilterTerms("tag:")).toEqual([{ key: "any", value: "tag:" }]);
+    expect(parseFilterTerms("tag:")).toEqual([{ key: "any", values: ["tag:"] }]);
     const tagged = rule({ name: "x", match_host_glob: "h", match_path_glob: "/p", tags: ["smoke"] });
     expect(matchesRuleFilter(tagged, { name: "Grp" }, terms("tag:"))).toBe(false);
   });
@@ -178,5 +211,13 @@ describe("matchesCollection", () => {
 
   it("matches everything when the query is empty", () => {
     expect(matchesCollection({ name: "Anything" }, parseFilterTerms(""))).toBe(true);
+  });
+
+  // The captures context menu narrows its collection list through this, so
+  // `tag:` and its comma-OR have to work there and not only in the Rules view.
+  it("finds a collection by either of two tags", () => {
+    const c = { name: "Checkout", tags: ["scenario"] };
+    expect(matchesCollection(c, parseFilterTerms("tag:smoke,scenario"))).toBe(true);
+    expect(matchesCollection(c, parseFilterTerms("tag:smoke,perf"))).toBe(false);
   });
 });
