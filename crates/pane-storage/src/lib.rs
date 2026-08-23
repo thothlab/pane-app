@@ -1699,7 +1699,10 @@ impl Storage {
     /// `changed` counts the rules that actually gained something. A scope that
     /// already carried every incoming label reports `matched > 0, changed = 0`,
     /// which is success; `matched = 0` is the stale selector.
-    pub fn add_rules_tags_bulk(&self, args: RulesAddTagsBulkArgs) -> Result<RulesAddTagsBulkResult> {
+    pub fn add_rules_tags_bulk(
+        &self,
+        args: RulesAddTagsBulkArgs,
+    ) -> Result<RulesAddTagsBulkResult> {
         let incoming = normalise_tags(&args.tags);
         let now = OffsetDateTime::now_utc().unix_timestamp();
         let mut conn = self.conn.lock();
@@ -2599,11 +2602,7 @@ mod rule_tag_tests {
     fn tags_survive_a_write_and_a_read() {
         let dir = tempdir().unwrap();
         let s = Storage::open(dir.path()).unwrap();
-        let saved = rule_with_tags(
-            &s,
-            "orders-500",
-            vec!["smoke".into(), "регресс".into()],
-        );
+        let saved = rule_with_tags(&s, "orders-500", vec!["smoke".into(), "регресс".into()]);
         assert_eq!(saved.tags, vec!["smoke", "регресс"]);
         // …and through the other two read paths, which have their own
         // column lists.
@@ -2765,7 +2764,11 @@ mod rule_bulk_delete_tests {
     }
 
     fn names(s: &Storage) -> Vec<String> {
-        s.list_rules().unwrap().into_iter().map(|r| r.name).collect()
+        s.list_rules()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect()
     }
 
     #[test]
@@ -2864,7 +2867,9 @@ mod rule_bulk_delete_tests {
     fn ids_scope_chunks_past_the_sqlite_parameter_cap() {
         let dir = tempdir().unwrap();
         let s = Storage::open(dir.path()).unwrap();
-        let ids: Vec<Uuid> = (0..1200).map(|i| rule(&s, &format!("r{i}"), None)).collect();
+        let ids: Vec<Uuid> = (0..1200)
+            .map(|i| rule(&s, &format!("r{i}"), None))
+            .collect();
         let res = s
             .delete_rules_bulk(RulesDeleteBulkArgs {
                 scope: RuleBulkScope::Ids { ids },

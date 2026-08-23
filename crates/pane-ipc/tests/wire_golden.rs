@@ -557,10 +557,9 @@ fn arg_structs_deserialize_from_wire_json() {
             .unwrap();
     assert!(matches!(tagged.scope, RuleBulkScope::Ids { .. }));
     assert_eq!(tagged.tags, vec!["smoke".to_string()]);
-    assert!(serde_json::from_value::<RulesAddTagsBulkArgs>(
-        json!({"scope": {"kind": "all"}})
-    )
-    .is_err());
+    assert!(
+        serde_json::from_value::<RulesAddTagsBulkArgs>(json!({"scope": {"kind": "all"}})).is_err()
+    );
 
     assert_eq!(
         shape(&RulesAddTagsBulkResult {
