@@ -34,6 +34,7 @@ import { writeClipboard } from "@/lib/clipboard";
 import { withTimeout } from "@/lib/async";
 import { uniqueRuleName } from "@/lib/rule-names";
 import { matchesCollection, parseFilterTerms } from "@/lib/rules-filter";
+import { TagChips, TagEditor } from "@/components/Tags";
 import { t, tr } from "@/i18n";
 import { askConfirm, showMessage } from "@/stores/confirm";
 
@@ -1176,17 +1177,53 @@ const CapturesView: Component = () => {
   // A real dialog, not `prompt()`: Tauri 2's WKWebView disables native
   // browser dialogs and `prompt()` silently does nothing — the exact bug
   // "+ New collection" shipped with once already.
-  const [newCollectionFor, setNewCollectionFor] = createSignal<string[] | null>(
-    null,
-  );
+  // The dialog lists what it is about to turn into rules, so "N rules will be
+  // created" is checkable instead of taken on trust — the same count that
+  // used to be the only thing on screen when the menu targeted the wrong set.
+  //
+  // Labels are snapshotted with the ids, not resolved at render time: the
+  // list under the dialog keeps refreshing every 1.5s, and a row that scrolls
+  // out of the window would leave a line that says "unknown" for a capture
+  // the dialog is still perfectly able to act on.
+  const [newCollectionFor, setNewCollectionFor] = createSignal<
+    { id: string; label: string }[] | null
+  >(null);
   const [newCollectionName, setNewCollectionName] = createSignal("");
+  const [newCollectionTags, setNewCollectionTags] = createSignal<string[]>([]);
+
+  /** One capture as a line in that list: what the rule will match on. */
+  const captureLabel = (c: CaptureDto): string => {
+    const qIdx = c.url_path.indexOf("?");
+    const path = qIdx >= 0 ? c.url_path.slice(0, qIdx) : c.url_path;
+    return `${c.method} ${c.server_host}${path}`;
+  };
+
+  /** Labels already in use on collections — suggestion chips in the dialog,
+   *  so a scenario tagged "checkout" doesn't gain a "Checkout" twin. */
+  const addCollectionTags = createMemo(() => {
+    const seen = new Map<string, string>();
+    for (const c of addCollections()) {
+      for (const tag of c.tags ?? []) {
+        const key = tag.toLowerCase();
+        if (!seen.has(key)) seen.set(key, tag);
+      }
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
+  });
 
   const addToNewCollection = () => {
     const pos = addMenuPos();
     if (!pos || busy()) return;
-    // Read the ids out before closing — the dialog outlives the menu.
-    setNewCollectionFor(pos.captureIds);
+    // Read the targets out before closing — the dialog outlives the menu.
+    const byId = new Map(captures().map((c) => [c.id, c]));
+    setNewCollectionFor(
+      pos.captureIds.map((id) => {
+        const cap = byId.get(id);
+        return { id, label: cap ? captureLabel(cap) : id };
+      }),
+    );
     setNewCollectionName(tr("captures.add_to_rules_default_collection"));
+    setNewCollectionTags([]);
     closeAddMenu();
   };
 
@@ -1196,17 +1233,18 @@ const CapturesView: Component = () => {
   };
 
   const confirmNewCollection = async () => {
-    const captureIds = newCollectionFor();
+    const targets = newCollectionFor();
     const name = newCollectionName().trim();
-    if (!captureIds || !name || busy()) return;
+    if (!targets || !name || busy()) return;
     setBusy(true);
     try {
       const created = await api.collections.upsert({
         name,
         enabled: true,
         priority: 0,
+        tags: newCollectionTags(),
       });
-      const res = await addRulesFor(captureIds, created.id);
+      const res = await addRulesFor(targets.map((tgt) => tgt.id), created.id);
       // Only close on success — a failed create keeps the typed name on
       // screen instead of making the user retype it.
       setNewCollectionFor(null);
@@ -2048,6 +2086,7 @@ const CapturesView: Component = () => {
                 class="w-full bg-transparent outline-none text-xs placeholder:text-fg-muted"
                 placeholder={t()("captures.add_to_rules_filter_placeholder")}
                 aria-label={t()("captures.add_to_rules_filter_placeholder")}
+                title={t()("captures.add_to_rules_filter_title")}
                 value={addFilter()}
                 onInput={(e) => setAddFilter(e.currentTarget.value)}
                 onKeyDown={(e) => {
@@ -2076,12 +2115,20 @@ const CapturesView: Component = () => {
                 {(c) => (
                   <button
                     type="button"
-                    class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-center gap-2 disabled:opacity-50"
+                    class="w-full text-left px-3 py-1.5 hover:bg-bg-muted flex items-start gap-2 disabled:opacity-50"
                     disabled={busy()}
                     onClick={() => void addToCollection(c.id)}
                   >
-                    <Shuffle size={12} class="text-accent shrink-0" />
-                    <span class="truncate flex-1">{c.name}</span>
+                    <Shuffle size={12} class="text-accent shrink-0 mt-0.5" />
+                    {/* The tags are shown, not just searchable: `tag:` has
+                        worked in this filter since the labels existed, but a
+                        row that only ever printed a name gave no reason to
+                        believe it. Untagged collections stay one line —
+                        TagChips renders nothing for an empty list. */}
+                    <div class="min-w-0 flex-1 flex flex-col items-start gap-0.5">
+                      <span class="truncate max-w-full">{c.name}</span>
+                      <TagChips tags={c.tags ?? []} />
+                    </div>
                   </button>
                 )}
               </For>
@@ -2128,7 +2175,7 @@ const CapturesView: Component = () => {
           creates, Escape / backdrop / Cancel aborts without creating
           anything. */}
       <Show when={newCollectionFor()}>
-        {(ids) => (
+        {(targets) => (
           <div
             class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
             onMouseDown={cancelNewCollection}
@@ -2137,7 +2184,7 @@ const CapturesView: Component = () => {
             }}
           >
             <form
-              class="bg-bg border border-border rounded-lg p-4 shadow-xl w-80 mx-4 space-y-3"
+              class="bg-bg border border-border rounded-lg p-4 shadow-xl w-96 max-w-[90vw] mx-4 space-y-3"
               onMouseDown={(e) => e.stopPropagation()}
               onSubmit={(e) => {
                 e.preventDefault();
@@ -2174,10 +2221,42 @@ const CapturesView: Component = () => {
                 autocapitalize="off"
                 spellcheck={false}
               />
+              {/* Tags on the collection, set at the moment it is created.
+                  A group made from captures is the one most likely to want
+                  a label — it is a scenario — and doing it here saves the
+                  trip to the Rules view. They land on the collection, and a
+                  collection's tags match its rules in the filter too. */}
+              <div class="space-y-1">
+                <div class="text-fg-muted text-[11px]">
+                  {t()("captures.new_collection_tags_label")}
+                </div>
+                <div class="flex">
+                  <TagEditor
+                    tags={newCollectionTags()}
+                    onChange={setNewCollectionTags}
+                    suggestions={addCollectionTags()}
+                  />
+                </div>
+              </div>
               <div class="text-fg-muted text-[11px]">
                 {tr("captures.new_collection_hint", {
-                  count: String(ids().length),
+                  count: String(targets().length),
                 })}
+              </div>
+              {/* What those rules will be. Scrolls rather than growing the
+                  dialog past the window — a "select all" over the visible
+                  tail is a perfectly ordinary target here. */}
+              <div
+                class="border border-border rounded bg-bg-muted/40 text-[11px] font-mono overflow-y-auto"
+                style={{ "max-height": "9rem" }}
+              >
+                <For each={targets()}>
+                  {(tgt) => (
+                    <div class="px-2 py-1 truncate" title={tgt.label}>
+                      {tgt.label}
+                    </div>
+                  )}
+                </For>
               </div>
               <div class="flex justify-end gap-2">
                 <button
