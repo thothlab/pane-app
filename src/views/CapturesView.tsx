@@ -669,15 +669,22 @@ const CapturesView: Component = () => {
   // response) — same shape the manual rule editor produces, so the
   // user can refine it in the Rules view if needed.
   //
-  // The menu acts on a SET of captures, not one row: right-clicking a
-  // row that is part of the current multi-selection targets the whole
-  // selection (Copy and every Add-to-Rules entry), which is what the
-  // checkboxes imply. Right-clicking a row OUTSIDE the selection
-  // targets just that row and leaves the selection alone — same rule
-  // Finder/Charles use, and right-click never mutated the selection
-  // here either. The ids are snapshotted at open time so the 1.5s list
-  // refresh can't make the menu act on a different set than the count
-  // in its label promised.
+  // The menu acts on a SET of captures, not one row: while selection mode
+  // holds a non-empty set, right-clicking ANY row targets that whole set —
+  // the clicked row does not narrow it. Outside selection mode it targets
+  // the row under the pointer, as it always did.
+  //
+  // It used to take the Finder rule half-way: a right-click outside the
+  // selection acted on the clicked row alone. But Finder also MOVES the
+  // selection to that row, so what is highlighted always matches what the
+  // menu will do. Taking the first half without the second is what produced
+  // "I ticked five rows and got a collection with one rule in it" — five
+  // checkboxes on screen, a menu quietly acting on one. Acting on the set is
+  // the half worth keeping: it never silently discards a selection the user
+  // built by hand.
+  //
+  // The ids are snapshotted at open time so the 1.5s list refresh can't make
+  // the menu act on a different set than the count in its label promised.
   const [addMenuPos, setAddMenuPos] = createSignal<
     { x: number; y: number; captureIds: string[] } | null
   >(null);
@@ -707,9 +714,10 @@ const CapturesView: Component = () => {
   const openAddMenu = async (e: MouseEvent, captureId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    const captureIds = selectedIds().has(captureId)
-      ? selectedVisible().map((c) => c.id)
-      : [captureId];
+    const captureIds =
+      selectionMode() && selectedIds().size > 0
+        ? selectedVisible().map((c) => c.id)
+        : [captureId];
     clampPending = true;
     setAddFilter("");
     setAddMenuPos({ x: e.clientX, y: e.clientY, captureIds });
