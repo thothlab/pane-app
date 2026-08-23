@@ -90,12 +90,32 @@ export const TagEditor: Component<{
   onChange: (next: string[]) => void;
   suggestions?: string[];
   placeholder?: string;
+  /**
+   * The uncommitted text in the input, reported on every keystroke.
+   *
+   * A dialog whose Save button is gated on `tags.length > 0` needs it: a user
+   * who typed "smoke" and reached straight for Save has no committed tag yet,
+   * and a *disabled* button never takes the mousedown that would blur the
+   * input and commit it — so the button stays dead exactly when it is needed.
+   * Callers enable on `tags.length > 0 || draft !== ""`; the blur-commit then
+   * lands before the click handler reads the tags.
+   */
+  onDraftChange?: (raw: string) => void;
+  /** Focus the input on mount. For a dialog that exists only to take tags:
+   *  it saves a click, and it puts the keyboard somewhere Escape can be
+   *  heard from. */
+  autoFocus?: boolean;
 }> = (p) => {
   const [draft, setDraft] = createSignal("");
 
+  const setDraftText = (raw: string) => {
+    setDraft(raw);
+    p.onDraftChange?.(raw);
+  };
+
   const commit = () => {
     const parts = splitTagInput(draft());
-    setDraft("");
+    setDraftText("");
     if (parts.length === 0) return;
     p.onChange(addTags(p.tags, parts));
   };
@@ -130,6 +150,9 @@ export const TagEditor: Component<{
         <div class="inline-flex items-center gap-1 min-w-[140px] flex-1">
           <TagIcon size={12} class="text-fg-muted shrink-0" />
           <input
+            ref={(el) => {
+              if (p.autoFocus) setTimeout(() => el?.focus(), 0);
+            }}
             class="flex-1 min-w-0 bg-bg border border-border rounded px-2 py-0.5 text-xs"
             placeholder={p.placeholder ?? t()("rules.tag_placeholder")}
             value={draft()}
@@ -137,7 +160,7 @@ export const TagEditor: Component<{
             autocorrect="off"
             autocapitalize="off"
             spellcheck={false}
-            onInput={(e) => setDraft(e.currentTarget.value)}
+            onInput={(e) => setDraftText(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === "," || e.key === " ") {
                 e.preventDefault();

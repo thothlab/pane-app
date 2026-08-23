@@ -137,6 +137,12 @@ export const api = {
      *  half-finish and leave the user guessing how far it got. */
     deleteBulk: (scope: RuleBulkScope) =>
       call<{ deleted: number }>("rules_delete_bulk", { args: { scope } }),
+    /** Add labels to a whole scope in one transaction. Adds, never replaces —
+     *  see `RulesAddTagsBulkArgs` in pane-ipc. */
+    addTagsBulk: (scope: RuleBulkScope, tags: string[]) =>
+      call<{ matched: number; changed: number }>("rules_add_tags_bulk", {
+        args: { scope, tags },
+      }),
     setPriority: (id: string, priority: number) =>
       call<void>("rule_set_priority", { args: { id, priority } }),
     exportWrite: (path: string, content: string) =>

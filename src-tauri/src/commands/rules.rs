@@ -51,6 +51,18 @@ pub async fn rules_delete_bulk(
     state.rules_delete_bulk(args).await
 }
 
+/// Add labels to a whole scope of rules in one transaction. The Rules view's
+/// "tag the selected rules" uses it with an explicit id list, for the same
+/// reason the bulk delete does: the ticked set is an arbitrary subset, and the
+/// button must never reach past what its count promised.
+#[tauri::command]
+pub async fn rules_add_tags_bulk(
+    state: CoreState<'_>,
+    args: pane_ipc::RulesAddTagsBulkArgs,
+) -> CmdResult<pane_ipc::RulesAddTagsBulkResult> {
+    state.rules_add_tags_bulk(args).await
+}
+
 #[tauri::command]
 pub async fn rule_set_priority(state: CoreState<'_>, args: RuleSetPriorityArgs) -> CmdResult<()> {
     state.rule_set_priority(args).await

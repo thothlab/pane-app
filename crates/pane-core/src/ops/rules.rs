@@ -3,8 +3,8 @@ use uuid::Uuid;
 use pane_ipc::{
     kinds, CollectionSetEnabledArgs, CollectionSetPriorityArgs, CollectionUpsertArgs,
     RuleCollectionDto, RuleDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs,
-    RulesDeleteBulkArgs, RulesDeleteBulkResult, RulesSetEnabledBulkArgs,
-    RulesSetEnabledBulkResult,
+    RulesAddTagsBulkArgs, RulesAddTagsBulkResult, RulesDeleteBulkArgs, RulesDeleteBulkResult,
+    RulesSetEnabledBulkArgs, RulesSetEnabledBulkResult,
 };
 
 use crate::error::{to_api, CoreResult};
@@ -61,6 +61,17 @@ impl Core {
         args: RulesDeleteBulkArgs,
     ) -> CoreResult<RulesDeleteBulkResult> {
         self.db(move |s| s.delete_rules_bulk(args))
+            .await
+            .map_err(to_api(kinds::DB))
+    }
+
+    /// Add labels to a whole scope of rules at once — the bulk form of the
+    /// editor's Tags field, used by "tag the selected rules".
+    pub async fn rules_add_tags_bulk(
+        &self,
+        args: RulesAddTagsBulkArgs,
+    ) -> CoreResult<RulesAddTagsBulkResult> {
+        self.db(move |s| s.add_rules_tags_bulk(args))
             .await
             .map_err(to_api(kinds::DB))
     }

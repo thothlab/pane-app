@@ -131,6 +131,7 @@ pub async fn dispatch(core: &Arc<Core>, op: &str, params: Value) -> Result<Value
         "rules.set_enabled" => ok(core.rule_set_enabled(parse(params)?).await?),
         "rules.set_enabled_bulk" => ok(core.rules_set_enabled_bulk(parse(params)?).await?),
         "rules.delete_bulk" => ok(core.rules_delete_bulk(parse(params)?).await?),
+        "rules.add_tags_bulk" => ok(core.rules_add_tags_bulk(parse(params)?).await?),
         "rules.set_priority" => ok(core.rule_set_priority(parse(params)?).await?),
 
         // ---- collections ----

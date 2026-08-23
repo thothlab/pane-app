@@ -549,6 +549,27 @@ fn arg_structs_deserialize_from_wire_json() {
         json!({ "deleted": "number" })
     );
 
+    // Same scope again on the bulk tag side. `tags` is required here, unlike
+    // the upsert's optional field: a call that forgot it would report a happy
+    // `matched` while labelling nothing.
+    let tagged: RulesAddTagsBulkArgs =
+        serde_json::from_value(json!({"scope": {"kind": "ids", "ids": [one]}, "tags": ["smoke"]}))
+            .unwrap();
+    assert!(matches!(tagged.scope, RuleBulkScope::Ids { .. }));
+    assert_eq!(tagged.tags, vec!["smoke".to_string()]);
+    assert!(serde_json::from_value::<RulesAddTagsBulkArgs>(
+        json!({"scope": {"kind": "all"}})
+    )
+    .is_err());
+
+    assert_eq!(
+        shape(&RulesAddTagsBulkResult {
+            matched: 5,
+            changed: 3
+        }),
+        json!({ "matched": "number", "changed": "number" })
+    );
+
     let l: LogcatQueryArgs = serde_json::from_value(json!({
         "serial": "R5CT30ABCDE", "filter": "level:E",
         "include_pids": [12844], "exclude_pids": [], "limit": 200

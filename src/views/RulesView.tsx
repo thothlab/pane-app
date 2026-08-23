@@ -40,7 +40,7 @@ import {
   type CollectionContext,
 } from "@/lib/rules-filter";
 import { TagChips, TagEditor } from "@/components/Tags";
-import { askConfirm, showMessage } from "@/stores/confirm";
+import { askConfirm, showMessage, type ConfirmRequest } from "@/stores/confirm";
 import { groupState, isLiveOn, isScoped, SCOPE_HOST } from "@/lib/rule-liveness";
 import {
   applyImport,
@@ -75,6 +75,7 @@ import {
   triggerEditorSave,
 } from "@/stores/rules-ui";
 import type {
+  RuleBulkScope,
   RuleDto,
   RuleUpsertArgs,
   RuleHeaderDto,
@@ -501,6 +502,22 @@ const RulesView: Component = () => {
       ? setEnabledFor(visibleRules(), targetEnabled)
       : toggleAllRules(targetEnabled);
 
+  // ── The ticked rules, as a set to act on ──────────────────────────
+  //
+  // "Selected" here means TICKED. The row checkbox is the one the filter
+  // row's "Select all" ticks, and adding a second column of selection
+  // checkboxes beside it would make the word mean two different things in
+  // one list — the same "two places to look" trap the collection cascade
+  // was rejected for.
+  //
+  // Read through `isLiveOn` on the current device plane, so with a phone
+  // picked the set is what those checkboxes are showing as on for THAT
+  // phone. Intersected with `visibleRules` for the reason every bulk action
+  // here is: a button must never reach past what its count promised.
+  const selectedRules = createMemo(() =>
+    visibleRules().filter((r) => isLiveOn(r, device())),
+  );
+
   const toggleSectionVisible = (
     collectionId: string | null,
     list: RuleDto[],
@@ -621,27 +638,19 @@ const RulesView: Component = () => {
   //
   // Collections survive: they are grouping, not content (see
   // `delete_rules_bulk` in storage).
-  const deleteVisibleRules = async () => {
-    const doomed = visibleRules();
+  // Confirm, delete, then clean up after the rules that are gone. `scope` is
+  // passed separately from `doomed` so "the whole library" can still go
+  // through the cheap `all` selector instead of shipping every id, while the
+  // dialog and the cleanup always speak about the exact same list.
+  const deleteRuleSet = async (
+    doomed: RuleDto[],
+    scope: RuleBulkScope,
+    confirm: ConfirmRequest,
+  ) => {
     if (doomed.length === 0) return;
-    const ok = await askConfirm({
-      message: filterActive()
-        ? tr("rules.delete_filtered_confirm", {
-            count: String(doomed.length),
-            query: rulesFilter().trim(),
-          })
-        : tr("rules.delete_all_confirm", { count: String(doomed.length) }),
-      detail: tr("rules.delete_all_detail"),
-      confirmLabel: tr("common.delete"),
-      danger: true,
-    });
-    if (!ok) return;
+    if (!(await askConfirm(confirm))) return;
     try {
-      await api.rules.deleteBulk(
-        filterActive()
-          ? { kind: "ids", ids: doomed.map((r) => r.id) }
-          : { kind: "all" },
-      );
+      await api.rules.deleteBulk(scope);
     } catch (e) {
       setLoadError((e as { message?: string })?.message ?? String(e));
       return;
@@ -655,6 +664,101 @@ const RulesView: Component = () => {
     }
     for (const r of doomed) clearRuleDraft(ruleDraftKey(r.id, r.collection_id));
     await refresh();
+  };
+
+  const deleteVisibleRules = () => {
+    const doomed = visibleRules();
+    return deleteRuleSet(
+      doomed,
+      filterActive() ? { kind: "ids", ids: doomed.map((r) => r.id) } : { kind: "all" },
+      {
+        message: filterActive()
+          ? tr("rules.delete_filtered_confirm", {
+              count: String(doomed.length),
+              query: rulesFilter().trim(),
+            })
+          : tr("rules.delete_all_confirm", { count: String(doomed.length) }),
+        detail: tr("rules.delete_all_detail"),
+        confirmLabel: tr("common.delete"),
+        danger: true,
+      },
+    );
+  };
+
+  // Delete exactly the ticked rules.
+  //
+  // With a device plane picked, the tick means "live on this phone" but the
+  // delete is still library-wide — a rule is one row, not one row per device.
+  // That gap is spelled out in the dialog rather than left to be discovered.
+  const deleteSelectedRules = () => {
+    const doomed = selectedRules();
+    const dev = device();
+    return deleteRuleSet(
+      doomed,
+      { kind: "ids", ids: doomed.map((r) => r.id) },
+      {
+        message: tr("rules.delete_selected_confirm", { count: String(doomed.length) }),
+        detail:
+          dev === null
+            ? tr("rules.delete_all_detail")
+            : `${tr("rules.delete_all_detail")} ${tr(
+                "rules.delete_selected_device_detail",
+                { name: deviceName(dev) },
+              )}`,
+        confirmLabel: tr("common.delete"),
+        danger: true,
+      },
+    );
+  };
+
+  // ── Tagging the ticked rules ──────────────────────────────────────
+  //
+  // A draft plus one save, like the collection tag editor above: writing a
+  // chip at a time would refresh the list under the input and take the focus
+  // with it. `tagSelection` holds the rules snapshotted when the dialog
+  // opened, so a checkbox flipped behind it cannot change what gets labelled.
+  const [tagSelection, setTagSelection] = createSignal<RuleDto[] | null>(null);
+  const [tagSelectionDraft, setTagSelectionDraft] = createSignal<string[]>([]);
+  const [tagSelectionRaw, setTagSelectionRaw] = createSignal("");
+  const [tagSelectionBusy, setTagSelectionBusy] = createSignal(false);
+
+  const openTagSelection = () => {
+    const list = selectedRules();
+    if (list.length === 0) return;
+    setTagSelectionDraft([]);
+    setTagSelectionRaw("");
+    setTagSelection(list);
+  };
+
+  const closeTagSelection = () => {
+    if (tagSelectionBusy()) return;
+    setTagSelection(null);
+  };
+
+  const applyTagSelection = async () => {
+    const list = tagSelection();
+    const tags = tagSelectionDraft();
+    // Empty means the user opened the dialog and changed their mind — the
+    // backend would happily report `changed: 0`, but doing nothing is clearer.
+    if (!list || tags.length === 0 || tagSelectionBusy()) return;
+    setTagSelectionBusy(true);
+    try {
+      await api.rules.addTagsBulk(
+        { kind: "ids", ids: list.map((r) => r.id) },
+        tags,
+      );
+      setTagSelection(null);
+      await refresh();
+    } catch (e) {
+      void showMessage({
+        message: tr("rules.tag_selected_failed", {
+          message: (e as { message?: string })?.message ?? String(e),
+        }),
+        danger: true,
+      });
+    } finally {
+      setTagSelectionBusy(false);
+    }
   };
 
   // ── Import / export ──────────────────────────────────────────────
@@ -1157,6 +1261,41 @@ const RulesView: Component = () => {
             >
               {t()("rules.select_all")}
             </span>
+            {/* The two actions on the ticked set, next to the box that ticks
+                it — same reasoning that put the box here rather than in the
+                title bar. Always rendered, disabled at zero: a pair of
+                buttons that came and went with the tick state would read as
+                a glitch, and the title says why they are dead. */}
+            <button
+              type="button"
+              class="shrink-0 inline-flex items-center gap-1 text-xs rounded px-2 py-1 border border-border hover:bg-bg-muted disabled:opacity-40"
+              disabled={selectedRules().length === 0}
+              title={
+                selectedRules().length === 0
+                  ? t()("rules.delete_selected_none_title")
+                  : t()("rules.tag_selected_title")
+              }
+              onClick={openTagSelection}
+            >
+              <TagIcon size={12} />
+              {tr("rules.tag_selected", { count: String(selectedRules().length) })}
+            </button>
+            <button
+              type="button"
+              class="shrink-0 inline-flex items-center gap-1 text-xs rounded px-2 py-1 border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40"
+              disabled={selectedRules().length === 0}
+              title={
+                selectedRules().length === 0
+                  ? t()("rules.delete_selected_none_title")
+                  : t()("rules.delete_selected_title")
+              }
+              onClick={() => void deleteSelectedRules()}
+            >
+              <Trash2 size={12} />
+              {tr("rules.delete_selected", {
+                count: String(selectedRules().length),
+              })}
+            </button>
           </div>
         </Show>
       </div>
@@ -1342,6 +1481,69 @@ const RulesView: Component = () => {
           </div>
         </Show>
       </div>
+
+      {/* Bulk tag dialog. Modal rather than a panel at the top of the list:
+          the list scrolls, and a control that answers a button in the fixed
+          filter row must not be able to open somewhere off screen. */}
+      <Show when={tagSelection()}>
+        {(list) => (
+          <div
+            class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+            onMouseDown={closeTagSelection}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") closeTagSelection();
+            }}
+          >
+            <div
+              class="bg-bg border border-border rounded-lg p-4 shadow-xl w-[30rem] max-w-[90vw] mx-4 space-y-3"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div class="flex items-center gap-2 text-sm font-medium">
+                <TagIcon size={14} class="text-accent shrink-0" />
+                {tr("rules.tag_selected_dialog_title", {
+                  count: String(list().length),
+                })}
+              </div>
+              <div class="flex">
+                <TagEditor
+                  tags={tagSelectionDraft()}
+                  onChange={setTagSelectionDraft}
+                  suggestions={allTags()}
+                  onDraftChange={setTagSelectionRaw}
+                  autoFocus
+                />
+              </div>
+              <div class="text-fg-muted text-[11px]">
+                {t()("rules.tag_selected_hint")}
+              </div>
+              <div class="flex justify-end gap-2">
+                <button
+                  type="button"
+                  class="text-sm px-3 py-1.5 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-50"
+                  disabled={tagSelectionBusy()}
+                  onClick={closeTagSelection}
+                >
+                  {t()("rules.cancel")}
+                </button>
+                {/* Enabled while there is uncommitted text too — see
+                    `onDraftChange` in components/Tags: a disabled button
+                    never takes the mousedown that commits it. */}
+                <button
+                  type="button"
+                  class="text-sm px-3 py-1.5 rounded bg-accent text-white hover:opacity-90 disabled:opacity-50"
+                  disabled={
+                    tagSelectionBusy() ||
+                    (tagSelectionDraft().length === 0 && !tagSelectionRaw().trim())
+                  }
+                  onClick={() => void applyTagSelection()}
+                >
+                  {t()("rules.tag_selected_apply")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Show>
 
       <Show when={ruleEditorPendingNav()}>
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">

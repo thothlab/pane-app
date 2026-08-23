@@ -112,6 +112,7 @@ pub fn run() {
             commands::rules::rule_set_enabled,
             commands::rules::rules_set_enabled_bulk,
             commands::rules::rules_delete_bulk,
+            commands::rules::rules_add_tags_bulk,
             commands::rules::rule_set_priority,
             commands::rules::collections_list,
             commands::rules::collection_upsert,

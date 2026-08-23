@@ -41,9 +41,9 @@ use pane_ipc::{
     CaptureBodyDto, CaptureDto, CollectionSetEnabledArgs, CollectionSetPriorityArgs,
     CollectionUpsertArgs, ExportOneResult, FilterDto, HeaderDto, ReplayRecordDto, ReplaySendArgs,
     RuleBulkScope, RuleCollectionDto, RuleConditionDto, RuleDto, RuleHeaderDto, RuleParamDto,
-    RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs, RulesDeleteBulkArgs,
-    RulesDeleteBulkResult, RulesSetEnabledBulkArgs, RulesSetEnabledBulkResult, SaveFilterArgs,
-    SessionDto, TlsHealthDto,
+    RulePatchOpDto, RuleSetEnabledArgs, RuleSetPriorityArgs, RuleUpsertArgs, RulesAddTagsBulkArgs,
+    RulesAddTagsBulkResult, RulesDeleteBulkArgs, RulesDeleteBulkResult, RulesSetEnabledBulkArgs,
+    RulesSetEnabledBulkResult, SaveFilterArgs, SessionDto, TlsHealthDto,
 };
 use parking_lot::Mutex;
 use rusqlite::{named_params, params, Connection, OptionalExtension};
@@ -1686,6 +1686,92 @@ impl Storage {
             }
         };
         Ok(RulesDeleteBulkResult { deleted })
+    }
+
+    /// Add labels to a whole scope of rules in one transaction.
+    ///
+    /// Merged per rule, never written wholesale: the incoming labels are
+    /// appended to what each rule already carries and run back through
+    /// [`normalise_tags`], so labelling a selection cannot erase a label the
+    /// user put on one of its rules earlier — and re-running the same call is
+    /// a no-op rather than a growing list of near-duplicates.
+    ///
+    /// `changed` counts the rules that actually gained something. A scope that
+    /// already carried every incoming label reports `matched > 0, changed = 0`,
+    /// which is success; `matched = 0` is the stale selector.
+    pub fn add_rules_tags_bulk(&self, args: RulesAddTagsBulkArgs) -> Result<RulesAddTagsBulkResult> {
+        let incoming = normalise_tags(&args.tags);
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+
+        // (id, current labels) for everything the scope covers, read up front.
+        // The id list is chunked for the same reason the bulk delete chunks it:
+        // a library big enough to want a bulk edit is the one that trips
+        // SQLite's cap on bound parameters.
+        let mut rows: Vec<(String, Vec<String>)> = Vec::new();
+        {
+            let map_row = |r: &rusqlite::Row| -> rusqlite::Result<(String, Vec<String>)> {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    decode_tags(r.get::<_, Option<String>>(1)?.as_deref()),
+                ))
+            };
+            match &args.scope {
+                RuleBulkScope::Ids { ids } => {
+                    for chunk in ids.chunks(ID_CHUNK) {
+                        let sql = format!(
+                            "SELECT id, tags FROM rule WHERE id IN ({})",
+                            placeholders(chunk.len())
+                        );
+                        let mut stmt = tx.prepare(&sql)?;
+                        let mut q = stmt.query(id_params(chunk))?;
+                        while let Some(row) = q.next()? {
+                            rows.push(map_row(row)?);
+                        }
+                    }
+                }
+                scope => {
+                    let (predicate, coll): (&str, Option<String>) = match scope {
+                        RuleBulkScope::All => ("1=1", None),
+                        RuleBulkScope::Ungrouped => ("collection_id IS NULL", None),
+                        RuleBulkScope::Collection { id } => {
+                            ("collection_id = :coll", Some(id.to_string()))
+                        }
+                        RuleBulkScope::Ids { .. } => unreachable!("handled above"),
+                    };
+                    let sql = format!("SELECT id, tags FROM rule WHERE {predicate}");
+                    let mut stmt = tx.prepare(&sql)?;
+                    let mut q = match &coll {
+                        Some(c) => stmt.query(named_params! { ":coll": c })?,
+                        None => stmt.query([])?,
+                    };
+                    while let Some(row) = q.next()? {
+                        rows.push(map_row(row)?);
+                    }
+                }
+            }
+        }
+
+        let matched = rows.len() as u64;
+        let mut changed = 0u64;
+        for (id, current) in rows {
+            let mut merged = current.clone();
+            merged.extend(incoming.iter().cloned());
+            let merged = normalise_tags(&merged);
+            // `decode_tags` normalises on read, so both sides are comparable
+            // and an unchanged rule is left alone — including its updated_at.
+            if merged == current {
+                continue;
+            }
+            tx.execute(
+                "UPDATE rule SET tags=?1, updated_at=?2 WHERE id=?3",
+                params![encode_tags(&merged), now, id],
+            )?;
+            changed += 1;
+        }
+        tx.commit()?;
+        Ok(RulesAddTagsBulkResult { matched, changed })
     }
 
     pub fn set_rule_priority(&self, args: RuleSetPriorityArgs) -> Result<()> {

@@ -299,10 +299,23 @@ const en = {
     delete_all_confirm: "Delete all rules ({{count}})?",
     delete_all_detail:
       "Collections stay — only the rules inside them go. This cannot be undone.",
-    delete_filtered: "Delete {{count}}",
+    delete_filtered: "Delete found ({{count}})",
     delete_filtered_title: "Delete the rules matching the current filter",
     delete_filtered_confirm:
       "Delete the rules matching \"{{query}}\" ({{count}})?",
+    delete_selected: "Delete selected ({{count}})",
+    delete_selected_title: "Delete the ticked rules",
+    delete_selected_none_title: "No rule is ticked",
+    delete_selected_confirm: "Delete the selected rules ({{count}})?",
+    delete_selected_device_detail:
+      "A rule is deleted from the library as a whole — on every device, not only on {{name}}.",
+    tag_selected: "Tag ({{count}})",
+    tag_selected_title: "Add a tag to the ticked rules",
+    tag_selected_dialog_title: "Tag the selected rules: {{count}}",
+    tag_selected_hint:
+      "The tags are added to whatever each rule already carries — nothing is erased.",
+    tag_selected_apply: "Add",
+    tag_selected_failed: "Could not add the tags: {{message}}",
     delete_collection_detail: "Its rules survive and move to Ungrouped.",
     edit: "Edit",
     import: "Import",

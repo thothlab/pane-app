@@ -296,10 +296,23 @@ const ru: Dict = {
     delete_all_confirm: "Удалить все правила ({{count}})?",
     delete_all_detail:
       "Коллекции останутся - удаляются только правила внутри них. Отменить нельзя.",
-    delete_filtered: "Удалить {{count}}",
+    delete_filtered: "Удалить найденные ({{count}})",
     delete_filtered_title: "Удалить правила, найденные текущим фильтром",
     delete_filtered_confirm:
       "Удалить правила, найденные по запросу «{{query}}» ({{count}})?",
+    delete_selected: "Удалить выбранные ({{count}})",
+    delete_selected_title: "Удалить правила, отмеченные галочкой",
+    delete_selected_none_title: "Ни одно правило не отмечено",
+    delete_selected_confirm: "Удалить выбранные правила ({{count}})?",
+    delete_selected_device_detail:
+      "Правило удаляется из библиотеки целиком - на всех устройствах, а не только на {{name}}.",
+    tag_selected: "Тег ({{count}})",
+    tag_selected_title: "Добавить тег правилам, отмеченным галочкой",
+    tag_selected_dialog_title: "Тег для выбранных правил: {{count}}",
+    tag_selected_hint:
+      "Теги добавятся к тем, что уже стоят на правилах - ничего не сотрётся.",
+    tag_selected_apply: "Добавить",
+    tag_selected_failed: "Не удалось проставить теги: {{message}}",
     delete_collection_detail: "Её правила не удаляются - переедут в «Без группы».",
     edit: "Редактировать",
     import: "Импорт",

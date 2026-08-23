@@ -620,6 +620,27 @@ pub struct RulesDeleteBulkResult {
     pub deleted: u64,
 }
 
+/// Add labels to a whole scope of rules at once.
+///
+/// Add, not set: a bulk edit that replaced the list would silently strip the
+/// labels every rule in the scope already carries, and the user picked the
+/// scope to say "these", not "these, and forget what they were".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesAddTagsBulkArgs {
+    pub scope: RuleBulkScope,
+    /// Normalised per rule on write, same as `RuleUpsertArgs::tags`.
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesAddTagsBulkResult {
+    /// Rules the scope covered.
+    pub matched: u64,
+    /// Of those, how many gained a label they did not already have. Same
+    /// "nothing to do" vs "scope matched nothing" split as the enable side.
+    pub changed: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RulesSetEnabledBulkResult {
     /// Rules the scope covered.
