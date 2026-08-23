@@ -659,31 +659,26 @@ const RulesView: Component = () => {
     await refresh();
   };
 
-  // Delete every rule the user is currently looking at.
+  // Delete the whole library. Deliberately NOT filter-aware.
   //
-  // Scoped to `visibleRules()` for the same reason the master checkbox is:
-  // with a filter on, the button's label and the dialog's count describe the
-  // filtered set, and an action that quietly reached past it would be the
-  // exact trap the filtered bulk-enable path was written to avoid. Unfiltered,
-  // "visible" IS the whole library, so that case goes through the cheap `all`
-  // scope instead of shipping every id.
-  const deleteVisibleRules = () => {
-    const doomed = visibleRules();
-    return deleteRuleSet(
-      doomed,
-      filterActive() ? { kind: "ids", ids: doomed.map((r) => r.id) } : { kind: "all" },
-      {
-        message: filterActive()
-          ? tr("rules.delete_filtered_confirm", {
-              count: String(doomed.length),
-              query: rulesFilter().trim(),
-            })
-          : tr("rules.delete_all_confirm", { count: String(doomed.length) }),
-        detail: tr("rules.delete_all_detail"),
-        confirmLabel: tr("common.delete"),
-        danger: true,
-      },
-    );
+  // It used to narrow to `visibleRules()` under a filter and relabel itself
+  // "Delete found (N)". That existed because there was no other way to delete
+  // a subset; now there is — "Delete selected" acts on ticked ∧ visible, and
+  // the filter is how you compose that set. Two red buttons whose sets
+  // overlap under a filter is the worse problem: at "everything visible is
+  // ticked" they did exactly the same thing under two different names.
+  //
+  // The count rides in the label precisely because this ignores the filter: a
+  // query that narrows the list to five rows must never let "Delete all (40)"
+  // read as "delete these five". The dialog repeats the same 40.
+  const deleteAllRules = () => {
+    const doomed = rules();
+    return deleteRuleSet(doomed, { kind: "all" }, {
+      message: tr("rules.delete_all_confirm", { count: String(doomed.length) }),
+      detail: tr("rules.delete_all_detail"),
+      confirmLabel: tr("common.delete"),
+      danger: true,
+    });
   };
 
   // Delete exactly the ticked rules.
@@ -1129,21 +1124,16 @@ const RulesView: Component = () => {
             <FolderPlus size={14} /> {t()("rules.new_collection")}
           </button>
           {/* Destructive, so it sits apart from the three benign actions and
-              is painted as danger. Its label counts what it will take. */}
+              is painted as danger. Its label counts what it will take — the
+              whole library, filter or no filter. */}
           <button
             class="inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40 ml-1"
-            onClick={() => void deleteVisibleRules()}
-            disabled={visibleRules().length === 0}
-            title={
-              filterActive()
-                ? t()("rules.delete_filtered_title")
-                : t()("rules.delete_all_title")
-            }
+            onClick={() => void deleteAllRules()}
+            disabled={rules().length === 0}
+            title={t()("rules.delete_all_title")}
           >
             <Trash2 size={14} />{" "}
-            {filterActive()
-              ? tr("rules.delete_filtered", { count: String(visibleRules().length) })
-              : t()("rules.delete_all")}
+            {tr("rules.delete_all", { count: String(rules().length) })}
           </button>
         </div>
       </header>

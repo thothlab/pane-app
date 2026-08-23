@@ -297,15 +297,12 @@ const en = {
     delete_collection_title: "Delete collection",
     delete_collection_confirm: "Delete collection \"{{name}}\"?",
     delete_rule_confirm: "Delete rule \"{{name}}\"?",
-    delete_all: "Delete all",
-    delete_all_title: "Delete every rule in the library",
+    delete_all: "Delete all ({{count}})",
+    delete_all_title:
+      "Delete every rule in the library — the filter does not narrow this. To delete what a filter found, tick the rows and use \"Delete selected\".",
     delete_all_confirm: "Delete all rules ({{count}})?",
     delete_all_detail:
       "Collections stay — only the rules inside them go. This cannot be undone.",
-    delete_filtered: "Delete found ({{count}})",
-    delete_filtered_title: "Delete the rules matching the current filter",
-    delete_filtered_confirm:
-      "Delete the rules matching \"{{query}}\" ({{count}})?",
     delete_selected: "Delete selected ({{count}})",
     delete_selected_title: "Delete the ticked rules",
     delete_selected_none_title: "No rule is ticked",

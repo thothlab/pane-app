@@ -157,9 +157,13 @@ Worth knowing:
 
 ## Deleting rules
 
-The trash icon on a rule row deletes that rule; **Delete all** in the header clears the library. With a filter on, the second button relabels itself to "Delete found (N)" and removes exactly what is on screen — the label and the action always describe the same set.
+Three deletes, by the size of the set:
 
-Next to the "Select all" checkbox in the filter row sits a third button, **Delete selected (N)**. To get a subset without touching any checkbox, narrow the list with the filter: both buttons act on "ticked ∧ visible", so `tag:checkout` plus the ticks gives exactly the set you want. With no filter on and everything ticked, this button and "Delete all" do the same thing — the count and the dialog name the same set either way. "Selected" means ticked: the checkbox on a rule row *is* the selection, and there is no second column of selection checkboxes. With a device picked, the set is read through that device — the rules ticked as live on it — but the delete still removes the rule from the library as a whole, on every device. The confirmation dialog says so.
+- The trash icon on a rule row — that one rule.
+- **Delete selected (N)** in the filter row, next to the "Select all" checkbox — the ticked rules among what is currently visible. "Selected" means ticked: the checkbox on a rule row *is* the selection, and there is no second column of selection checkboxes. Compose a subset with the filter rather than by unticking: the set is "ticked ∧ visible", so `tag:checkout` plus the ticks gives exactly what you want.
+- **Delete all (N)** in the header — the whole library. The filter does not narrow it, and the count in the label says so: with a query showing five rows, the button still reads "Delete all (40)", and the dialog names the same 40.
+
+With a device picked, the set for "Delete selected" is read through that device — the rules ticked as live on it — but the delete still removes the rule from the library as a whole, on every device. The confirmation dialog says so.
 
 Collections survive: a collection is grouping, not content, and after clearing the rules you usually want the same layout for the next set. Deleting a collection itself (the trash icon in its header) does not delete its rules — they move to Ungrouped.
 
