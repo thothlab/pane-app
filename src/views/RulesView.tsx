@@ -627,21 +627,14 @@ const RulesView: Component = () => {
     await refresh();
   };
 
-  // Delete every rule the user is currently looking at.
+  // Confirm, delete, then clean up after the rules that are gone — the shared
+  // body of both bulk deletes. `scope` is passed separately from `doomed` so
+  // "the whole library" can still go through the cheap `all` selector instead
+  // of shipping every id, while the dialog and the cleanup always speak about
+  // the exact same list.
   //
-  // Scoped to `visibleRules()` for the same reason the master checkbox is:
-  // with a filter on, the button's label and the dialog's count describe the
-  // filtered set, and an action that quietly reached past it would be the
-  // exact trap the filtered bulk-enable path was written to avoid. Unfiltered,
-  // "visible" IS the whole library, so that case goes through the cheap `all`
-  // scope instead of shipping every id.
-  //
-  // Collections survive: they are grouping, not content (see
+  // Collections survive either way: they are grouping, not content (see
   // `delete_rules_bulk` in storage).
-  // Confirm, delete, then clean up after the rules that are gone. `scope` is
-  // passed separately from `doomed` so "the whole library" can still go
-  // through the cheap `all` selector instead of shipping every id, while the
-  // dialog and the cleanup always speak about the exact same list.
   const deleteRuleSet = async (
     doomed: RuleDto[],
     scope: RuleBulkScope,
@@ -666,6 +659,14 @@ const RulesView: Component = () => {
     await refresh();
   };
 
+  // Delete every rule the user is currently looking at.
+  //
+  // Scoped to `visibleRules()` for the same reason the master checkbox is:
+  // with a filter on, the button's label and the dialog's count describe the
+  // filtered set, and an action that quietly reached past it would be the
+  // exact trap the filtered bulk-enable path was written to avoid. Unfiltered,
+  // "visible" IS the whole library, so that case goes through the cheap `all`
+  // scope instead of shipping every id.
   const deleteVisibleRules = () => {
     const doomed = visibleRules();
     return deleteRuleSet(
