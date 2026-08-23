@@ -159,7 +159,7 @@ Worth knowing:
 
 The trash icon on a rule row deletes that rule; **Delete all** in the header clears the library. With a filter on, the second button relabels itself to "Delete found (N)" and removes exactly what is on screen — the label and the action always describe the same set.
 
-Next to the "Select all" checkbox in the filter row sits a third button, **Delete selected (N)**. "Selected" means ticked: the checkbox on a rule row *is* the selection, and there is no second column of selection checkboxes. With a device picked, the set is read through that device — the rules ticked as live on it — but the delete still removes the rule from the library as a whole, on every device. The confirmation dialog says so.
+Next to the "Select all" checkbox in the filter row sits a third button, **Delete selected (N)**. To get a subset without touching any checkbox, narrow the list with the filter: both buttons act on "ticked ∧ visible", so `tag:checkout` plus the ticks gives exactly the set you want. With no filter on and everything ticked, this button and "Delete all" do the same thing — the count and the dialog name the same set either way. "Selected" means ticked: the checkbox on a rule row *is* the selection, and there is no second column of selection checkboxes. With a device picked, the set is read through that device — the rules ticked as live on it — but the delete still removes the rule from the library as a whole, on every device. The confirmation dialog says so.
 
 Collections survive: a collection is grouping, not content, and after clearing the rules you usually want the same layout for the next set. Deleting a collection itself (the trash icon in its header) does not delete its rules — they move to Ungrouped.
 
