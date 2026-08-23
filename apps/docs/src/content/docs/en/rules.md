@@ -14,6 +14,12 @@ Patch mode is convenient in scenarios where the client depends on server-generat
 
 Right-clicking a row in **Captures** opens an "Add to rules" picker. It lists existing collections, an "Ungrouped" slot, and a "New collection…" option (creates a collection with the default name `From captures` — you can rename it later).
 
+The collection list is narrowed by the same syntax the Rules filter uses: a substring over the name, `tag:label` for tags, `tag:a,b` for either. A collection's tags are shown on its row in the menu.
+
+**Several captures at once.** The "Select" button in the Captures header turns the list into a set of checkboxes. While the selection is non-empty, right-clicking **any** row acts on the whole ticked set — the row under the pointer does not narrow it. The menu and the dialog both say how many captures they are about to turn into rules, and "New collection…" lists them: `METHOD host/path`, one line per rule-to-be.
+
+The new-collection dialog also takes **tags** — a scenario assembled out of traffic is the thing most likely to want a label. A collection's tags match its rules in the filter too, so one label finds the whole group later.
+
 When you pick one, Pane creates a stub rule pre-filled from the captured request:
 
 - `method`, `host_glob`, `path_glob` (the query string is stripped — `match_params` stays empty so the mock matches regardless of query),
@@ -94,7 +100,9 @@ Above the list sits a filter row. Case-insensitive substring; several words are 
 **Tags.** A rule and a collection can each carry any number of free-form labels. Rules are tagged in the editor (the **Tags** field under the name), collections from the tag button in their header; the × on a chip removes one. Under the input, the tags already in use across the library are offered as chips — so "smoke", "Smoke" and "smoke-test" don't accumulate as three different labels.
 
 - `tag:name` narrows the search to tags. Useful when the same word appears in names too: `smoke` also finds a rule called "smoke test", `tag:smoke` finds only the labelled ones.
+- **Several tags.** A space is AND, a comma inside one term is OR — the same grammar the [captures filter](/en/filtering/) uses. `tag:smoke tag:ios` needs both; `tag:smoke,ios` takes either; `tag:smoke,ios tag:v2` reads as "(smoke or ios) and v2". The match is by substring, so `tag:ios` also finds `ios-only`.
 - Clicking any chip drops `tag:<name>` into the filter.
+- **Tagging several rules at once.** The **Tag (N)** button next to "Select all" labels every ticked rule. The tags are added to what each rule already carries — a bulk tag never erases anything, and running it twice with the same labels changes nothing.
 - A tag is a single token: spaces and commas in the input separate tags. Otherwise a tag with a space could never be addressed by `tag:`.
 - Matching ignores case, and duplicates collapse.
 - **A collection's tags match its rules too.** Label a group, filter by that tag, and everything inside shows up.
@@ -149,7 +157,9 @@ Worth knowing:
 
 ## Deleting rules
 
-The trash icon on a rule row deletes that rule; **Delete all** in the header clears the library. With a filter on, the second button relabels itself to "Delete N" and removes exactly what is on screen — the label and the action always describe the same set.
+The trash icon on a rule row deletes that rule; **Delete all** in the header clears the library. With a filter on, the second button relabels itself to "Delete found (N)" and removes exactly what is on screen — the label and the action always describe the same set.
+
+Next to the "Select all" checkbox in the filter row sits a third button, **Delete selected (N)**. "Selected" means ticked: the checkbox on a rule row *is* the selection, and there is no second column of selection checkboxes. With a device picked, the set is read through that device — the rules ticked as live on it — but the delete still removes the rule from the library as a whole, on every device. The confirmation dialog says so.
 
 Collections survive: a collection is grouping, not content, and after clearing the rules you usually want the same layout for the next set. Deleting a collection itself (the trash icon in its header) does not delete its rules — they move to Ungrouped.
 

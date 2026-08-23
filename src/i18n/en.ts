@@ -278,7 +278,7 @@ const en = {
     ungrouped: "Ungrouped",
     filter_placeholder: "orders 500 · tag:smoke · api.example.com",
     filter_help:
-      "Substring match, case-insensitive. Several words = all of them must match. Searches the rule name, its collection name, its tags, and the request (method, host, path, query params).\ntag:name narrows to tags only — use it when the word also appears in a rule's name.\nA collection's own tags match its rules too. Escape clears.",
+      "Substring match, case-insensitive. Several words = all of them must match. Searches the rule name, its collection name, its tags, and the request (method, host, path, query params).\ntag:name narrows to tags only — use it when the word also appears in a rule's name.\nA comma inside one term is OR: tag:smoke,ios finds either label; a space between terms is still AND.\nA collection's own tags match its rules too. Escape clears.",
     filter_no_matches: "No rules match \"{{query}}\".",
     clear_filter: "Clear filter",
     clear_filter_title: "Clear the filter",
