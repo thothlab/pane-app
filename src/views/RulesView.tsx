@@ -659,28 +659,6 @@ const RulesView: Component = () => {
     await refresh();
   };
 
-  // Delete the whole library. Deliberately NOT filter-aware.
-  //
-  // It used to narrow to `visibleRules()` under a filter and relabel itself
-  // "Delete found (N)". That existed because there was no other way to delete
-  // a subset; now there is — "Delete selected" acts on ticked ∧ visible, and
-  // the filter is how you compose that set. Two red buttons whose sets
-  // overlap under a filter is the worse problem: at "everything visible is
-  // ticked" they did exactly the same thing under two different names.
-  //
-  // The count rides in the label precisely because this ignores the filter: a
-  // query that narrows the list to five rows must never let "Delete all (40)"
-  // read as "delete these five". The dialog repeats the same 40.
-  const deleteAllRules = () => {
-    const doomed = rules();
-    return deleteRuleSet(doomed, { kind: "all" }, {
-      message: tr("rules.delete_all_confirm", { count: String(doomed.length) }),
-      detail: tr("rules.delete_all_detail"),
-      confirmLabel: tr("common.delete"),
-      danger: true,
-    });
-  };
-
   // Delete exactly the ticked rules.
   //
   // With a device plane picked, the tick means "live on this phone" but the
@@ -1122,18 +1100,6 @@ const RulesView: Component = () => {
             onClick={() => openCreateForm()}
           >
             <FolderPlus size={14} /> {t()("rules.new_collection")}
-          </button>
-          {/* Destructive, so it sits apart from the three benign actions and
-              is painted as danger. Its label counts what it will take — the
-              whole library, filter or no filter. */}
-          <button
-            class="inline-flex items-center gap-1 text-sm rounded px-3 py-1.5 border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40 ml-1"
-            onClick={() => void deleteAllRules()}
-            disabled={rules().length === 0}
-            title={t()("rules.delete_all_title")}
-          >
-            <Trash2 size={14} />{" "}
-            {tr("rules.delete_all", { count: String(rules().length) })}
           </button>
         </div>
       </header>

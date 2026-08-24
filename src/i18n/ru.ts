@@ -294,10 +294,6 @@ const ru: Dict = {
     delete_collection_title: "Удалить коллекцию",
     delete_collection_confirm: "Удалить коллекцию «{{name}}»?",
     delete_rule_confirm: "Удалить правило «{{name}}»?",
-    delete_all: "Удалить все ({{count}})",
-    delete_all_title:
-      "Удалить все правила в библиотеке - фильтр на это не влияет. Чтобы удалить найденное, отметьте галочками и нажмите «Удалить выбранные».",
-    delete_all_confirm: "Удалить все правила ({{count}})?",
     delete_all_detail:
       "Коллекции останутся - удаляются только правила внутри них. Отменить нельзя.",
     delete_selected: "Удалить выбранные ({{count}})",
