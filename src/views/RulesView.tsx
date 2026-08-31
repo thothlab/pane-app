@@ -1,4 +1,4 @@
-import { type Component, createSignal, createMemo, For, Index, Show, ErrorBoundary, onMount, onCleanup } from "solid-js";
+import { type Component, createSignal, createMemo, createEffect, For, Index, Show, ErrorBoundary, onMount, onCleanup } from "solid-js";
 import { useBeforeLeave } from "@solidjs/router";
 import {
   Plus,
@@ -26,12 +26,14 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Tag as TagIcon,
+  FolderTree,
 } from "lucide-solid";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readClipboard } from "@/lib/clipboard";
 import { api } from "@/ipc/client";
 import HelpButton from "@/components/HelpButton";
 import JsonEditor from "@/components/JsonEditor";
+import { VerticalResizer } from "@/components/VerticalResizer";
 import { t, tr } from "@/i18n";
 import {
   matchesCollection,
@@ -73,6 +75,10 @@ import {
   setRuleEditorPendingNav,
   registerEditorSaveFn,
   triggerEditorSave,
+  rulesViewMode,
+  setRulesViewMode,
+  rulesTreeSelectedCollection,
+  setRulesTreeSelectedCollection,
 } from "@/stores/rules-ui";
 import type {
   RuleBulkScope,
@@ -90,6 +96,25 @@ import type {
 } from "@/ipc/types";
 
 const UNGROUPED_KEY = "__ungrouped__";
+
+// Tree view's left/right split, same clamped-localStorage-width pattern as
+// CapturesView's list/detail split.
+const TREE_PANE_DEFAULT = 280;
+const TREE_PANE_MIN = 180;
+const TREE_PANE_MAX = 560;
+const TREE_PANE_STORAGE_KEY = "pane:rules.treePaneWidth";
+
+function loadTreePaneWidth(): number {
+  try {
+    const raw = localStorage.getItem(TREE_PANE_STORAGE_KEY);
+    if (!raw) return TREE_PANE_DEFAULT;
+    const n = JSON.parse(raw);
+    if (typeof n === "number" && n >= TREE_PANE_MIN && n <= TREE_PANE_MAX) return n;
+  } catch {
+    /* fall through */
+  }
+  return TREE_PANE_DEFAULT;
+}
 
 // Condition operators. Comparison symbols are language-neutral; `contains`
 // gets a translated label at render time.
@@ -518,6 +543,12 @@ const RulesView: Component = () => {
     visibleRules().filter((r) => isLiveOn(r, device())),
   );
 
+  // Same "ticked" reading as `selectedRules`, but over an arbitrary list —
+  // lets the tree view's per-collection panel scope bulk actions to just
+  // that collection's rules instead of the whole visible library.
+  const selectedRulesIn = (list: RuleDto[]) =>
+    list.filter((r) => isLiveOn(r, device()));
+
   const toggleSectionVisible = (
     collectionId: string | null,
     list: RuleDto[],
@@ -664,8 +695,11 @@ const RulesView: Component = () => {
   // With a device plane picked, the tick means "live on this phone" but the
   // delete is still library-wide — a rule is one row, not one row per device.
   // That gap is spelled out in the dialog rather than left to be discovered.
-  const deleteSelectedRules = () => {
-    const doomed = selectedRules();
+  // `list` is the scope the caller's checkbox/count promised — the whole
+  // visible library from the filter bar, or one collection's rules from
+  // the tree view's detail panel.
+  const deleteRulesIn = (list: RuleDto[]) => {
+    const doomed = selectedRulesIn(list);
     const dev = device();
     return deleteRuleSet(
       doomed,
@@ -684,6 +718,7 @@ const RulesView: Component = () => {
       },
     );
   };
+  const deleteSelectedRules = () => deleteRulesIn(visibleRules());
 
   // ── Tagging the ticked rules ──────────────────────────────────────
   //
@@ -696,13 +731,14 @@ const RulesView: Component = () => {
   const [tagSelectionRaw, setTagSelectionRaw] = createSignal("");
   const [tagSelectionBusy, setTagSelectionBusy] = createSignal(false);
 
-  const openTagSelection = () => {
-    const list = selectedRules();
-    if (list.length === 0) return;
+  const openTagSelectionIn = (list: RuleDto[]) => {
+    const ticked = selectedRulesIn(list);
+    if (ticked.length === 0) return;
     setTagSelectionDraft([]);
     setTagSelectionRaw("");
-    setTagSelection(list);
+    setTagSelection(ticked);
   };
+  const openTagSelection = () => openTagSelectionIn(visibleRules());
 
   const closeTagSelection = () => {
     if (tagSelectionBusy()) return;
@@ -884,6 +920,116 @@ const RulesView: Component = () => {
     );
     setEditing({ kind: "rule", collectionId: saved.collection_id, id: saved.id });
   };
+
+  // ── Tree view ──────────────────────────────────────────────────────
+  //
+  // A rule being edited always wins the tree's highlight/toolbar target —
+  // `rulesEditing` already is that state in both view modes (see
+  // stores/rules-ui.ts) — otherwise fall back to whichever collection (or
+  // Ungrouped) was last picked. Picking a collection closes any open rule
+  // editor via the same dirty-check `guard` every other nav path here uses.
+  const treeSelection = createMemo<TreeSelection>(() => {
+    const ed = editing();
+    if (ed) return { kind: "rule", id: ed.id, collectionId: ed.collectionId };
+    const sel = rulesTreeSelectedCollection();
+    return sel ? { kind: "collection", id: sel.id } : null;
+  });
+
+  const selectTreeCollection = (id: string | null) =>
+    guard(() => {
+      setEditing(null);
+      setRulesTreeSelectedCollection({ id });
+    });
+
+  // Recreate the open `RuleEditor` only when the *target* rule changes —
+  // switching directly between two tree rows — not when the same rule is
+  // re-saved (`onRuleSaved` re-sets `editing` to the same id/collectionId,
+  // so this string is unchanged). See `Show ... keyed` in the render below.
+  const editingKey = createMemo(() => {
+    const ed = editing();
+    return ed ? `${ed.collectionId ?? ""}::${ed.id}` : null;
+  });
+  // Same object reference every recompute (rules are mutated in place on
+  // save — see onRuleSaved above), so RuleEditor's `initial` prop never
+  // itself forces a remount.
+  const editingRule = createMemo(() => {
+    const ed = editing();
+    if (!ed || ed.id === "new") return null;
+    return rules().find((r) => r.id === ed.id) ?? null;
+  });
+
+  // The collection (or Ungrouped) the tree has picked, resolved to its
+  // rule list — null when nothing is picked or a rule is open instead.
+  const selectedCollectionInfo = createMemo(() => {
+    const sel = treeSelection();
+    if (!sel || sel.kind !== "collection") return null;
+    const key = sel.id ?? UNGROUPED_KEY;
+    return {
+      id: sel.id,
+      name: sel.id === null ? t()("rules.ungrouped") : collections().find((c) => c.id === sel.id)?.name ?? "",
+      rules: visibleRulesByCollection().get(key) ?? [],
+    };
+  });
+  const panelRules = () => selectedCollectionInfo()?.rules ?? [];
+  const panelSelectedCount = () => selectedRulesIn(panelRules()).length;
+
+  const treeToolbarAddRule = () => {
+    const sel = treeSelection();
+    if (!sel) return;
+    startNewRule(sel.kind === "collection" ? sel.id : sel.collectionId);
+  };
+  const treeToolbarTag = () => {
+    const sel = treeSelection();
+    if (!sel) return;
+    if (sel.kind === "rule") {
+      const r = editingRule();
+      if (r) openTagSelectionIn([r]);
+      return;
+    }
+    if (sel.id === null) return; // Ungrouped has no tags
+    const c = collections().find((cc) => cc.id === sel.id);
+    if (c) toggleTagging(c);
+  };
+  const treeToolbarExport = () => {
+    const sel = treeSelection();
+    if (!sel) return;
+    if (sel.kind === "rule") {
+      const r = editingRule();
+      if (r) void exportRule(r);
+      return;
+    }
+    if (sel.id === null) return;
+    const c = collections().find((cc) => cc.id === sel.id);
+    if (c) void exportCollection(c);
+  };
+  const treeToolbarRename = () => {
+    const sel = treeSelection();
+    if (!sel || sel.kind === "rule" || sel.id === null) return;
+    const c = collections().find((cc) => cc.id === sel.id);
+    if (c) startRename(c);
+  };
+  const treeToolbarDelete = () => {
+    const sel = treeSelection();
+    if (!sel) return;
+    if (sel.kind === "rule") {
+      const r = editingRule();
+      if (r) void removeRule(r);
+      return;
+    }
+    if (sel.id === null) return;
+    const c = collections().find((cc) => cc.id === sel.id);
+    if (c) void deleteCollection(c);
+  };
+
+  const [treePaneWidth, setTreePaneWidth] = createSignal(loadTreePaneWidth());
+  const treeSplitTemplate = createMemo(() => `${treePaneWidth()}px 6px 1fr`);
+  createEffect(() => {
+    try {
+      localStorage.setItem(TREE_PANE_STORAGE_KEY, JSON.stringify(treePaneWidth()));
+    } catch {
+      /* storage full / disabled */
+    }
+  });
 
   // Which map answers "is this section collapsed" depends on whether a
   // filter is on — see `rulesFilterCollapsed` for why the two are separate.
@@ -1119,6 +1265,23 @@ const RulesView: Component = () => {
       </Show>
 
       <div class="flex items-center gap-2 px-4 py-2 border-b border-border bg-bg-subtle">
+        {/* Tree-view toggle. Leftmost, ahead of the search icon: it picks
+            which layout the rest of the row's filter acts on, so it reads
+            as the first decision in the row rather than one more control
+            at the end of it. */}
+        <button
+          type="button"
+          class={`shrink-0 p-1.5 rounded border ${
+            rulesViewMode() === "tree"
+              ? "border-accent bg-accent/15 text-accent"
+              : "border-border text-fg-muted hover:bg-bg-muted"
+          }`}
+          title={rulesViewMode() === "tree" ? t()("rules.flat_view_title") : t()("rules.tree_view_title")}
+          aria-label={rulesViewMode() === "tree" ? t()("rules.flat_view_title") : t()("rules.tree_view_title")}
+          onClick={() => setRulesViewMode(rulesViewMode() === "tree" ? "flat" : "tree")}
+        >
+          <FolderTree size={14} />
+        </button>
         <Search size={14} class="text-fg-muted shrink-0" />
         <div class="flex-1 relative flex items-center">
           <input {...NO_AC}
@@ -1237,26 +1400,160 @@ const RulesView: Component = () => {
               <TagIcon size={12} />
               {tr("rules.tag_selected", { count: String(selectedRules().length) })}
             </button>
-            <button
-              type="button"
-              class="shrink-0 inline-flex items-center gap-1 text-xs rounded px-2 py-1 border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40"
-              disabled={selectedRules().length === 0}
-              title={
-                selectedRules().length === 0
-                  ? t()("rules.delete_selected_none_title")
-                  : t()("rules.delete_selected_title")
-              }
-              onClick={() => void deleteSelectedRules()}
-            >
-              <Trash2 size={12} />
-              {tr("rules.delete_selected", {
-                count: String(selectedRules().length),
-              })}
-            </button>
+            {/* Tree view has its own scoped delete (the collection panel's
+                own "Delete selected" plus the tree toolbar's trash icon
+                for the selected node) — this one stays flat-mode only. */}
+            <Show when={rulesViewMode() === "flat"}>
+              <button
+                type="button"
+                class="shrink-0 inline-flex items-center gap-1 text-xs rounded px-2 py-1 border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40"
+                disabled={selectedRules().length === 0}
+                title={
+                  selectedRules().length === 0
+                    ? t()("rules.delete_selected_none_title")
+                    : t()("rules.delete_selected_title")
+                }
+                onClick={() => void deleteSelectedRules()}
+              >
+                <Trash2 size={12} />
+                {tr("rules.delete_selected", {
+                  count: String(selectedRules().length),
+                })}
+              </button>
+            </Show>
           </div>
         </Show>
       </div>
 
+      <Show
+        when={rulesViewMode() === "flat"}
+        fallback={
+          <div
+            class="grid overflow-hidden"
+            style={{ "grid-template-columns": treeSplitTemplate(), "min-height": "0" }}
+          >
+            <div class="flex flex-col overflow-hidden">
+              <RulesTreeToolbar
+                selection={treeSelection()}
+                isUngroupedCollection={
+                  treeSelection()?.kind === "collection" && treeSelection()!.id === null
+                }
+                ruleIsNew={treeSelection()?.kind === "rule" && editing()?.id === "new"}
+                onAddRule={treeToolbarAddRule}
+                onTag={treeToolbarTag}
+                onExport={treeToolbarExport}
+                onRename={treeToolbarRename}
+                onDelete={treeToolbarDelete}
+              />
+              <div class="flex-1 overflow-auto">
+                <RulesTree
+                  collections={visibleCollections()}
+                  rulesByCollection={visibleRulesByCollection()}
+                  ungroupedVisible={ungroupedVisible()}
+                  selection={treeSelection()}
+                  dragDisabled={filterActive()}
+                  isCollapsed={isCollapsed}
+                  onToggleCollapsed={toggleSection}
+                  onSelectCollection={selectTreeCollection}
+                  onSelectRule={startEditRule}
+                  onToggleCollectionEnabled={(collectionId, list, en) =>
+                    toggleSectionVisible(collectionId, list, en)
+                  }
+                  onToggleRule={toggleRule}
+                  renamingId={renamingId()}
+                  renamingName={renamingName()}
+                  onRenamingNameChange={setRenamingName}
+                  onConfirmRename={confirmRename}
+                  onCancelRename={() => setRenamingId(null)}
+                  onStartRename={startRename}
+                  taggingId={taggingId()}
+                  taggingDraft={taggingDraft()}
+                  onTagDraftChange={setTaggingDraft}
+                  onToggleTagging={toggleTagging}
+                  allTags={allTags()}
+                  draggingRuleId={draggingRuleId()}
+                  draggingCollectionId={draggingCollectionId()}
+                  dragOverKey={dragOverKey()}
+                  onDragStartRule={onDragStartRule}
+                  onDragEndRule={onDragEndRule}
+                  onDragStartCollection={onDragStartCollection}
+                  onDragEndCollection={onDragEndCollection}
+                  onDragOverSection={onDragOverSection}
+                  onDragLeaveSection={onDragLeaveSection}
+                  onDropOnSection={onDropOnSection}
+                  onReorderRule={reorderRule}
+                  onReorderCollection={reorderCollection}
+                />
+              </div>
+            </div>
+            <VerticalResizer
+              onResize={(dx) =>
+                setTreePaneWidth((w) => Math.min(TREE_PANE_MAX, Math.max(TREE_PANE_MIN, w + dx)))
+              }
+              onReset={() => setTreePaneWidth(TREE_PANE_DEFAULT)}
+            />
+            <div class="overflow-y-auto overflow-x-hidden min-w-[240px] border-l border-border">
+              <Show
+                when={editingKey()}
+                keyed
+                fallback={
+                  <Show
+                    when={selectedCollectionInfo()}
+                    fallback={
+                      <div class="h-full flex items-center justify-center text-sm text-fg-muted">
+                        {t()("rules.tree_empty_selection")}
+                      </div>
+                    }
+                  >
+                    {(info) => (
+                      <CollectionRulesPanel
+                        title={info().name}
+                        rules={info().rules}
+                        dragDisabled={filterActive()}
+                        onToggleRule={toggleRule}
+                        onRenameRule={(r, name) => void renameRule(r, name)}
+                        onPickTag={filterByTag}
+                        onCopyRule={duplicateRule}
+                        onExportRule={exportRule}
+                        onDeleteRule={removeRule}
+                        onEditRule={startEditRule}
+                        draggingRuleId={draggingRuleId()}
+                        onDragStartRule={onDragStartRule}
+                        onDragEndRule={onDragEndRule}
+                        onReorderRule={reorderRule}
+                        selectAllState={groupState(info().rules, device())}
+                        selectedCount={panelSelectedCount()}
+                        onSelectAll={() =>
+                          toggleSectionVisible(
+                            info().id,
+                            info().rules,
+                            groupState(info().rules, device()) !== "on",
+                          )
+                        }
+                        onTagSelected={() => openTagSelectionIn(info().rules)}
+                        onDeleteSelected={() => void deleteRulesIn(info().rules)}
+                      />
+                    )}
+                  </Show>
+                }
+              >
+                {(_key) => (
+                  <EditorErrorBoundary onClose={cancelEdit}>
+                    <RuleEditor
+                      initial={editingRule()}
+                      defaultCollectionId={editing()!.collectionId}
+                      allTags={allTags()}
+                      onCancel={cancelEdit}
+                      onSaved={onRuleSaved}
+                      onLiveSync={syncRuleEnabled}
+                    />
+                  </EditorErrorBoundary>
+                )}
+              </Show>
+            </div>
+          </div>
+        }
+      >
       <div class="overflow-auto p-4 space-y-4">
         <Show when={loadError()}>
           {(msg) => (
@@ -1438,6 +1735,7 @@ const RulesView: Component = () => {
           </div>
         </Show>
       </div>
+      </Show>
 
       {/* Bulk tag dialog. Modal rather than a panel at the top of the list:
           the list scrolls, and a control that answers a button in the fixed
@@ -2151,6 +2449,643 @@ const RuleRow: Component<{
   );
 };
 
+// ── Tree view ────────────────────────────────────────────────────────────────
+//
+// Alternative to the accordion list above: a collection/rule tree on the
+// left, navigation only. Actions (rename, tag, export, delete, new rule)
+// live in the shared `RulesTreeToolbar` above it and act on whichever node
+// is selected — a rule editor or a collection's rule list renders in the
+// detail panel to the right (see the `rulesViewMode() === "tree"` branch
+// in `RulesView`'s render).
+
+export type TreeSelection =
+  | { kind: "collection"; id: string | null }
+  | { kind: "rule"; id: string; collectionId: string | null }
+  | null;
+
+const RulesTreeRuleRow: Component<{
+  rule: RuleDto;
+  /** Reactive accessor to the enclosing collection's current rule list —
+   *  `<For>` reuses this row's DOM/component whenever `rule`'s own object
+   *  reference is unchanged (e.g. after an in-place `enabled`/name patch
+   *  from an open editor's live-sync, which deliberately mutates in place
+   *  rather than replacing the object so the editor itself isn't
+   *  remounted). That leaves the frozen `rule` prop's fields stale for a
+   *  row that never itself re-renders. Re-deriving the current rule from
+   *  this live accessor on every read keeps the checkbox/name in step. */
+  liveRules: () => RuleDto[];
+  selected: boolean;
+  dragDisabled?: boolean;
+  isDragging: boolean;
+  onSelect: () => void;
+  onToggle: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onReorder: (draggedId: string, position: "before" | "after") => void;
+}> = (p) => {
+  // Deliberately NOT a createMemo: `.find()` returns the same object
+  // reference before and after an in-place `enabled`/name mutation, and a
+  // memo suppresses notifying its readers when its result is
+  // reference-equal to the last one — so it would recompute silently and
+  // never actually update the checkbox. Calling this plain function fresh
+  // from each JSX read leaves the final on/off comparison to Solid's
+  // primitive (boolean/string) diffing instead of an object-identity one.
+  const current = () => p.liveRules().find((r) => r.id === p.rule.id) ?? p.rule;
+  const effectivelyOn = () => isLiveOn(current(), rulesDevice());
+  const [dropEdge, setDropEdge] = createSignal<"before" | "after" | null>(null);
+  return (
+    <div
+      draggable={!p.dragDisabled}
+      onDragStart={(e) => {
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", p.rule.id);
+        }
+        p.onDragStart();
+      }}
+      onDragEnd={() => {
+        setDropEdge(null);
+        p.onDragEnd();
+      }}
+      onDragOver={(e) => {
+        if (p.isDragging) return;
+        if (!e.dataTransfer?.types.includes("text/plain")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        const rect = e.currentTarget.getBoundingClientRect();
+        setDropEdge(e.clientY < rect.top + rect.height / 2 ? "before" : "after");
+      }}
+      onDragLeave={(e) => {
+        const related = e.relatedTarget as Node | null;
+        if (!related || !(e.currentTarget as Node).contains(related)) setDropEdge(null);
+      }}
+      onDrop={(e) => {
+        if (!e.dataTransfer?.types.includes("text/plain")) return;
+        const edge = dropEdge();
+        setDropEdge(null);
+        if (p.isDragging || !edge) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const draggedId = e.dataTransfer?.getData("text/plain");
+        if (draggedId) p.onReorder(draggedId, edge);
+      }}
+      class={`relative flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-sm ${
+        p.selected ? "bg-accent/15 text-accent" : "hover:bg-bg-muted"
+      } ${p.isDragging ? "opacity-40" : ""} ${!effectivelyOn() ? "opacity-60" : ""}`}
+      onClick={p.onSelect}
+    >
+      <Show when={dropEdge()}>
+        {(edge) => (
+          <div
+            class={`pointer-events-none absolute inset-x-1 h-0.5 bg-accent rounded ${
+              edge() === "before" ? "-top-px" : "-bottom-px"
+            }`}
+          />
+        )}
+      </Show>
+      <Checkbox
+        state={effectivelyOn() ? "on" : "off"}
+        title={effectivelyOn() ? t()("rules.disable") : t()("rules.enable")}
+        onClick={p.onToggle}
+      />
+      <div class="truncate flex-1 min-w-0">{current().name || t()("rules.unnamed_rule")}</div>
+    </div>
+  );
+};
+
+const RulesTreeNode: Component<{
+  collection: RuleCollectionDto | null;
+  rules: RuleDto[];
+  collapsed: boolean;
+  dragDisabled: boolean;
+  selection: TreeSelection;
+  onToggleCollapsed: () => void;
+  onSelectCollection: () => void;
+  onSelectRule: (rule: RuleDto) => void;
+  onToggleCollectionEnabled: (enable: boolean) => void;
+  onToggleRule: (rule: RuleDto) => void;
+  renamingId: string | null;
+  renamingName: string;
+  onRenamingNameChange: (s: string) => void;
+  onConfirmRename: () => void;
+  onCancelRename: () => void;
+  onStartRename: () => void;
+  tagging: boolean;
+  tagDraft: string[];
+  onTagDraftChange: (tags: string[]) => void;
+  onToggleTagging: () => void;
+  allTags: string[];
+  draggingRuleId: string | null;
+  draggingCollectionId: string | null;
+  dragOverKey: string | null;
+  onDragStartRule: (id: string) => void;
+  onDragEndRule: () => void;
+  onDragStartCollection: () => void;
+  onDragEndCollection: () => void;
+  onDragOverSection: () => void;
+  onDragLeaveSection: () => void;
+  onDropOnSection: (ruleId: string | null) => void;
+  onReorderRule: (draggedId: string, targetId: string, position: "before" | "after") => void;
+  onReorderCollection: (draggedId: string, targetId: string, position: "before" | "after") => void;
+}> = (p) => {
+  const isUngrouped = () => p.collection === null;
+  const sectionKey = () => p.collection?.id ?? UNGROUPED_KEY;
+  const isRenaming = () => p.collection !== null && p.renamingId === p.collection.id;
+  const isSelected = () =>
+    p.selection?.kind === "collection" && p.selection.id === (p.collection?.id ?? null);
+  const isDragOver = () => p.draggingRuleId !== null && p.dragOverKey === sectionKey();
+  const [collectionDropEdge, setCollectionDropEdge] = createSignal<"before" | "after" | null>(null);
+  const COLLECTION_DND = "application/x-pane-collection";
+  const isCollectionDrag = () => p.draggingCollectionId !== null;
+  const isBeingDragged = () => p.collection !== null && p.draggingCollectionId === p.collection.id;
+  let headerEl: HTMLDivElement | undefined;
+
+  return (
+    <div
+      class="relative"
+      onDragEnter={(e) => {
+        e.preventDefault();
+        if (!isCollectionDrag()) p.onDragOverSection();
+      }}
+      onDragOver={(e) => {
+        if (!isUngrouped() && isCollectionDrag()) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+          const rect = e.currentTarget.getBoundingClientRect();
+          setCollectionDropEdge(e.clientY < rect.top + rect.height / 2 ? "before" : "after");
+          return;
+        }
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        p.onDragOverSection();
+      }}
+      onDragLeave={(e) => {
+        const related = e.relatedTarget as Node | null;
+        if (!related || !(e.currentTarget as Node).contains(related)) {
+          p.onDragLeaveSection();
+          setCollectionDropEdge(null);
+        }
+      }}
+      onDrop={(e) => {
+        if (!isUngrouped() && isCollectionDrag()) {
+          e.preventDefault();
+          e.stopPropagation();
+          const edge = collectionDropEdge();
+          const draggedId = p.draggingCollectionId;
+          setCollectionDropEdge(null);
+          if (edge && draggedId && p.collection && draggedId !== p.collection.id) {
+            p.onReorderCollection(draggedId, p.collection.id, edge);
+          }
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const id = e.dataTransfer?.getData("text/plain") || null;
+        p.onDropOnSection(id);
+      }}
+    >
+      <Show when={collectionDropEdge()}>
+        {(edge) => (
+          <div
+            class={`pointer-events-none absolute inset-x-0 h-0.5 bg-accent rounded ${
+              edge() === "before" ? "-top-px" : "-bottom-px"
+            }`}
+          />
+        )}
+      </Show>
+      <div
+        ref={headerEl}
+        class={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-sm ${
+          isSelected() ? "bg-accent/15 text-accent" : "hover:bg-bg-muted"
+        } ${isDragOver() ? "ring-2 ring-accent/40" : ""} ${isBeingDragged() ? "opacity-40" : ""}`}
+        onClick={p.onSelectCollection}
+      >
+        <Show when={!isUngrouped() && !p.dragDisabled}>
+          <div
+            draggable={true}
+            class="cursor-grab active:cursor-grabbing text-fg-muted hover:text-fg shrink-0"
+            title={t()("rules.drag_collection")}
+            onDragStart={(e) => {
+              if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData(COLLECTION_DND, p.collection!.id);
+                if (headerEl) {
+                  e.dataTransfer.setDragImage(headerEl, 16, headerEl.offsetHeight / 2);
+                }
+              }
+              p.onDragStartCollection();
+            }}
+            onDragEnd={() => {
+              p.onDragEndCollection();
+              setCollectionDropEdge(null);
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <GripVertical size={12} />
+          </div>
+        </Show>
+        <button
+          class="text-fg-muted hover:text-fg shrink-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            p.onToggleCollapsed();
+          }}
+          aria-label={p.collapsed ? t()("rules.expand") : t()("rules.collapse")}
+        >
+          <Show when={p.collapsed} fallback={<ChevronDown size={12} />}>
+            <ChevronRight size={12} />
+          </Show>
+        </button>
+        <Show when={p.rules.length > 0} fallback={<div class="w-[18px] shrink-0" />}>
+          <Checkbox
+            state={groupState(p.rules, rulesDevice())}
+            title={
+              groupState(p.rules, rulesDevice()) === "on"
+                ? t()("rules.disable")
+                : t()("rules.enable")
+            }
+            onClick={() => p.onToggleCollectionEnabled(groupState(p.rules, rulesDevice()) !== "on")}
+          />
+        </Show>
+        <Show
+          when={isRenaming()}
+          fallback={
+            <>
+              <div
+                class={`font-medium truncate flex-1 min-w-0 ${isUngrouped() ? "" : "cursor-text"}`}
+                title={isUngrouped() ? undefined : t()("rules.rename_dblclick_title")}
+                onDblClick={(e) => {
+                  e.stopPropagation();
+                  if (!isUngrouped()) p.onStartRename();
+                }}
+              >
+                {p.collection?.name ?? t()("rules.ungrouped")}
+              </div>
+              <div class="text-xs text-fg-muted shrink-0">({p.rules.length})</div>
+            </>
+          }
+        >
+          <input {...NO_AC}
+            ref={(el) => setTimeout(() => el?.focus(), 0)}
+            class="bg-bg border border-border rounded px-1.5 py-0.5 text-sm flex-1 min-w-0"
+            value={p.renamingName}
+            onClick={(e) => e.stopPropagation()}
+            onInput={(e) => p.onRenamingNameChange(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                p.onConfirmRename();
+              }
+              if (e.key === "Escape") p.onCancelRename();
+            }}
+            onBlur={() => p.onConfirmRename()}
+          />
+        </Show>
+      </div>
+
+      <Show when={p.tagging}>
+        <div class="pl-7 pr-2 pb-1 flex items-start gap-2" onClick={(e) => e.stopPropagation()}>
+          <TagEditor tags={p.tagDraft} suggestions={p.allTags} onChange={p.onTagDraftChange} />
+          <button
+            class="text-xs px-2 py-0.5 rounded bg-accent text-white hover:opacity-90 shrink-0"
+            onClick={p.onToggleTagging}
+          >
+            {t()("rules.save")}
+          </button>
+        </div>
+      </Show>
+
+      <Show when={!p.collapsed}>
+        <div class="pl-6 space-y-0.5 pb-0.5">
+          <Show when={p.rules.length === 0}>
+            <div class="text-xs text-fg-muted italic px-2 py-1">{t()("rules.empty_collection")}</div>
+          </Show>
+          <For each={p.rules}>
+            {(rule) => (
+              <RulesTreeRuleRow
+                rule={rule}
+                liveRules={() => p.rules}
+                selected={p.selection?.kind === "rule" && p.selection.id === rule.id}
+                dragDisabled={p.dragDisabled}
+                isDragging={p.draggingRuleId === rule.id}
+                onSelect={() => p.onSelectRule(rule)}
+                onToggle={() => p.onToggleRule(rule)}
+                onDragStart={() => p.onDragStartRule(rule.id)}
+                onDragEnd={p.onDragEndRule}
+                onReorder={(draggedId, position) => p.onReorderRule(draggedId, rule.id, position)}
+              />
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
+  );
+};
+
+const RulesTree: Component<{
+  collections: RuleCollectionDto[];
+  rulesByCollection: Map<string, RuleDto[]>;
+  ungroupedVisible: boolean;
+  selection: TreeSelection;
+  dragDisabled: boolean;
+  isCollapsed: (key: string) => boolean;
+  onToggleCollapsed: (key: string) => void;
+  onSelectCollection: (id: string | null) => void;
+  onSelectRule: (rule: RuleDto) => void;
+  onToggleCollectionEnabled: (collectionId: string | null, rules: RuleDto[], enable: boolean) => void;
+  onToggleRule: (rule: RuleDto) => void;
+  renamingId: string | null;
+  renamingName: string;
+  onRenamingNameChange: (s: string) => void;
+  onConfirmRename: () => void;
+  onCancelRename: () => void;
+  onStartRename: (c: RuleCollectionDto) => void;
+  taggingId: string | null;
+  taggingDraft: string[];
+  onTagDraftChange: (tags: string[]) => void;
+  onToggleTagging: (c: RuleCollectionDto) => void;
+  allTags: string[];
+  draggingRuleId: string | null;
+  draggingCollectionId: string | null;
+  dragOverKey: string | null;
+  onDragStartRule: (id: string) => void;
+  onDragEndRule: () => void;
+  onDragStartCollection: (id: string) => void;
+  onDragEndCollection: () => void;
+  onDragOverSection: (key: string) => void;
+  onDragLeaveSection: () => void;
+  onDropOnSection: (key: string, ruleId: string | null) => void;
+  onReorderRule: (draggedId: string, targetId: string, position: "before" | "after") => void;
+  onReorderCollection: (draggedId: string, targetId: string, position: "before" | "after") => void;
+}> = (p) => (
+  <div class="p-2 space-y-0.5">
+    <For each={p.collections}>
+      {(c) => (
+        <RulesTreeNode
+          collection={c}
+          rules={p.rulesByCollection.get(c.id) ?? []}
+          collapsed={p.isCollapsed(c.id)}
+          dragDisabled={p.dragDisabled}
+          selection={p.selection}
+          onToggleCollapsed={() => p.onToggleCollapsed(c.id)}
+          onSelectCollection={() => p.onSelectCollection(c.id)}
+          onSelectRule={p.onSelectRule}
+          onToggleCollectionEnabled={(en) =>
+            p.onToggleCollectionEnabled(c.id, p.rulesByCollection.get(c.id) ?? [], en)
+          }
+          onToggleRule={p.onToggleRule}
+          renamingId={p.renamingId}
+          renamingName={p.renamingName}
+          onRenamingNameChange={p.onRenamingNameChange}
+          onConfirmRename={p.onConfirmRename}
+          onCancelRename={p.onCancelRename}
+          onStartRename={() => p.onStartRename(c)}
+          tagging={p.taggingId === c.id}
+          tagDraft={p.taggingDraft}
+          onTagDraftChange={p.onTagDraftChange}
+          onToggleTagging={() => p.onToggleTagging(c)}
+          allTags={p.allTags}
+          draggingRuleId={p.draggingRuleId}
+          draggingCollectionId={p.draggingCollectionId}
+          dragOverKey={p.dragOverKey}
+          onDragStartRule={p.onDragStartRule}
+          onDragEndRule={p.onDragEndRule}
+          onDragStartCollection={() => p.onDragStartCollection(c.id)}
+          onDragEndCollection={p.onDragEndCollection}
+          onDragOverSection={() => p.onDragOverSection(c.id)}
+          onDragLeaveSection={p.onDragLeaveSection}
+          onDropOnSection={(rid) => p.onDropOnSection(c.id, rid)}
+          onReorderRule={p.onReorderRule}
+          onReorderCollection={p.onReorderCollection}
+        />
+      )}
+    </For>
+    <Show when={p.ungroupedVisible}>
+      <RulesTreeNode
+        collection={null}
+        rules={p.rulesByCollection.get(UNGROUPED_KEY) ?? []}
+        collapsed={p.isCollapsed(UNGROUPED_KEY)}
+        dragDisabled={p.dragDisabled}
+        selection={p.selection}
+        onToggleCollapsed={() => p.onToggleCollapsed(UNGROUPED_KEY)}
+        onSelectCollection={() => p.onSelectCollection(null)}
+        onSelectRule={p.onSelectRule}
+        onToggleCollectionEnabled={(en) =>
+          p.onToggleCollectionEnabled(null, p.rulesByCollection.get(UNGROUPED_KEY) ?? [], en)
+        }
+        onToggleRule={p.onToggleRule}
+        renamingId={p.renamingId}
+        renamingName={p.renamingName}
+        onRenamingNameChange={p.onRenamingNameChange}
+        onConfirmRename={p.onConfirmRename}
+        onCancelRename={p.onCancelRename}
+        onStartRename={() => {}}
+        tagging={false}
+        tagDraft={[]}
+        onTagDraftChange={() => {}}
+        onToggleTagging={() => {}}
+        allTags={p.allTags}
+        draggingRuleId={p.draggingRuleId}
+        draggingCollectionId={p.draggingCollectionId}
+        dragOverKey={p.dragOverKey}
+        onDragStartRule={p.onDragStartRule}
+        onDragEndRule={p.onDragEndRule}
+        onDragStartCollection={() => {}}
+        onDragEndCollection={p.onDragEndCollection}
+        onDragOverSection={() => p.onDragOverSection(UNGROUPED_KEY)}
+        onDragLeaveSection={p.onDragLeaveSection}
+        onDropOnSection={(rid) => p.onDropOnSection(UNGROUPED_KEY, rid)}
+        onReorderRule={p.onReorderRule}
+        onReorderCollection={p.onReorderCollection}
+      />
+    </Show>
+  </div>
+);
+
+// Shared toolbar above the tree — one control surface for both collections
+// and rules, replacing the per-row buttons `CollectionSection`'s header
+// used to carry. Acts on whatever is selected in the tree.
+const RulesTreeToolbar: Component<{
+  selection: TreeSelection;
+  isUngroupedCollection: boolean;
+  /** The selected rule is a not-yet-saved draft ("new") — no id to tag,
+   *  export, or delete yet. */
+  ruleIsNew: boolean;
+  onAddRule: () => void;
+  onTag: () => void;
+  onExport: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}> = (p) => {
+  const kind = () => p.selection?.kind ?? null;
+  // Rename is disabled for a selected rule: the full editor already shows
+  // an editable name field, so a second rename control would just be a
+  // second place to look for the same action.
+  const renameDisabled = () => kind() === null || kind() === "rule" || p.isUngroupedCollection;
+  // Tag / export / delete need a saved rule or a real collection: disabled
+  // with nothing selected, with Ungrouped selected, or with an unsaved
+  // "new" rule draft selected.
+  const tagExportDeleteDisabled = () => {
+    const k = kind();
+    if (k === null) return true;
+    if (k === "rule") return p.ruleIsNew;
+    return p.isUngroupedCollection;
+  };
+  return (
+    <div class="flex items-center gap-1 px-2 py-1.5 border-b border-border">
+      <button
+        class="inline-flex items-center gap-1 text-xs rounded px-2 py-1 hover:bg-bg-muted disabled:opacity-40"
+        disabled={kind() === null}
+        title={t()("rules.tree_add_rule_title")}
+        onClick={p.onAddRule}
+      >
+        <Plus size={12} /> {t()("rules.new_rule")}
+      </button>
+      <div class="ml-auto flex items-center gap-1">
+        <button
+          class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
+          disabled={tagExportDeleteDisabled()}
+          title={
+            p.isUngroupedCollection ? t()("rules.tree_no_actions_title") : t()("rules.tree_tag_title")
+          }
+          onClick={p.onTag}
+        >
+          <TagIcon size={12} />
+        </button>
+        <button
+          class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
+          disabled={tagExportDeleteDisabled()}
+          title={
+            p.isUngroupedCollection ? t()("rules.tree_no_actions_title") : t()("rules.tree_export_title")
+          }
+          onClick={p.onExport}
+        >
+          <Upload size={12} />
+        </button>
+        <button
+          class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
+          disabled={renameDisabled()}
+          title={
+            kind() === "rule"
+              ? t()("rules.tree_rename_disabled_title")
+              : p.isUngroupedCollection
+                ? t()("rules.tree_no_actions_title")
+                : t()("rules.tree_rename_title")
+          }
+          onClick={p.onRename}
+        >
+          <Pencil size={12} />
+        </button>
+        <button
+          class="text-xs p-1 rounded hover:bg-danger/10 text-danger disabled:opacity-40"
+          disabled={tagExportDeleteDisabled()}
+          title={
+            p.isUngroupedCollection ? t()("rules.tree_no_actions_title") : t()("rules.tree_delete_title")
+          }
+          onClick={p.onDelete}
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Right-hand detail panel shown when a collection (or Ungrouped) is
+// selected in the tree and no rule is open — the same bulk select-all /
+// tag-selected / delete-selected row from the flat view's filter bar
+// (`1197-1257`), scoped to just this collection's rules instead of the
+// whole visible library, plus the same `RuleRow` used everywhere else.
+const CollectionRulesPanel: Component<{
+  title: string;
+  rules: RuleDto[];
+  dragDisabled: boolean;
+  onToggleRule: (r: RuleDto) => void;
+  onRenameRule: (r: RuleDto, name: string) => void;
+  onPickTag: (tag: string) => void;
+  onCopyRule: (r: RuleDto) => void;
+  onExportRule: (r: RuleDto) => void;
+  onDeleteRule: (r: RuleDto) => void;
+  onEditRule: (r: RuleDto) => void;
+  draggingRuleId: string | null;
+  onDragStartRule: (id: string) => void;
+  onDragEndRule: () => void;
+  onReorderRule: (draggedId: string, targetId: string, position: "before" | "after") => void;
+  selectAllState: "on" | "off" | "mixed";
+  selectedCount: number;
+  onSelectAll: () => void;
+  onTagSelected: () => void;
+  onDeleteSelected: () => void;
+}> = (p) => (
+  <div class="flex flex-col h-full overflow-hidden">
+    <div class="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0">
+      <div class="text-sm font-medium truncate flex-1 min-w-0">{p.title}</div>
+    </div>
+    <Show when={p.rules.length > 0}>
+      <div class="flex items-center gap-2 px-3 py-1.5 border-b border-border shrink-0">
+        <Checkbox
+          state={p.selectAllState}
+          title={p.selectAllState === "on" ? t()("rules.uncheck_all_title") : t()("rules.check_all_title")}
+          onClick={p.onSelectAll}
+        />
+        <span
+          class="text-xs text-fg-muted cursor-pointer select-none"
+          title={t()("rules.tree_select_all_title")}
+          onClick={p.onSelectAll}
+        >
+          {t()("rules.select_all")}
+        </span>
+        <button
+          type="button"
+          class="ml-auto shrink-0 inline-flex items-center gap-1 text-xs rounded px-2 py-1 border border-border hover:bg-bg-muted disabled:opacity-40"
+          disabled={p.selectedCount === 0}
+          title={p.selectedCount === 0 ? t()("rules.delete_selected_none_title") : t()("rules.tag_selected_title")}
+          onClick={p.onTagSelected}
+        >
+          <TagIcon size={12} />
+          {tr("rules.tag_selected", { count: String(p.selectedCount) })}
+        </button>
+        <button
+          type="button"
+          class="shrink-0 inline-flex items-center gap-1 text-xs rounded px-2 py-1 border border-danger/40 text-danger hover:bg-danger/10 disabled:opacity-40"
+          disabled={p.selectedCount === 0}
+          title={p.selectedCount === 0 ? t()("rules.delete_selected_none_title") : t()("rules.delete_selected_title")}
+          onClick={p.onDeleteSelected}
+        >
+          <Trash2 size={12} />
+          {tr("rules.delete_selected", { count: String(p.selectedCount) })}
+        </button>
+      </div>
+    </Show>
+    <div class="flex-1 overflow-auto p-3 space-y-2">
+      <Show when={p.rules.length === 0}>
+        <div class="text-xs text-fg-muted italic px-2 py-2">{t()("rules.empty_collection")}</div>
+      </Show>
+      <For each={p.rules}>
+        {(rule) => (
+          <RuleRow
+            rule={rule}
+            dragDisabled={p.dragDisabled}
+            isDragging={p.draggingRuleId === rule.id}
+            onToggle={() => p.onToggleRule(rule)}
+            onEdit={() => p.onEditRule(rule)}
+            onRename={(name) => p.onRenameRule(rule, name)}
+            onPickTag={p.onPickTag}
+            onCopy={() => p.onCopyRule(rule)}
+            onExport={() => p.onExportRule(rule)}
+            onDelete={() => p.onDeleteRule(rule)}
+            onDragStart={() => p.onDragStartRule(rule.id)}
+            onDragEnd={p.onDragEndRule}
+            onReorder={(draggedId, position) => p.onReorderRule(draggedId, rule.id, position)}
+          />
+        )}
+      </For>
+    </div>
+  </div>
+);
+
 // ── Editor ─────────────────────────────────────────────────────────────────
 
 type DraftState = {
@@ -2652,6 +3587,23 @@ const RuleEditor: Component<{
       setErr(e?.message ?? String(e));
     }
   };
+
+  // The reverse direction: something OTHER than this editor's own toggle
+  // flipped `enabled` — the tree/row checkbox, whose click goes through a
+  // full `refresh()` rather than the in-place `onLiveSync` patch above, so
+  // `p.initial` arrives as a genuinely new object once that refresh lands.
+  // In the flat list this never came up: the row this editor replaces is
+  // the only other view of the rule, and it's hidden while editing. The
+  // tree keeps that row visible the whole time, so without this the two
+  // checkboxes could disagree about the same rule. Deliberately narrow —
+  // only `enabled`, not a general "adopt every external field" effect —
+  // so it never clobbers what the user is mid-typing elsewhere in the draft.
+  createEffect(() => {
+    const ext = p.initial?.enabled;
+    if (ext !== undefined && ext !== d().enabled) {
+      setD((prev) => ({ ...prev, enabled: ext }));
+    }
+  });
 
   const save = async () => {
     setBusy(true);

@@ -256,3 +256,76 @@ export {
   ruleEditorPendingNav,
   setRuleEditorPendingNav,
 };
+
+// ── Tree view ──────────────────────────────────────────────────────
+//
+// An alternative to the default accordion list: a collection/rule tree on
+// the left, a detail panel on the right. Both bits of state below are
+// durable preferences — like `rulesCollapsed`/`rulesEditing` above, and
+// unlike the filter/device plane, there's no correctness reason to reset
+// them on restart, so they're persisted the same way.
+
+export type RulesViewMode = "flat" | "tree";
+
+const VIEW_MODE_KEY = "pane:rules.viewMode";
+
+function loadViewMode(): RulesViewMode {
+  if (typeof localStorage === "undefined") return "flat";
+  return localStorage.getItem(VIEW_MODE_KEY) === "tree" ? "tree" : "flat";
+}
+
+const [rulesViewMode, setRulesViewModeRaw] = createSignal<RulesViewMode>(loadViewMode());
+
+export { rulesViewMode };
+
+export function setRulesViewMode(next: RulesViewMode): void {
+  setRulesViewModeRaw(next);
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(VIEW_MODE_KEY, next);
+  } catch {
+    /* storage full / disabled */
+  }
+}
+
+// Which collection (or Ungrouped) is picked in the tree, when no rule is
+// open. `null` (the wrapper itself) means nothing picked yet; `{id: null}`
+// means Ungrouped is picked — same discriminated-null shape as
+// `RulesEditing`, for the same reason: "nothing" and "the group with no
+// id" are different states and a bare `string | null` can't tell them
+// apart.
+export type RulesTreeSelectedCollection = { id: string | null } | null;
+
+const TREE_SELECTED_COLLECTION_KEY = "pane:rules.treeSelectedCollection";
+
+function loadTreeSelectedCollection(): RulesTreeSelectedCollection {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(TREE_SELECTED_COLLECTION_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as unknown;
+    if (v && typeof v === "object") {
+      const id = (v as { id?: unknown }).id;
+      if (id === null || typeof id === "string") return { id };
+    }
+  } catch {
+    /* corrupted — drop */
+  }
+  return null;
+}
+
+const [rulesTreeSelectedCollection, setRulesTreeSelectedCollectionRaw] =
+  createSignal<RulesTreeSelectedCollection>(loadTreeSelectedCollection());
+
+export { rulesTreeSelectedCollection };
+
+export function setRulesTreeSelectedCollection(next: RulesTreeSelectedCollection): void {
+  setRulesTreeSelectedCollectionRaw(next);
+  if (typeof localStorage === "undefined") return;
+  try {
+    if (next === null) localStorage.removeItem(TREE_SELECTED_COLLECTION_KEY);
+    else localStorage.setItem(TREE_SELECTED_COLLECTION_KEY, JSON.stringify(next));
+  } catch {
+    /* storage full / disabled */
+  }
+}
