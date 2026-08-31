@@ -256,6 +256,17 @@ const RulesView: Component = () => {
   onMount(async () => {
     try {
       await refresh();
+      // `rulesEditing` is persisted, so it can outlive the rule it points at
+      // (deleted in another window, a different data dir). Left in place it
+      // makes the tree select a ghost row and — before the `editingKey` gate
+      // below — opened an editor with `initial = null`. Only when the load
+      // actually succeeded: `refresh` swallows its error and keeps the list
+      // empty, and dropping the user's open editor on a transient IPC hiccup
+      // would be worse than the ghost.
+      const ed = editing();
+      if (!loadError() && ed && ed.id !== "new" && !rules().some((r) => r.id === ed.id)) {
+        setEditing(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -941,14 +952,6 @@ const RulesView: Component = () => {
       setRulesTreeSelectedCollection({ id });
     });
 
-  // Recreate the open `RuleEditor` only when the *target* rule changes —
-  // switching directly between two tree rows — not when the same rule is
-  // re-saved (`onRuleSaved` re-sets `editing` to the same id/collectionId,
-  // so this string is unchanged). See `Show ... keyed` in the render below.
-  const editingKey = createMemo(() => {
-    const ed = editing();
-    return ed ? `${ed.collectionId ?? ""}::${ed.id}` : null;
-  });
   // Same object reference every recompute (rules are mutated in place on
   // save — see onRuleSaved above), so RuleEditor's `initial` prop never
   // itself forces a remount.
@@ -956,6 +959,29 @@ const RulesView: Component = () => {
     const ed = editing();
     if (!ed || ed.id === "new") return null;
     return rules().find((r) => r.id === ed.id) ?? null;
+  });
+
+  // Recreate the open `RuleEditor` only when the *target* rule changes —
+  // switching directly between two tree rows — not when the same rule is
+  // re-saved (`onRuleSaved` re-sets `editing` to the same id/collectionId,
+  // so this string is unchanged). See `Show ... keyed` in the render below.
+  //
+  // Null while a saved rule's id is set but `rules()` has not arrived yet.
+  // `rulesEditing` is persisted and `refresh()` is async, so on every remount
+  // of this view (a tab switch is enough) there is a window where `editing`
+  // names a real rule and `editingRule()` is still null. The tree branch
+  // renders the editor off this key alone, so without the gate the editor
+  // mounted with `initial = null` — which is precisely how it tells "new
+  // rule" from "edit rule". It came up blank, keyed its draft as
+  // `new:<collection>`, and its Save INSERTED instead of updating: that is
+  // where a stray "Unnamed rule" came from. The unchanged-string equality of
+  // this memo means the later transition to non-null does not remount
+  // anything that was already open.
+  const editingKey = createMemo(() => {
+    const ed = editing();
+    if (!ed) return null;
+    if (ed.id !== "new" && !editingRule()) return null;
+    return `${ed.collectionId ?? ""}::${ed.id}`;
   });
 
   // The collection (or Ungrouped) the tree has picked, resolved to its
