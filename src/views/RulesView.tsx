@@ -43,7 +43,7 @@ import {
 } from "@/lib/rules-filter";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { askConfirm, showMessage, type ConfirmRequest } from "@/stores/confirm";
-import { groupState, isLiveOn, isScoped, SCOPE_HOST } from "@/lib/rule-liveness";
+import { groupState, isLiveOn, isScoped, SCOPE_HOST, type TriState } from "@/lib/rule-liveness";
 import {
   applyImport,
   buildCollectionExport,
@@ -1385,28 +1385,33 @@ const RulesView: Component = () => {
         </Show>
         <Show when={visibleRules().length > 0}>
           <div class="flex items-center gap-2 shrink-0 pl-1">
-            <Checkbox
-              state={groupState(visibleRules(), device())}
-              title={
-                groupState(visibleRules(), device()) === "on"
-                  ? t()("rules.uncheck_all_title")
-                  : t()("rules.check_all_title")
-              }
-              onClick={() =>
-                void toggleAllVisible(groupState(visibleRules(), device()) !== "on")
-              }
-            />
-            {/* Clickable, like a real <label>: a caption sitting next to a
-                checkbox is a click target whether or not we wire it up,
-                and one that ignores clicks just reads as broken. */}
-            <span
-              class="text-xs text-fg-muted cursor-pointer select-none"
-              onClick={() =>
-                void toggleAllVisible(groupState(visibleRules(), device()) !== "on")
-              }
-            >
-              {t()("rules.select_all")}
-            </span>
+            {/* Flat mode only. The tree carries the same master checkbox in
+                its own toolbar, over the tree it acts on — two of them on
+                screen at once would be two places to look for one state. */}
+            <Show when={rulesViewMode() === "flat"}>
+              <Checkbox
+                state={groupState(visibleRules(), device())}
+                title={
+                  groupState(visibleRules(), device()) === "on"
+                    ? t()("rules.uncheck_all_title")
+                    : t()("rules.check_all_title")
+                }
+                onClick={() =>
+                  void toggleAllVisible(groupState(visibleRules(), device()) !== "on")
+                }
+              />
+              {/* Clickable, like a real <label>: a caption sitting next to a
+                  checkbox is a click target whether or not we wire it up,
+                  and one that ignores clicks just reads as broken. */}
+              <span
+                class="text-xs text-fg-muted cursor-pointer select-none"
+                onClick={() =>
+                  void toggleAllVisible(groupState(visibleRules(), device()) !== "on")
+                }
+              >
+                {t()("rules.select_all")}
+              </span>
+            </Show>
             {/* The two actions on the ticked set, next to the box that ticks
                 it — same reasoning that put the box here rather than in the
                 title bar. Always rendered, disabled at zero: a pair of
@@ -1465,6 +1470,10 @@ const RulesView: Component = () => {
                   treeSelection()?.kind === "collection" && treeSelection()!.id === null
                 }
                 ruleIsNew={treeSelection()?.kind === "rule" && editing()?.id === "new"}
+                selectAllState={visibleRules().length > 0 ? groupState(visibleRules(), device()) : null}
+                onSelectAll={() =>
+                  void toggleAllVisible(groupState(visibleRules(), device()) !== "on")
+                }
                 onAddRule={treeToolbarAddRule}
                 onTag={treeToolbarTag}
                 onExport={treeToolbarExport}
@@ -2939,6 +2948,13 @@ const RulesTreeToolbar: Component<{
   /** The selected rule is a not-yet-saved draft ("new") — no id to tag,
    *  export, or delete yet. */
   ruleIsNew: boolean;
+  /** Tri-state of the master checkbox over the visible library, or null
+   *  when there is nothing on screen to tick. Unlike its neighbours this
+   *  one does not act on the selected node — it is the filter row's
+   *  "Select all", moved here because in tree mode that row has no list
+   *  of its own to point at. */
+  selectAllState: TriState | null;
+  onSelectAll: () => void;
   onAddRule: () => void;
   onTag: () => void;
   onExport: () => void;
@@ -2970,6 +2986,27 @@ const RulesTreeToolbar: Component<{
         <Plus size={12} /> {t()("rules.new_rule")}
       </button>
       <div class="ml-auto flex items-center gap-1">
+        {/* Ahead of the action icons, and fenced off by a rule: it reads
+            and writes the whole visible library, not the selected node
+            the four to its right act on. Same tri-state control as the
+            collection headers and rule rows below it, so its state means
+            in the toolbar exactly what it means in the tree. */}
+        <Show when={p.selectAllState}>
+          {(state) => (
+            <>
+              <Checkbox
+                state={state()}
+                title={
+                  state() === "on"
+                    ? t()("rules.uncheck_all_title")
+                    : t()("rules.check_all_title")
+                }
+                onClick={p.onSelectAll}
+              />
+              <div class="w-px h-4 bg-border mx-0.5 shrink-0" />
+            </>
+          )}
+        </Show>
         <button
           class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
           disabled={tagExportDeleteDisabled()}
