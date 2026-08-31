@@ -1,4 +1,4 @@
-import { type Component, createSignal, createMemo, createEffect, For, Index, Show, ErrorBoundary, onMount, onCleanup } from "solid-js";
+import { type Component, createSignal, createMemo, createEffect, on, For, Index, Show, ErrorBoundary, onMount, onCleanup } from "solid-js";
 import { useBeforeLeave } from "@solidjs/router";
 import {
   Plus,
@@ -3584,6 +3584,10 @@ const RuleEditor: Component<{
       await api.rules.setEnabled(id, checked, rulesDevice());
       p.onLiveSync?.(id, checked);
     } catch (e: any) {
+      // The tick above was optimistic; nothing else will correct it now that
+      // the effect no longer overwrites local state, so undo it here rather
+      // than leave the box claiming a state the engine never got.
+      setD((prev) => ({ ...prev, enabled: !checked }));
       setErr(e?.message ?? String(e));
     }
   };
@@ -3598,12 +3602,23 @@ const RuleEditor: Component<{
   // checkboxes could disagree about the same rule. Deliberately narrow —
   // only `enabled`, not a general "adopt every external field" effect —
   // so it never clobbers what the user is mid-typing elsewhere in the draft.
-  createEffect(() => {
-    const ext = p.initial?.enabled;
-    if (ext !== undefined && ext !== d().enabled) {
-      setD((prev) => ({ ...prev, enabled: ext }));
-    }
-  });
+  //
+  // `on(...)` rather than a bare `createEffect`: reading `d()` inside the
+  // body would track it too, and then the effect fought every local toggle.
+  // Ticking the box set `d().enabled`, the effect re-ran, saw it differ from
+  // the not-yet-updated `p.initial.enabled`, and put it straight back — so
+  // the first click appeared to do nothing here while the tree row (which
+  // reads the rule list) did flip, and only a second click stuck. Tracking
+  // the external value alone leaves the optimistic local update in place.
+  createEffect(
+    on(
+      () => p.initial?.enabled,
+      (ext) => {
+        if (ext === undefined) return;
+        setD((prev) => (prev.enabled === ext ? prev : { ...prev, enabled: ext }));
+      },
+    ),
+  );
 
   const save = async () => {
     setBusy(true);
