@@ -2583,6 +2583,7 @@ const RulesTreeRuleRow: Component<{
         state={effectivelyOn() ? "on" : "off"}
         title={effectivelyOn() ? t()("rules.disable") : t()("rules.enable")}
         onClick={p.onToggle}
+        size="sm"
       />
       <div class="truncate flex-1 min-w-0">{current().name || t()("rules.unnamed_rule")}</div>
     </div>
@@ -2733,7 +2734,7 @@ const RulesTreeNode: Component<{
             <ChevronRight size={12} />
           </Show>
         </button>
-        <Show when={p.rules.length > 0} fallback={<div class="w-[18px] shrink-0" />}>
+        <Show when={p.rules.length > 0} fallback={<div class="w-[14px] shrink-0" />}>
           <Checkbox
             state={groupState(p.rules, rulesDevice())}
             title={
@@ -2742,6 +2743,7 @@ const RulesTreeNode: Component<{
                 : t()("rules.enable")
             }
             onClick={() => p.onToggleCollectionEnabled(groupState(p.rules, rulesDevice()) !== "on")}
+            size="sm"
           />
         </Show>
         <Show
@@ -2978,37 +2980,51 @@ const RulesTreeToolbar: Component<{
   return (
     <div class="flex items-center gap-1 px-2 py-1.5 border-b border-border">
       <button
-        class="inline-flex items-center gap-1 text-xs rounded px-2 py-1 hover:bg-bg-muted disabled:opacity-40"
+        class="shrink-0 inline-flex items-center gap-1 text-xs rounded px-2 py-1 hover:bg-bg-muted disabled:opacity-40"
         disabled={kind() === null}
         title={t()("rules.tree_add_rule_title")}
         onClick={p.onAddRule}
       >
         <Plus size={12} /> {t()("rules.new_rule")}
       </button>
-      <div class="ml-auto flex items-center gap-1">
+      <div class="ml-auto flex items-center gap-1 min-w-0">
         {/* Ahead of the action icons, and fenced off by a rule: it reads
             and writes the whole visible library, not the selected node
-            the four to its right act on. Same tri-state control as the
-            collection headers and rule rows below it, so its state means
-            in the toolbar exactly what it means in the tree. */}
+            the four to its right act on. Carries its caption — a bare
+            square among grey glyphs is not recognisable as a checkbox,
+            and unlike the four to its right it has no shape to be read
+            from. The caption truncates rather than shoving the icons off
+            the row when the tree pane is dragged narrow. */}
         <Show when={p.selectAllState}>
           {(state) => (
             <>
-              <Checkbox
-                state={state()}
-                title={
-                  state() === "on"
-                    ? t()("rules.uncheck_all_title")
-                    : t()("rules.check_all_title")
-                }
-                onClick={p.onSelectAll}
-              />
+              {/* A <div>, not a <label>: <button> is a labelable element, so
+                  a label wrapper would activate the box AND run the span's
+                  own handler — one click, two toggles, no visible change. */}
+              <div class="flex items-center gap-1 min-w-0">
+                <Checkbox
+                  size="sm"
+                  state={state()}
+                  title={
+                    state() === "on"
+                      ? t()("rules.uncheck_all_title")
+                      : t()("rules.check_all_title")
+                  }
+                  onClick={p.onSelectAll}
+                />
+                <span
+                  class="text-xs text-fg-muted truncate cursor-pointer select-none"
+                  onClick={p.onSelectAll}
+                >
+                  {t()("rules.select_all")}
+                </span>
+              </div>
               <div class="w-px h-4 bg-border mx-0.5 shrink-0" />
             </>
           )}
         </Show>
         <button
-          class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
+          class="shrink-0 text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
           disabled={tagExportDeleteDisabled()}
           title={
             p.isUngroupedCollection ? t()("rules.tree_no_actions_title") : t()("rules.tree_tag_title")
@@ -3018,7 +3034,7 @@ const RulesTreeToolbar: Component<{
           <TagIcon size={12} />
         </button>
         <button
-          class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
+          class="shrink-0 text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
           disabled={tagExportDeleteDisabled()}
           title={
             p.isUngroupedCollection ? t()("rules.tree_no_actions_title") : t()("rules.tree_export_title")
@@ -3028,7 +3044,7 @@ const RulesTreeToolbar: Component<{
           <Upload size={12} />
         </button>
         <button
-          class="text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
+          class="shrink-0 text-xs p-1 rounded hover:bg-bg-muted text-fg-muted disabled:opacity-40"
           disabled={renameDisabled()}
           title={
             kind() === "rule"
@@ -3042,7 +3058,7 @@ const RulesTreeToolbar: Component<{
           <Pencil size={12} />
         </button>
         <button
-          class="text-xs p-1 rounded hover:bg-danger/10 text-danger disabled:opacity-40"
+          class="shrink-0 text-xs p-1 rounded hover:bg-danger/10 text-danger disabled:opacity-40"
           disabled={tagExportDeleteDisabled()}
           title={
             p.isUngroupedCollection ? t()("rules.tree_no_actions_title") : t()("rules.tree_delete_title")
@@ -4300,15 +4316,22 @@ const Section: Component<{ title: string; children: any }> = (p) => (
  *
  * Stops click propagation so it doesn't trip drag handlers / collapse
  * toggles on the surrounding row or section header.
+ *
+ * `size="sm"` is the same control at the scale of a 12px lucide icon —
+ * for toolbars, where the 18px box next to a row of small grey glyphs
+ * read as an unexplained blue square rather than a checkbox.
  */
 const Checkbox: Component<{
   state: "on" | "off" | "mixed";
   onClick: () => void;
   title?: string;
+  size?: "sm";
 }> = (p) => (
   <button
     type="button"
-    class={`shrink-0 w-[18px] h-[18px] rounded-[3px] border inline-flex items-center justify-center transition ${
+    class={`shrink-0 rounded-[3px] border inline-flex items-center justify-center transition ${
+      p.size === "sm" ? "w-[14px] h-[14px]" : "w-[18px] h-[18px]"
+    } ${
       p.state === "off"
         ? "bg-transparent border-fg-muted/50 hover:border-fg"
         : "bg-accent border-transparent ring-1 ring-inset ring-white/10 hover:brightness-110"
@@ -4320,10 +4343,10 @@ const Checkbox: Component<{
     }}
   >
     <Show when={p.state === "on"}>
-      <Check size={12} class="text-white" strokeWidth={3} />
+      <Check size={p.size === "sm" ? 10 : 12} class="text-white" strokeWidth={3} />
     </Show>
     <Show when={p.state === "mixed"}>
-      <Minus size={12} class="text-white" strokeWidth={3} />
+      <Minus size={p.size === "sm" ? 10 : 12} class="text-white" strokeWidth={3} />
     </Show>
   </button>
 );
