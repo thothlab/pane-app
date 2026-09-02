@@ -3416,7 +3416,7 @@ dependencies = [
 
 [[package]]
 name = "pane"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "alloc-stdlib",
  "anyhow",
@@ -3450,7 +3450,7 @@ dependencies = [
 
 [[package]]
 name = "pane-android"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3470,7 +3470,7 @@ dependencies = [
 
 [[package]]
 name = "pane-ca"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3494,7 +3494,7 @@ dependencies = [
 
 [[package]]
 name = "pane-cli"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3515,7 +3515,7 @@ dependencies = [
 
 [[package]]
 name = "pane-control"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "libc",
@@ -3534,7 +3534,7 @@ dependencies = [
 
 [[package]]
 name = "pane-core"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3560,7 +3560,7 @@ dependencies = [
 
 [[package]]
 name = "pane-devices"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3583,7 +3583,7 @@ dependencies = [
 
 [[package]]
 name = "pane-engine"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3601,7 +3601,7 @@ dependencies = [
 
 [[package]]
 name = "pane-engine-mitm"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3635,7 +3635,7 @@ dependencies = [
 
 [[package]]
 name = "pane-ios"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "pane-ca",
@@ -3652,7 +3652,7 @@ dependencies = [
 
 [[package]]
 name = "pane-ipc"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -3663,7 +3663,7 @@ dependencies = [
 
 [[package]]
 name = "pane-mobileconfig"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3672,7 +3672,7 @@ dependencies = [
 
 [[package]]
 name = "pane-pinning"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "once_cell",
@@ -3683,7 +3683,7 @@ dependencies = [
 
 [[package]]
 name = "pane-serve"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -3705,7 +3705,7 @@ dependencies = [
 
 [[package]]
 name = "pane-setup-server"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3721,7 +3721,7 @@ dependencies = [
 
 [[package]]
 name = "pane-storage"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3747,7 +3747,7 @@ dependencies = [
 
 [[package]]
 name = "pane-web"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "axum",
