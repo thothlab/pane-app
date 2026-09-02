@@ -1361,8 +1361,11 @@ const RulesView: Component = () => {
         */}
         {/* Fold/unfold every section on screen. Lives on the filter row, not
             in the title bar, for the same reason the master checkbox does:
-            the filter picks the set, these two act on that set. */}
-        <Show when={sectionKeys().length > 0}>
+            the filter picks the set, these two act on that set.
+
+            Flat mode only: the tree carries the same button in its own
+            toolbar, over the tree it acts on — see RulesTreeToolbar. */}
+        <Show when={rulesViewMode() === "flat" && sectionKeys().length > 0}>
           <button
             type="button"
             class="shrink-0 text-fg-muted hover:text-fg p-1 rounded hover:bg-bg-muted"
@@ -1474,6 +1477,8 @@ const RulesView: Component = () => {
                 onSelectAll={() =>
                   void toggleAllVisible(groupState(visibleRules(), device()) !== "on")
                 }
+                collapseAllState={sectionKeys().length > 0 ? allSectionsCollapsed() : null}
+                onToggleCollapseAll={toggleAllSections}
                 onAddRule={treeToolbarAddRule}
                 onTag={treeToolbarTag}
                 onExport={treeToolbarExport}
@@ -2957,6 +2962,12 @@ const RulesTreeToolbar: Component<{
    *  of its own to point at. */
   selectAllState: TriState | null;
   onSelectAll: () => void;
+  /** Whether every section in the tree is folded, or null when there are no
+   *  sections to fold. Same reading as the master checkbox above: this is
+   *  the filter row's fold/unfold-all, moved here because in tree mode that
+   *  row has no list of its own to point at. */
+  collapseAllState: boolean | null;
+  onToggleCollapseAll: () => void;
   onAddRule: () => void;
   onTag: () => void;
   onExport: () => void;
@@ -2987,6 +2998,25 @@ const RulesTreeToolbar: Component<{
       >
         <Plus size={12} /> {t()("rules.new_rule")}
       </button>
+      <Show when={p.collapseAllState !== null}>
+        <button
+          type="button"
+          class="shrink-0 text-fg-muted hover:text-fg p-1 rounded hover:bg-bg-muted"
+          title={
+            p.collapseAllState
+              ? t()("rules.expand_all_title")
+              : t()("rules.collapse_all_title")
+          }
+          aria-label={
+            p.collapseAllState ? t()("rules.expand_all") : t()("rules.collapse_all")
+          }
+          onClick={p.onToggleCollapseAll}
+        >
+          <Show when={p.collapseAllState} fallback={<ChevronsDownUp size={14} />}>
+            <ChevronsUpDown size={14} />
+          </Show>
+        </button>
+      </Show>
       <div class="ml-auto flex items-center gap-1 min-w-0">
         {/* Ahead of the action icons, and fenced off by a rule: it reads
             and writes the whole visible library, not the selected node
