@@ -272,14 +272,16 @@ fn parse_query(q: &str) -> Vec<(String, String)> {
 }
 
 fn percent_decode(s: &str) -> String {
-    // Minimal decoder for common cases — full URL-decoding is not needed
-    // because the matcher compares pair-by-pair; both sides go through the
-    // same function so even partial decoding is symmetric.
-    let mut out = String::with_capacity(s.len());
+    // Decodes into BYTES and only then to a String: `%D0%9F` is one UTF-8
+    // character in two escapes, and turning each byte into a `char` on its own
+    // yields mojibake. That mattered as soon as rule params started coming from
+    // a captured query — a Cyrillic value decoded here one way and stored in
+    // the rule another way can never match itself.
+    let mut out: Vec<u8> = Vec::with_capacity(s.len());
     let mut bytes = s.bytes();
     while let Some(b) = bytes.next() {
         match b {
-            b'+' => out.push(' '),
+            b'+' => out.push(b' '),
             b'%' => {
                 let h = bytes.next();
                 let l = bytes.next();
@@ -287,16 +289,25 @@ fn percent_decode(s: &str) -> String {
                     let hi = hex_val(h);
                     let lo = hex_val(l);
                     if let (Some(hi), Some(lo)) = (hi, lo) {
-                        out.push((hi * 16 + lo) as char);
+                        out.push(hi * 16 + lo);
                         continue;
                     }
+                    // Not a valid escape — keep the three characters as they
+                    // came in, so `%zz` stays `%zz`.
+                    out.push(b'%');
+                    out.push(h);
+                    out.push(l);
+                    continue;
                 }
-                out.push('%');
+                out.push(b'%');
+                if let Some(h) = h {
+                    out.push(h);
+                }
             }
-            _ => out.push(b as char),
+            _ => out.push(b),
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn hex_val(b: u8) -> Option<u8> {
@@ -388,6 +399,21 @@ mod tests {
             host: "x",
             method: "GET",
             path: "/api/auth?login=root&extra=1",
+            body: b"",
+            content_type: None,
+        };
+        assert!(rule_matches(&r, &req));
+    }
+
+    #[test]
+    fn params_match_percent_encoded_utf8_query() {
+        // "Add to rules" stores the DECODED value it read off the capture, so
+        // the decoder here has to produce the same string from the escapes.
+        let r = rule(vec![("purpose", "Помощь")]);
+        let req = RequestSummary {
+            host: "x",
+            method: "GET",
+            path: "/v1/getpaylinks?purpose=%D0%9F%D0%BE%D0%BC%D0%BE%D1%89%D1%8C&limit=20",
             body: b"",
             content_type: None,
         };
