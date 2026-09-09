@@ -33,6 +33,7 @@ import HelpButton from "@/components/HelpButton";
 import { writeClipboard } from "@/lib/clipboard";
 import { withTimeout } from "@/lib/async";
 import { uniqueRuleName } from "@/lib/rule-names";
+import { paramsFromQuery, splitPathQuery } from "@/lib/capture-params";
 import { matchesCollection, parseFilterTerms } from "@/lib/rules-filter";
 import { TagChips, TagEditor } from "@/components/Tags";
 import { t, tr } from "@/i18n";
@@ -842,12 +843,13 @@ const CapturesView: Component = () => {
         /* body fetch failed — leave it empty, user can fill the editor */
       }
     }
-    // Strip query string from the path glob; match_params is the
-    // intended slot for query matching, but we don't auto-populate it
-    // from the query — wildcard query matches are the more common case,
-    // and the user can pin specific params in the Rules editor.
-    const qIdx = cap.url_path.indexOf("?");
-    const pathGlob = qIdx >= 0 ? cap.url_path.slice(0, qIdx) : cap.url_path;
+    // Strip the query string from the path glob — the engine globs the path
+    // alone, so a glob carrying `?…` would match nothing — and carry the
+    // query into match_params, the slot that does match query pairs.
+    // Dropping it silently made the derived rule broader than the request it
+    // was copied from; a query-less rule is one deletion away in the editor,
+    // whereas a lost query had to be retyped from the capture.
+    const { path: pathGlob, query } = splitPathQuery(cap.url_path);
     // Append the capture's local timestamp so repeated "Add to rules"
     // of the same endpoint produce distinguishable names instead of N
     // identical "POST host/path" rows — the stamp also tells the user
@@ -866,7 +868,7 @@ const CapturesView: Component = () => {
       match_method: cap.method || null,
       match_host_glob: cap.server_host || null,
       match_path_glob: pathGlob || null,
-      match_params: [],
+      match_params: paramsFromQuery(query),
       match_req_body: matchReqBody,
       res_status: cap.status ?? 200,
       res_headers: (cap.res_headers ?? []).map((h) => ({
