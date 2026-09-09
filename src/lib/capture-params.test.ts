@@ -42,6 +42,15 @@ describe("paramsFromQuery", () => {
     ]);
   });
 
+  it("decodes an escaped plus and an escaped percent like the engine does", () => {
+    // The engine decodes in one pass, so a byte produced by an escape is never
+    // re-examined: `%2B` is a literal "+", `%2520` is a literal "%20".
+    expect(paramsFromQuery("a=%2B&b=%2520")).toEqual([
+      { name: "a", value: "+" },
+      { name: "b", value: "%20" },
+    ]);
+  });
+
   it("leaves a malformed escape alone instead of throwing", () => {
     expect(paramsFromQuery("a=%zz")).toEqual([{ name: "a", value: "%zz" }]);
   });
