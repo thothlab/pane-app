@@ -217,6 +217,7 @@ const en = {
     copy_header_pair: 'Copy "name: value"',
     method: "Method",
     url: "URL",
+    query_params: "Query",
     status: "Status",
     state: "State",
     error: "Error",

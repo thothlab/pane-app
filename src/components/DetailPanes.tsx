@@ -7,6 +7,7 @@ import BodyViewer from "./BodyViewer";
 import { HorizontalResizer } from "./HorizontalResizer";
 import { writeClipboard } from "@/lib/clipboard";
 import { t } from "@/i18n";
+import { paramsFromQuery, splitPathQuery } from "@/lib/capture-params";
 
 type Tab = "overview" | "request" | "response" | "timing" | "tls";
 
@@ -29,6 +30,13 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
   );
 
   const DEFAULT_BODY_LIMIT = 4 * 1024 * 1024; // 4 MB
+
+  // Query pairs decoded the way the engine decodes them, so the names and
+  // values here are exactly what a rule's `match_params` would compare.
+  const queryParams = createMemo(() => {
+    const f = full();
+    return f ? paramsFromQuery(splitPathQuery(f.url_path).query) : [];
+  });
 
   // Load the full capture (headers + body ids) whenever the selection
   // changes. Kept separate from the body load below so each effect tracks
@@ -147,6 +155,20 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
               <Row k={t()("detail.id")}>{full()!.id}</Row>
               <Row k={t()("detail.method")}>{full()!.method}</Row>
               <Row k={t()("detail.url")}>{`${full()!.scheme}://${full()!.server_host}:${full()!.server_port}${full()!.url_path}`}</Row>
+              <Show when={queryParams().length > 0}>
+                <Row k={t()("detail.query_params")}>
+                  <div class="grid grid-cols-[max-content_1fr] gap-x-2">
+                    <For each={queryParams()}>
+                      {(q) => (
+                        <>
+                          <div class="text-accent whitespace-nowrap">{q.name}</div>
+                          <div class="break-all min-w-0">{q.value}</div>
+                        </>
+                      )}
+                    </For>
+                  </div>
+                </Row>
+              </Show>
               <Row k={t()("detail.status")}>{full()!.status ?? "—"}</Row>
               <Row k="HTTP">{full()!.http_version}</Row>
               <Row k={t()("detail.state")}>{full()!.state}</Row>

@@ -214,6 +214,7 @@ const ru: Dict = {
     copy_header_pair: "Скопировать «name: value»",
     method: "Метод",
     url: "URL",
+    query_params: "Параметры",
     status: "Статус",
     state: "Состояние",
     error: "Ошибка",
