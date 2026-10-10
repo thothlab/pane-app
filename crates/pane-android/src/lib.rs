@@ -465,7 +465,10 @@ impl AndroidPlatform {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, serial, "setting http_proxy failed — device will not route through Pane");
-            anyhow!("couldn't set http_proxy on the device: {e}")
+            match settings_denied_hint(&e.to_string(), &manufacturer) {
+                Some(hint) => anyhow!(hint),
+                None => anyhow!("couldn't set http_proxy on the device: {e}"),
+            }
         })?;
         // PAC URL — bonus for Chrome/WebView, which fall back to DIRECT
         // on unplug. Most native apps ignore it; harmless if set.
@@ -690,6 +693,47 @@ async fn read_http_proxy(serial: &str) -> Result<bool> {
     )
     .await?;
     Ok(out.trim() == DEVICE_HTTP_PROXY)
+}
+
+/// Rewrite "adb may not write settings" into the switch the user has to flip.
+///
+/// Stock Android lets the adb shell write global settings. MIUI / HyperOS do
+/// not: there it takes a second Developer-options switch, "USB debugging
+/// (Security settings)", on top of plain USB debugging. Without it
+/// `settings put` dies with a SecurityException demanding
+/// WRITE_SECURE_SETTINGS, and the raw error is a Java stack trace that says
+/// nothing about where the fix lives. Seen on a Redmi Note 9 Pro, Android 10.
+///
+/// The Xiaomi text also names "Install via USB": with it off, the helper APK
+/// install fails silently (that step is best-effort), and with it on MIUI asks
+/// to confirm every install on the phone — unanswered, Add waits out
+/// `ADB_INSTALL_TIMEOUT` and looks hung.
+///
+/// `None` for any other failure, so the caller keeps its generic message.
+fn settings_denied_hint(err: &str, manufacturer: &str) -> Option<String> {
+    const PERM: &str = "WRITE_SECURE_SETTINGS";
+    let perm_end = err.find(PERM)? + PERM.len();
+    // Keep Android's own reason, drop the `adb [...]` prefix and the stack
+    // trace after it. Cut at the permission name rather than at a newline: by
+    // the time the text has been through a UI or a paste, the newlines are gone.
+    let reason = err[..perm_end]
+        .rfind("Permission denial")
+        .map_or(PERM, |start| &err[start..perm_end]);
+    let m = manufacturer.to_ascii_lowercase();
+    let hint = if ["xiaomi", "redmi", "poco"].iter().any(|v| m.contains(v)) {
+        "This Xiaomi phone won't let adb change system settings, so Pane can't \
+         set its proxy. On the phone open Settings → Additional settings → \
+         Developer options and turn on \"USB debugging (Security settings)\" and \
+         \"Install via USB\" (MIUI asks you to sign in to a Mi account; some \
+         builds also want a SIM card inserted). Then add the device again and \
+         confirm the install prompt on the phone."
+    } else {
+        "The phone won't let adb change system settings, so Pane can't set its \
+         proxy. Some vendor builds hide this behind an extra switch in \
+         Developer options (Xiaomi: \"USB debugging (Security settings)\"). \
+         Turn it on, then add the device again."
+    };
+    Some(format!("{hint} (Android: {reason})"))
 }
 
 /// Make sure the companion APK is installed, granted
@@ -1274,4 +1318,58 @@ pub fn network_security_config_snippet() -> &'static str {
   </debug-overrides>
 </network-security-config>
 "#
+}
+
+#[cfg(test)]
+mod tests {
+    use super::settings_denied_hint;
+
+    /// `run_for`'s error for the failing `settings put`, stderr as a Redmi
+    /// Note 9 Pro (MIUI, Android 10) prints it — trimmed stack trace.
+    const MIUI_DENIED: &str = "adb [\"-s\", \"c20c2e6d\", \"shell\", \"settings\", \"put\", \
+        \"global\", \"http_proxy\", \"127.0.0.1:8888\"] failed: Security exception: \
+        Permission denial: writing to settings requires:android.permission.WRITE_SECURE_SETTINGS\n\n\
+        java.lang.SecurityException: Permission denial: writing to settings \
+        requires:android.permission.WRITE_SECURE_SETTINGS\n\
+        \tat com.android.providers.settings.SettingsProvider.enforceWritePermission(SettingsProvider.java:2050)\n\
+        \tat android.os.Binder.execTransact(Binder.java:994)";
+
+    const REASON: &str = "(Android: Permission denial: writing to settings \
+        requires:android.permission.WRITE_SECURE_SETTINGS)";
+
+    #[test]
+    fn xiaomi_gets_the_miui_switches() {
+        let hint = settings_denied_hint(MIUI_DENIED, "Xiaomi").unwrap();
+        assert!(hint.contains("USB debugging (Security settings)"));
+        assert!(hint.contains("Install via USB"));
+        assert!(hint.ends_with(REASON), "{hint}");
+        assert!(
+            !hint.contains("SettingsProvider"),
+            "stack trace leaked: {hint}"
+        );
+    }
+
+    #[test]
+    fn other_vendors_get_the_generic_hint() {
+        let hint = settings_denied_hint(MIUI_DENIED, "samsung").unwrap();
+        assert!(hint.starts_with("The phone won't let adb change system settings"));
+        assert!(!hint.contains("Install via USB"));
+        assert!(hint.ends_with(REASON), "{hint}");
+    }
+
+    /// The UI banner collapses newlines, so a pasted report arrives as one
+    /// line. The reason must still stop at the permission name.
+    #[test]
+    fn single_line_error_still_drops_the_stack_trace() {
+        let flat = MIUI_DENIED.replace(['\n', '\t'], " ");
+        let hint = settings_denied_hint(&flat, "Xiaomi").unwrap();
+        assert!(hint.ends_with(REASON), "{hint}");
+    }
+
+    #[test]
+    fn unrelated_failures_fall_through() {
+        let err = "adb [\"-s\", \"x\", \"shell\", \"settings\", \"put\"] failed: \
+                   error: device offline";
+        assert!(settings_denied_hint(err, "Xiaomi").is_none());
+    }
 }

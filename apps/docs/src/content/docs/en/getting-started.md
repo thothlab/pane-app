@@ -163,6 +163,13 @@ auto-cleanup but everything else keeps working.
   `platform-tools` from the Android SDK or Android Studio.
 - **`adb reverse failed`** — usually after USB reseating or an adb-
   server restart. Hit **Re-sync** on the paired device row.
+- **Xiaomi / Redmi / POCO: `Permission denial ... WRITE_SECURE_SETTINGS`
+  on Add** — MIUI and HyperOS won't let adb change system settings
+  until a second switch is on. **Settings → Additional settings →
+  Developer options** → turn on **"USB debugging (Security
+  settings)"** and **"Install via USB"**. Both ask you to sign in to a
+  Mi account; some builds also want a SIM card inserted. Then hit
+  **+ Add** again and confirm the Pane Helper install on the phone.
 - **Device has "no internet" after Stop proxy / USB unplug** — from
   v0.1.41 the companion APK handles this autonomously even without
   the laptop attached, clearing the proxy within ~6 sec. If the phone
