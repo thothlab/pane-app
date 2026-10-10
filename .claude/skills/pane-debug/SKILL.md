@@ -50,6 +50,13 @@ pane devices attached            # exit 4 = nothing plugged in
 pane devices add emulator-5554   # needs a running proxy
 ```
 
+`devices add` failing with `WRITE_SECURE_SETTINGS` on a Xiaomi / Redmi / POCO
+is the phone, not Pane: MIUI and HyperOS won't let adb change settings until
+**Developer options → "USB debugging (Security settings)"** is on, plus
+**"Install via USB"** for the helper APK. Both need a Mi account. Only the user
+can flip them, so tell them, then re-run `add` and have them confirm the install
+prompt on the phone.
+
 ## The drill-down ladder — never skip a rung
 
 Each rung costs roughly ten times the previous one. Start narrow.
