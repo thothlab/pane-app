@@ -10,26 +10,35 @@ description: Выпуск версионного релиза Pane через т
 3. Обновить [`CHANGELOG.md`](https://github.com/thothlab/pane-app/blob/main/CHANGELOG.md) —
    секцию этой версии потом руками кладут в тело GitHub Release
    (`gh release edit v0.X.Y --notes-file …`), потому что workflow подставляет
-   общий шаблон.
+   общий шаблон. Делать это **после того, как workflow целиком завершился**:
+   каждая платформенная сборка заново перезаписывает тело шаблоном, и
+   правка, сделанная раньше, затрётся.
 4. Открыть PR, дождаться зелёного CI на всех трёх OS.
 5. Смерджить в `main`, поставить тег: `git tag -a v0.X.Y -m "v0.X.Y"`.
 6. Запушить тег: `git push --tags`. Триггерится
    `.github/workflows/release.yml`, который собирает бандлы для
    macOS Apple Silicon, Linux x86_64 и Windows x86_64 параллельно через
    `tauri-apps/tauri-action`, и создаёт **draft** GitHub Release с
-   прикреплёнными инсталлерами.
-7. Проверить draft на странице Releases, опубликовать.
+   прикреплёнными инсталлерами и `pane-cli` для macOS и Linux. Когда все
+   три сборки прошли, job `publish` склеивает `latest.json` из
+   платформенных манифестов (`.github/scripts/merge-tauri-manifests.py`),
+   загружает его в релиз и **публикует релиз сам**.
+7. Руками публиковать ничего не нужно. Если хотя бы одна сборка упала,
+   `publish` не запускается и релиз остаётся черновиком — пользователи
+   и встроенное обновление его не видят.
 
 Артефакты:
 
 | Платформа | Файлы |
 | --- | --- |
-| macOS (aarch64) | `Pane_<ver>_aarch64.dmg`, `Pane.app.tar.gz` |
-| Linux (x86_64)  | `pane_<ver>_amd64.AppImage`, `pane_<ver>_amd64.deb`, `pane-<ver>-1.x86_64.rpm` |
+| macOS (aarch64) | `Pane_<ver>_aarch64.dmg`, `Pane_aarch64.app.tar.gz` (для обновления), `pane-cli-darwin-aarch64` |
+| Linux (x86_64)  | `Pane_<ver>_amd64.AppImage`, `Pane_<ver>_amd64.deb`, `Pane-<ver>-1.x86_64.rpm`, `pane-cli-linux-x86_64` |
 | Windows (x86_64) | `Pane_<ver>_x64_en-US.msi`, `Pane_<ver>_x64-setup.exe` |
 
-Когда задан `TAURI_SIGNING_PRIVATE_KEY`, каждый бандл сопровождается
-`.sig` minisign-подписью для updater-цепочки Tauri.
+Плюс общий `latest.json` — манифест встроенного обновления.
+
+Когда задан `TAURI_SIGNING_PRIVATE_KEY`, каждый бандл, кроме `.dmg`,
+сопровождается `.sig` minisign-подписью для updater-цепочки Tauri.
 
 ## GitHub secrets
 
@@ -54,15 +63,28 @@ description: Выпуск версионного релиза Pane через т
 
 ## Updater endpoint
 
-JSON-манифест на `releases.pane.tech/<channel>/<platform>/latest.json`.
-Схема:
+Встроенное обновление читает
+`https://github.com/thothlab/pane-app/releases/latest/download/latest.json`
+(`plugins.updater.endpoints` в `src-tauri/tauri.conf.json`). `/releases/latest/`
+указывает только на опубликованный релиз — не на черновик и не на
+prerelease, — поэтому workflow держит релиз черновиком, пока `latest.json`
+не загружен.
+
+Схема (сокращено):
 
 ```jsonc
 {
-  "version": "0.1.1",
-  "pub_date": "2026-06-10T12:00:00Z",
-  "url": "https://github.com/thothlab/pane-app/releases/download/v0.1.1/Pane_0.1.1_x64.dmg",
-  "signature": "<tauri updater signature>",
-  "notes": "## What's new\n..."
+  "version": "0.3.6",
+  "pub_date": "2026-10-10T06:51:23.281Z",
+  "notes": "…",
+  "platforms": {
+    "darwin-aarch64": { "url": ".../v0.3.6/Pane_aarch64.app.tar.gz", "signature": "…" },
+    "linux-x86_64":   { "url": ".../v0.3.6/Pane_0.3.6_amd64.AppImage", "signature": "…" },
+    "windows-x86_64": { "url": ".../v0.3.6/Pane_0.3.6_x64_en-US.msi", "signature": "…" }
+    // плюс ключи по типу установщика: linux-x86_64-deb, windows-x86_64-nsis и т. д.
+  }
 }
 ```
+
+`notes` попадает в манифест из тела релиза в момент сборки, то есть из
+общего шаблона, а не из CHANGELOG. Приложение это поле не показывает.
