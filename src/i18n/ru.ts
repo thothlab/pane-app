@@ -103,6 +103,7 @@ const ru: Dict = {
     copy_dump_title:
       "Скопировать в буфер обмена полный запрос + ответ (заголовки и тела) в формате OkHttp-логгера",
     copy_dump_working: "Копирую…",
+    secrets_masked_note: " · токены скрыты (Настройки -> Приватность)",
     copy_dump_done: "Скопировано ({{bytes}} байт)",
     copy_dump_failed: "Не удалось скопировать: {{message}}",
     copy_dump_timeout: "приложение не ответило вовремя",
@@ -195,6 +196,7 @@ const ru: Dict = {
     replay: "Повтор",
     curl: "cURL",
     curl_failed: "Не скопировалось",
+    curl_masked: "cURL · токены скрыты",
     select_capture: "Выберите запись чтобы увидеть детали.",
     id: "ID",
     version: "Версия",
@@ -614,6 +616,9 @@ const ru: Dict = {
     privacy_section: "Приватность",
     privacy_body:
       "Pane не собирает никакой телеметрии. Данные не покидают вашу машину пока вы явно их не экспортируете. Crash-репорты остаются в logs/ рядом с папкой данных.",
+    mask_secrets: "Скрывать токены при копировании и экспорте запросов",
+    mask_secrets_hint:
+      "Копировать, Экспорт и cURL заменяют на {{placeholder}} значения Authorization, Cookie, Set-Cookie и заголовков, в имени которых есть token, secret, api-key, auth, session или password. Схема авторизации, имена cookie и атрибуты Set-Cookie остаются. Выключите, чтобы скопировать запрос ровно как он ушёл. Кнопки копирования отдельного заголовка и CLI это не затрагивает.",
   },
   about: {
     title: "О программе",

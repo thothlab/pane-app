@@ -6,6 +6,9 @@ import type { CaptureBodyDto, CaptureDto } from "@/ipc/types";
 import BodyViewer from "./BodyViewer";
 import { HorizontalResizer } from "./HorizontalResizer";
 import { writeClipboard } from "@/lib/clipboard";
+import { curlCommand } from "@/lib/curl";
+import { redactHeaders } from "@/lib/redact";
+import { maskSecrets } from "@/stores/mask-secrets";
 import { t } from "@/i18n";
 import { paramsFromQuery, splitPathQuery } from "@/lib/capture-params";
 
@@ -25,9 +28,9 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
   const [tab, setTab] = createSignal<Tab>("overview");
   const [full, setFull] = createSignal<CaptureDto | null>(null);
   const [body, setBody] = createSignal<CaptureBodyDto | null>(null);
-  const [curlState, setCurlState] = createSignal<"idle" | "busy" | "failed">(
-    "idle",
-  );
+  const [curlState, setCurlState] = createSignal<
+    "idle" | "busy" | "failed" | "masked"
+  >("idle");
 
   const DEFAULT_BODY_LIMIT = 4 * 1024 * 1024; // 4 MB
 
@@ -112,7 +115,7 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
             >
               {t()("detail.replay")}
             </button>
-            {/* Two backend round trips. Unhandled, a failure here was an
+            {/* The clipboard write can fail. Unhandled, that was an
                 unhandled rejection and the button just did nothing. */}
             <button
               class="text-xs px-2 py-1 rounded hover:bg-bg-muted disabled:opacity-50"
@@ -121,9 +124,18 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
                 if (curlState() === "busy") return;
                 setCurlState("busy");
                 try {
-                  const r = await api.captures.exportOne(full()!.id, "curl");
-                  await writeClipboard(r.text);
-                  setCurlState("idle");
+                  const cap = full()!;
+                  const raw = cap.req_headers ?? [];
+                  const { headers, masked } = maskSecrets()
+                    ? redactHeaders(raw)
+                    : { headers: raw, masked: 0 };
+                  await writeClipboard(curlCommand(cap, headers));
+                  if (masked > 0) {
+                    setCurlState("masked");
+                    setTimeout(() => setCurlState("idle"), 2500);
+                  } else {
+                    setCurlState("idle");
+                  }
                 } catch {
                   setCurlState("failed");
                   setTimeout(() => setCurlState("idle"), 2000);
@@ -132,7 +144,9 @@ const DetailPanes: Component<{ capture: CaptureDto | null }> = (props) => {
             >
               {curlState() === "failed"
                 ? t()("detail.curl_failed")
-                : t()("detail.curl")}
+                : curlState() === "masked"
+                  ? t()("detail.curl_masked")
+                  : t()("detail.curl")}
             </button>
           </div>
         </div>

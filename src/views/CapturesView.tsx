@@ -31,6 +31,8 @@ import {
 import { filters, refreshFilters, saveFilter } from "@/stores/saved-filters";
 import HelpButton from "@/components/HelpButton";
 import { writeClipboard } from "@/lib/clipboard";
+import { redactHeaders } from "@/lib/redact";
+import { maskSecrets } from "@/stores/mask-secrets";
 import { withTimeout } from "@/lib/async";
 import { uniqueRuleName } from "@/lib/rule-names";
 import { paramsFromQuery, splitPathQuery } from "@/lib/capture-params";
@@ -962,8 +964,19 @@ const CapturesView: Component = () => {
   // user's clipboard doesn't get pages of mojibake.
   const COPY_BODY_LIMIT = 8 * 1024 * 1024;
 
-  const buildHttpDump = async (captureId: string): Promise<string> => {
+  // Credentials are masked per `maskSecrets()` at build time, so flipping
+  // the setting applies to the very next copy.
+  const buildHttpDump = async (
+    captureId: string,
+  ): Promise<{ text: string; masked: number }> => {
     const cap = await api.captures.get(captureId);
+    const mask = maskSecrets();
+    const req = mask
+      ? redactHeaders(cap.req_headers ?? [])
+      : { headers: cap.req_headers ?? [], masked: 0 };
+    const res = mask
+      ? redactHeaders(cap.res_headers ?? [])
+      : { headers: cap.res_headers ?? [], masked: 0 };
     const port =
       (cap.scheme === "http" && cap.server_port === 80) ||
       (cap.scheme === "https" && cap.server_port === 443)
@@ -979,7 +992,7 @@ const CapturesView: Component = () => {
     const lines: string[] = [];
     lines.push(`--> ${cap.method} ${url}`);
     lines.push("");
-    for (const h of cap.req_headers ?? []) {
+    for (const h of req.headers) {
       lines.push(`${h.name}: ${h.value}`);
     }
     if (reqBody && reqBody.text !== null) {
@@ -1005,7 +1018,7 @@ const CapturesView: Component = () => {
       lines.push(`<-- (no response) ${url}`);
     }
     lines.push("");
-    for (const h of cap.res_headers ?? []) {
+    for (const h of res.headers) {
       lines.push(`${h.name}: ${h.value}`);
     }
     if (resBody && resBody.text !== null) {
@@ -1022,7 +1035,7 @@ const CapturesView: Component = () => {
         : `<-- END HTTP`,
     );
 
-    return lines.join("\n");
+    return { text: lines.join("\n"), masked: req.masked + res.masked };
   };
 
   const safeBody = async (
@@ -1035,6 +1048,11 @@ const CapturesView: Component = () => {
       return null;
     }
   };
+
+  // Appended to the done-toast only when something was actually hidden: a
+  // `{{TOKEN}}` in the paste should be explainable, and fixable, from the toast.
+  const maskedNote = (masked: number) =>
+    masked > 0 ? tr("captures.secrets_masked_note") : "";
 
   /// A copy is four round trips to the backend (capture, both bodies, the
   /// clipboard write). If any of them is slow the user got no feedback at all:
@@ -1062,7 +1080,7 @@ const CapturesView: Component = () => {
     closeAddMenu();
     setAddToast(tr("captures.copy_dump_working"));
     try {
-      const { text, ok, lastError } = await withTimeout(
+      const { text, ok, lastError, masked } = await withTimeout(
         (async () => {
           const dump = await buildSelectedDump(captureIds);
           if (dump.ok > 0) await writeClipboard(dump.text);
@@ -1083,14 +1101,14 @@ const CapturesView: Component = () => {
         return;
       }
       setAddToast(
-        captureIds.length === 1
+        (captureIds.length === 1
           ? tr("captures.copy_dump_done", { bytes: String(text.length) })
           : tr("captures.copy_selected_done", {
               count: String(ok),
               bytes: String(text.length),
-            }),
+            })) + maskedNote(masked),
       );
-      setTimeout(() => setAddToast(null), 2500);
+      setTimeout(() => setAddToast(null), masked > 0 ? 4000 : 2500);
     } catch (e: unknown) {
       setAddToast(
         tr("captures.copy_dump_failed", {
@@ -1419,13 +1437,17 @@ const CapturesView: Component = () => {
     ok: number;
     failed: number;
     lastError: string | null;
+    masked: number;
   }> => {
     const dumps: string[] = [];
     let failed = 0;
+    let masked = 0;
     let lastError: string | null = null;
     for (const id of captureIds) {
       try {
-        dumps.push(await buildHttpDump(id));
+        const dump = await buildHttpDump(id);
+        dumps.push(dump.text);
+        masked += dump.masked;
       } catch (e: unknown) {
         /* row gone (e.g. cleared) — skip it, keep the rest */
         failed += 1;
@@ -1437,6 +1459,7 @@ const CapturesView: Component = () => {
       ok: dumps.length,
       failed,
       lastError,
+      masked,
     };
   };
 
@@ -1456,7 +1479,9 @@ const CapturesView: Component = () => {
     if (!path) return;
     setBusy(true);
     try {
-      const { text, ok } = await buildSelectedDump(rows.map((c) => c.id));
+      const { text, ok, masked } = await buildSelectedDump(
+        rows.map((c) => c.id),
+      );
       if (ok === 0) {
         setAddToast(tr("captures.export_selected_none"));
         setTimeout(() => setAddToast(null), 3500);
@@ -1464,9 +1489,10 @@ const CapturesView: Component = () => {
       }
       await api.captures.exportWrite(path, text);
       setAddToast(
-        tr("captures.export_selected_done", { count: String(ok), path }),
+        tr("captures.export_selected_done", { count: String(ok), path }) +
+          maskedNote(masked),
       );
-      setTimeout(() => setAddToast(null), 3000);
+      setTimeout(() => setAddToast(null), masked > 0 ? 4000 : 3000);
     } catch (e: unknown) {
       setAddToast(
         tr("captures.export_selected_failed", {

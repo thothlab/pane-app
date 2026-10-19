@@ -20,6 +20,8 @@ import {
   MIN_POLL_SECONDS,
   MAX_POLL_SECONDS,
 } from "@/stores/captures-poll";
+import { maskSecrets, setMaskSecrets } from "@/stores/mask-secrets";
+import { SECRET_PLACEHOLDER } from "@/lib/redact";
 
 // Theme button labels are looked up via i18n in the JSX. Statically
 // listed key names keep the i18n key set discoverable by grep and let
@@ -412,6 +414,17 @@ const SettingsView: Component = () => {
           {t()("settings.privacy_section")}
         </h2>
         <p class="text-sm text-fg-subtle">{t()("settings.privacy_body")}</p>
+        <label class="inline-flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={maskSecrets()}
+            onChange={(e) => setMaskSecrets(e.currentTarget.checked)}
+          />
+          {t()("settings.mask_secrets")}
+        </label>
+        <p class="text-xs text-fg-muted">
+          {t()("settings.mask_secrets_hint", { placeholder: SECRET_PLACEHOLDER })}
+        </p>
       </section>
     </div>
   );

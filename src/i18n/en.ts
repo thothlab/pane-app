@@ -106,6 +106,7 @@ const en = {
     copy_dump_title:
       "Copy the full request + response (headers and bodies) to the clipboard in OkHttp-logger format",
     copy_dump_working: "Copying…",
+    secrets_masked_note: " · tokens masked (Settings → Privacy)",
     copy_dump_done: "Copied to clipboard ({{bytes}} bytes)",
     copy_dump_failed: "Copy failed: {{message}}",
     copy_dump_timeout: "the app did not respond in time",
@@ -198,6 +199,7 @@ const en = {
     replay: "Replay",
     curl: "cURL",
     curl_failed: "Copy failed",
+    curl_masked: "cURL · tokens masked",
     select_capture: "Select a capture to see details.",
     id: "ID",
     version: "Version",
@@ -619,6 +621,9 @@ const en = {
     privacy_section: "Privacy",
     privacy_body:
       "Pane collects zero telemetry. No data leaves your machine unless you explicitly export it. Crash reports stay in logs/ next to the data dir.",
+    mask_secrets: "Mask tokens when copying and exporting captures",
+    mask_secrets_hint:
+      "Copy, Export and cURL replace the values of Authorization, Cookie, Set-Cookie and headers with token, secret, api-key, auth, session or password in the name with {{placeholder}}. The auth scheme, cookie names and Set-Cookie attributes stay. Turn it off to copy the request exactly as sent. Single-header copy buttons and the CLI are not affected.",
   },
   about: {
     title: "About Pane",

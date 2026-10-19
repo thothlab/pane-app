@@ -272,6 +272,13 @@ context menu:
   decoded as UTF-8; binary content is replaced with a
   `[N-byte binary body]` placeholder so the clipboard doesn't fill up
   with mojibake. Body cap is 8 MiB; truncation is annotated inline.
+  Tokens are masked by default: the values of `Authorization`,
+  `Cookie`, `Set-Cookie` and headers with token, secret, api-key,
+  auth, session or password in the name become `{{TOKEN}}` (the
+  `Bearer` scheme, cookie names and `Set-Cookie` attributes stay). The
+  same goes for **Export** to a file and **cURL** in the detail pane.
+  To copy the request as sent, untick the box in
+  **Settings → Privacy**.
 - **Add to rules** — pre-fills a stub rule from this capture (see
   [Response stubs](/docs/rules/) → "Quick path from Captures").
 
