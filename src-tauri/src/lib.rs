@@ -8,7 +8,7 @@ mod commands;
 
 use std::sync::Arc;
 
-use pane_core::{topics, BootstrapError, Core, CoreConfig};
+use pane_core::{topics, BootstrapError, CaOpenError, Core, CoreConfig};
 use tauri::menu::{AboutMetadata, MenuBuilder, SubmenuBuilder};
 use tracing_subscriber::EnvFilter;
 
@@ -32,7 +32,19 @@ pub fn run() {
             );
             std::process::exit(1);
         }
-        Err(e) => panic!("failed to bootstrap app state: {e}"),
+        Err(BootstrapError::Ca(e @ CaOpenError::KeyUnreadable { .. })) => {
+            // Exit, not panic, and no new CA: the key is most likely still in
+            // the keychain, and the prompt on the next launch is the way back.
+            tracing::error!(error = %e, "CA key unreadable; exiting");
+            let msg = format!(
+                "{e}\n\nOpen Pane again and choose \"Always Allow\" when macOS asks \
+                 for access to the keychain. If the keychain is locked, unlock it first."
+            );
+            eprintln!("{msg}");
+            show_startup_alert(&msg);
+            std::process::exit(1);
+        }
+        Err(e) => panic!("failed to bootstrap app state: {e:#}"),
     };
 
     tauri::Builder::default()
@@ -376,6 +388,28 @@ fn install_app_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
     window_submenu.set_as_windows_menu_for_nsapp()?;
 
     Ok(())
+}
+
+/// Tauri is not up yet, so there is no window to show this in, and stderr of
+/// an app started from the Dock goes nowhere.
+fn show_startup_alert(msg: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "display alert \"Pane cannot start\" message (item 1 of argv) as critical",
+                "-e",
+                "end run",
+                "--",
+                msg,
+            ])
+            .status();
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = msg;
 }
 
 fn init_logging() {

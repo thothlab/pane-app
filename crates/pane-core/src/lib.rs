@@ -39,3 +39,4 @@ pub use lock::{InstanceLock, LockError};
 /// Stateless file helpers the GUI routes through Rust to sidestep plugin-fs
 /// capability scopes.
 pub use ops::{read_text_file, write_text_file, LogcatStartOutcome};
+pub use pane_ca::CaOpenError;

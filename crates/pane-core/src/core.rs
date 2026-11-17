@@ -13,7 +13,7 @@ use anyhow::Result;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
-use pane_ca::CaStore;
+use pane_ca::{CaOpenError, CaStore};
 use pane_devices::DeviceManager;
 use pane_engine::{DevicePortRegistry, EngineHandle, NoMitmSet, ProxyEngine};
 use pane_storage::Storage;
@@ -79,6 +79,8 @@ pub enum BootstrapError {
     #[error("another Pane instance is already running against {data_dir}")]
     AlreadyRunning { data_dir: PathBuf },
     #[error(transparent)]
+    Ca(#[from] CaOpenError),
+    #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
 
@@ -107,7 +109,7 @@ impl Core {
         };
 
         let storage = Arc::new(Storage::open(&data_dir)?);
-        let ca = Arc::new(CaStore::open_or_init(&data_dir, &storage)?);
+        let ca = Arc::new(CaStore::open_or_init(&data_dir, &storage, true)?);
         let registry = DevicePortRegistry::new();
         let devices = Arc::new(DeviceManager::new(storage.clone(), registry.clone()));
 
@@ -139,7 +141,7 @@ impl Core {
     pub fn attach_unowned(config: CoreConfig) -> Result<Self, BootstrapError> {
         let data_dir = config.resolve_data_dir()?;
         let storage = Arc::new(Storage::open_unowned(&data_dir)?);
-        let ca = Arc::new(CaStore::open_or_init(&data_dir, &storage)?);
+        let ca = Arc::new(CaStore::open_or_init(&data_dir, &storage, false)?);
         let registry = DevicePortRegistry::new();
         let devices = Arc::new(DeviceManager::new(storage.clone(), registry.clone()));
 

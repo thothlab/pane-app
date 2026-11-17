@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp)?;
     let storage = Arc::new(Storage::open(&tmp)?);
-    let ca = Arc::new(CaStore::open_or_init(&tmp, &storage)?);
+    let ca = Arc::new(CaStore::open_or_init(&tmp, &storage, true)?);
 
     let listen: std::net::SocketAddr = "127.0.0.1:8888".parse().unwrap();
     // Session row must exist before proxy_loop attaches captures to it.

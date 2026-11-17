@@ -24,3 +24,6 @@ pane-ipc.workspace = true
 pane-storage.workspace = true
 pane-mobileconfig.workspace = true
 directories.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
